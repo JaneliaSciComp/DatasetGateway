@@ -268,7 +268,7 @@ Endpoints marked with **ngauth** are required by the [ngauth protocol](https://g
 
 ## Authorization API for Other Systems
 
-See the API endpoints necessary to be a [drop-in replacement for CAVE auth API endpoints](CAVE-auth-endpoints.md).
+See the API endpoints necessary to be a [drop-in replacement for CAVE auth API endpoints](cave-auth-endpoints.md).
 
 Downstream systems (CAVE/WebKnossos/neuprint/Clio) can use:
 
