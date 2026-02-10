@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import oauth_views, views
 
 urlpatterns = [
     path("user/cache", views.UserCacheView.as_view(), name="user-cache"),
@@ -31,4 +31,12 @@ urlpatterns = [
         views.RootAllPublicView.as_view(),
         name="root-all-public",
     ),
+    # OAuth flow
+    path("authorize", oauth_views.AuthorizeView.as_view(), name="authorize"),
+    path("oauth2callback", oauth_views.OAuth2CallbackView.as_view(), name="oauth2callback"),
+    path("logout", oauth_views.LogoutView.as_view(), name="logout"),
+    # Token management
+    path("create_token", oauth_views.CreateTokenView.as_view(), name="create-token"),
+    path("user/token", oauth_views.UserTokensView.as_view(), name="user-tokens"),
+    path("refresh_token", oauth_views.RefreshTokenView.as_view(), name="refresh-token"),
 ]
