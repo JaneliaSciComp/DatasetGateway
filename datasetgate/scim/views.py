@@ -1,5 +1,6 @@
 """SCIM 2.0 views — User, Group, Dataset CRUD + discovery endpoints."""
 
+from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -29,7 +30,7 @@ class SCIMBaseView(APIView):
     authentication_classes = [SCIMAuthentication]
     permission_classes = [IsAuthenticated]
     renderer_classes = [SCIMRenderer]
-    parser_classes = [SCIMParser]
+    parser_classes = [SCIMParser, JSONParser]
 
 
 # =============================================================================
