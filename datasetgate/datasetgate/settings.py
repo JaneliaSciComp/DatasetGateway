@@ -130,7 +130,6 @@ if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
             pass
 
 # ngauth configuration
-NGAUTH_SESSION_KEY = os.environ.get("NGAUTH_SESSION_KEY", "").encode() or None
 NGAUTH_ALLOWED_ORIGINS = os.environ.get(
     "NGAUTH_ALLOWED_ORIGINS", r"^https?://.*\.neuroglancer\.org$"
 )

@@ -23,11 +23,7 @@ from . import gcs, tokens
 
 def _get_session_key():
     """Get the HMAC session key for ngauth tokens."""
-    key = settings.NGAUTH_SESSION_KEY
-    if key is None:
-        # Fallback for development
-        key = settings.SECRET_KEY.encode()[:32]
-    return key
+    return settings.SECRET_KEY.encode()[:32]
 
 
 def _get_user_from_cookie(request):

@@ -77,7 +77,6 @@ The container runs migrations automatically on startup.
 | `DJANGO_ALLOWED_HOSTS` | `*` | Comma-separated list of allowed hostnames. |
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth 2.0 client ID. |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret. |
-| `NGAUTH_SESSION_KEY` | *(empty)* | HMAC key for ngauth token signing (bytes). |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins. |
 | `PORT` | `8080` | Port for gunicorn (Docker). |
 | `GUNICORN_WORKERS` | `2` | Number of gunicorn worker processes. |
