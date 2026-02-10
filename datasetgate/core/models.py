@@ -46,6 +46,11 @@ class User(models.Model):
         return self.email
 
     @property
+    def is_authenticated(self):
+        """Required by DRF's IsAuthenticated permission."""
+        return True
+
+    @property
     def is_service_account(self):
         return self.parent_id is not None
 

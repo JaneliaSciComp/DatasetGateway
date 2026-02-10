@@ -24,6 +24,14 @@ class CaveTokenAuthentication(BaseAuthentication):
     QUERY_PARAM = "middle_auth_token"
     CACHE_PREFIX = "cave_auth_"
 
+    def authenticate_header(self, request):
+        """Return a string to be used as the WWW-Authenticate header.
+
+        Returning a value here causes DRF to return 401 (instead of 403)
+        when authentication fails or is not provided.
+        """
+        return "Bearer"
+
     def authenticate(self, request):
         token = self._extract_token(request)
         if token is None:
