@@ -1,0 +1,367 @@
+# Architecture.md
+
+## Overview
+
+DatasetGate provides a unified authorization layer that enforces terms of service and controls access to datasets across multiple services and tools. 
+
+The system thinks of authorization in terms of permissions and grants. A `permission` is an abstract capability that describes what can be done (e.g., `dataset.read`) and lives in code/config. A `grant` is an assignment of permissions to a subject, scoped to an object (e.g., user Alice is granted `dataset.read` on dataset `fish2:v9`) and lives in a database.
+
+DatasetGate provides:
+
+1. **Web app**
+   - Google-login gated user experience
+   - Dataset/version-specific **Terms of Service (TOS)** presentation + acceptance tracking
+   - Team-lead flows to manage membership/grants within the team-lead grants
+   - Admin console to manage all users/datasets/versions/grants/TOS
+
+2. **Authorization API**
+   - HTTP endpoints used by downstream systems (e.g., CAVE, WebKnossos, neuprint, Clio) to query authorization decisions and (optionally) obtain scoped credentials
+
+3. **Neuroglancer ngauth service**
+   - Implements Neuroglancer’s **ngauth server** behavior (token issuance for protected sources)
+   - Uses **tos-ngauth-style** mechanics: Google auth, TOS gating, and GCS access based on policy
+   - Supports multiple dataset “buckets” and dataset versions under a single service deployment
+
+The implementation is a **single Django app** using **SQLite** initially (with an easy path to Postgres if needed), and integrates the proven ideas from `github.com/JaneliaSciComp/tos-ngauth`:
+- TOS gating
+- “activate” flow
+- mapping dataset to a GCS bucket
+- bucket permission management and/or token downscoping
+- ngauth endpoints like `/token` and related helper endpoints
+
+---
+
+## Goals
+
+- **Single source of truth** for dataset/version authorization, TOS acceptances, and user roles.
+- **Multi-system integration** via stable HTTP APIs.
+- **Neuroglancer compatibility** with minimal friction.
+- **Minimal operational complexity** for initial deployment (SQLite, single service).
+- Preserve the **working proof-of-concept behavior** from `tos-ngauth`, but extend it to handle:
+  - multiple datasets
+  - multiple versions per dataset
+  - per-version grants and “all versions” grants
+  - admin / team-lead control plane
+
+---
+
+## Non-Goals (for initial phase)
+
+- Supporting non-Google identity providers.
+- Running a full OAuth provider for other services (we provide policy + optionally scoped tokens).
+- Fine-grained object-level ACL inside a dataset beyond dataset/version scope (can be added later if needed).
+
+---
+
+## High-Level System Design
+
+### Control Plane + Data Plane in one Django service
+
+This service contains both:
+- **Control plane**: admin + management UI, DB models, audit trails, grant editing
+- **Data plane**: low-latency authorization endpoints and ngauth endpoints used at request time
+
+The design keeps the **ngauth token path stable** (e.g. `/token`) while making the service **dataset-aware** by deriving dataset context from the **bucket/source** being requested.
+
+---
+
+## Authentication & Identity
+
+### Identity Provider
+- All users authenticate via **Google** (OpenID Connect / OAuth2).
+- The system stores the stable Google subject identifier (`google_sub`) and primary email.
+- Email domain allow-listing can be enabled if desired (optional).
+
+### Session Model
+- Browser UI uses standard Django **session cookies** (secure, HttpOnly, same-site).
+- API calls from other systems use either:
+  - a service-to-service credential (recommended for server-side callers), or
+  - a user token/session (if those systems are browser-facing and integrate with the same login)
+
+(Exact choice depends on each downstream system; the service supports both patterns.)
+
+---
+
+## Authorization Model
+
+Authorization is **dataset-version scoped** with optional wildcards.
+
+### Core authorization concepts
+- A **Dataset** has one or more **DatasetVersions**.
+- A user can be granted permissions:
+  - on a specific version, or
+  - on a dataset wildcard (“all versions”)
+- Special roles like “dataset creator” can implicitly map to “all versions”.
+
+### Role categories (org roles)
+Users can be any combination of:
+- `admin`
+- `sc` (steering committee)
+- `lab_head`
+- `user`
+
+These roles govern who can **manage grants**, not necessarily who can **access data** (which is dataset/version permission based).
+
+### Dataset permissions (data access)
+Define permissions such as:
+- `read` (view/access dataset)
+- `write` (optional; if relevant later)
+- `manage` (manage dataset settings; typically for creators/admins)
+
+The initial focus is usually `read`.
+
+---
+
+## Terms of Service (TOS)
+
+TOS is tracked at the dataset/version level.
+
+### Requirements
+- Before access is granted, user must accept the applicable TOS.
+- Acceptance is recorded with:
+  - dataset + version (or dataset-wide, depending on policy)
+  - TOS document/version identifier
+  - timestamp
+  - user identity
+
+### Serving TOS
+- The service hosts TOS pages similar to `tos-ngauth`:
+  - dataset/version landing page
+  - TOS content page(s)
+  - accept/decline flow
+- TOS documents can be stored as Markdown/HTML in the DB or referenced by URL/versioned assets.
+
+---
+
+## Storage & Database
+
+### Initial DB: SQLite
+- SQLite for the first deployment.
+- Django migrations manage schema evolution.
+- Plan to migrate to Postgres if concurrency/availability needs increase.
+
+### Key tables (conceptual)
+
+**User**
+- id
+- google_sub (unique)
+- email
+- display_name
+- is_active
+- created_at / updated_at
+
+**Role / Group** (or Django Groups)
+- name: admin, sc, lab_head, user
+
+**Dataset**
+- id / slug (e.g., "fish2")
+- name
+- description
+- owner/creator user or group
+- created_at / updated_at
+
+**DatasetVersion**
+- id
+- dataset_id
+- version string (e.g., "v1", "2026-01-15")
+- description
+- gcs_bucket (or bucket mapping)
+- optional: prefix/path constraints
+- is_public (optional)
+- created_at / updated_at
+
+**Grant**
+- id
+- user_id
+- dataset_id
+- dataset_version_id (nullable)
+- applies_to_all_versions (boolean) OR dataset_version_id null means wildcard
+- permission (e.g., read)
+- granted_by_user_id
+- created_at / updated_at
+
+**TOSDocument**
+- id
+- dataset_id (nullable if global)
+- dataset_version_id (nullable if dataset-wide)
+- tos_version string/hash
+- content / url
+- effective_date
+- retired_date (nullable)
+
+**TOSAcceptance**
+- id
+- user_id
+- dataset_id
+- dataset_version_id
+- tos_document_id
+- accepted_at
+- ip_address/user_agent (optional)
+
+**AuditLog** (recommended)
+- actor_user_id
+- action
+- target_type / target_id
+- before/after JSON (optional)
+- timestamp
+
+---
+
+## GCS Authorization Strategy
+
+This system preserves the operational behavior of `tos-ngauth` while generalizing it.
+
+### Two modes (can coexist)
+
+1. **Bucket IAM membership mode** (tos-ngauth “activate” style)
+   - Upon TOS acceptance + eligibility, the system can “activate” a user by adding them to the bucket IAM policy (or an IAM group).
+   - Pros: simple for tools expecting bucket IAM to reflect access
+   - Cons: IAM propagation delay; broader privileges depending on IAM policy
+
+2. **Downscoped token mode**
+   - The service issues short-lived, scoped tokens for GCS access.
+   - Pros: tight scope, fast changes, avoids IAM propagation delays for access toggles
+   - Cons: requires downstream clients to use these tokens correctly
+
+A dataset/version can choose a preferred mode, or both can be supported with configuration.
+
+### Dataset mapping
+- Each dataset version maps to:
+  - a GCS bucket (`gcs_bucket`)
+  - optionally a prefix/path constraint if needed later
+
+---
+
+## Neuroglancer ngauth Integration
+
+### Routing constraint
+Neuroglancer typically expects a fixed token endpoint like:
+- `https://auth.example.org/token`
+
+We do **not** require `https://auth.example.org/<dataset>/token`.
+
+### How dataset context is determined
+The dataset context is derived from the Neuroglancer source URL scheme used in `tos-ngauth`, which includes the bucket:
+- `precomputed://gs+ngauth+https://AUTH_SERVER/BUCKET/path/to/data`
+
+The request arriving at `/token` includes enough context (bucket / resource) to map to:
+- dataset version → required permissions → TOS requirement → token issuance policy
+
+## API Endpoints
+
+Endpoints marked with **ngauth** are required by the [ngauth protocol](https://github.com/google/neuroglancer/tree/master/ngauth_server). Others support the TOS/access provisioning flow.
+
+| Method | Path | Description | Source |
+|--------|------|-------------|--------|
+| `GET` | `/` | Landing page with TOS | ngauth* |
+| `GET` | `/health` | Health check | — |
+| `GET` | `/auth/login` | Initiate OAuth | — |
+| `GET` | `/auth/callback` | OAuth callback | ngauth |
+| `POST` | `/activate` | Provision access | — |
+| `GET` | `/success` | Success page | — |
+| `GET` | `/login` | Login status page | ngauth |
+| `POST` | `/logout` | Logout | ngauth |
+| `POST` | `/token` | Get user token (cross-origin) | ngauth |
+| `POST` | `/gcs_token` | Get GCS access token | ngauth |
+
+*ngauth's `/` just shows login status; ours extends it with TOS display.
+
+## Authorization API for Other Systems
+
+See the API endpoints necessary to be a [drop-in replacement for CAVE auth API endpoints](CAVE-auth-endpoints.md).
+
+Downstream systems (CAVE/WebKnossos/neuprint/Clio) can use:
+
+### Identity endpoints
+- `GET /api/v1/whoami` → returns user identity + roles + org metadata
+
+### Policy endpoints
+- `GET /api/v1/datasets` → list datasets user can see (filtered)
+- `GET /api/v1/datasets/<dataset>/versions` → list versions user can access
+- `POST /api/v1/authorize` → evaluate access for a user to dataset/version with requested permission(s)
+  - returns allow/deny + reason (e.g., “requires TOS acceptance”, “grant missing”, etc.)
+
+### Token endpoints (optional for non-Neuroglancer systems)
+- `POST /api/v1/token/gcs` → returns a downscoped token for dataset/version if allowed
+
+---
+
+## Web UI
+
+### User UI
+- Login via Google
+- Browse datasets/versions available
+- View TOS for dataset/version
+- Accept TOS → triggers grant activation as configured
+- View “My datasets” and acceptance history
+
+### Team lead UI (lab_head / sc)
+- Manage members within their scope:
+  - grant/revoke access to dataset versions
+  - grant “all versions” access
+- View roster and current access
+
+### Admin UI
+Use Django Admin as the first implementation:
+- Users, roles, datasets, versions, grants
+- TOS documents and acceptances
+- Audit log browsing
+- Manual override tools (grant, revoke, deactivate)
+
+---
+
+## Deployment
+
+### Initial deployment
+- Single Django service (Gunicorn/uvicorn as appropriate)
+- SQLite file storage (backed by persistent volume if needed)
+- Config via environment variables + Django settings:
+  - Google OAuth client id/secret
+  - allowed domains (optional)
+  - GCP project/service account for bucket IAM modifications
+  - token signing keys and session secrets
+
+### Scaling path
+- Move SQLite → Postgres
+- Add caching for authorization lookups if needed
+- Separate the ngauth/token issuance endpoints behind a lightweight worker tier if they become hot-path
+
+---
+
+## Security Considerations
+
+- Enforce HTTPS everywhere.
+- Secure cookies (HttpOnly, Secure, SameSite=Lax/Strict).
+- CSRF protection for browser flows.
+- Strict validation of dataset/version identifiers and bucket mappings.
+- Minimize GCP privileges for the service account:
+  - only what is needed for IAM changes and/or token issuance.
+- Audit log for all grant changes and admin actions.
+- Rate limit token endpoints to reduce abuse.
+
+---
+
+## Operational Notes
+
+- If using bucket IAM membership, expect propagation delays; communicate this in UI and API responses.
+- Provide clear “deny reasons”:
+  - not logged in
+  - no grant
+  - TOS required/not accepted
+  - dataset/version retired
+  - account disabled
+
+---
+
+## Open Questions / Decisions to Finalize
+
+- Whether TOS acceptance is per dataset-version or dataset-wide (architecture supports both).
+- Preferred integration patterns for each downstream system:
+  - pure oracle calls vs token issuance
+  - service-to-service auth method
+- Whether to enforce dataset isolation via:
+  - bucket-per-version (simple), or
+  - prefix constraints (more complex, can be added later)
+- Whether to keep “activate adds user to bucket IAM” as default or use downscoped tokens primarily.
+
+---
