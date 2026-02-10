@@ -1,0 +1,37 @@
+{% extends "web/base.html" %}
+{% block title %}My Datasets — DatasetGate{% endblock %}
+{% block content %}
+<h1>My Datasets</h1>
+
+<h2>TOS Acceptances</h2>
+{% if acceptances %}
+<table>
+    <tr><th>Document</th><th>Accepted</th></tr>
+    {% for a in acceptances %}
+    <tr>
+        <td>{{ a.tos_document.name }}</td>
+        <td>{{ a.accepted_at|date:"Y-m-d H:i" }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No TOS accepted yet.</p>
+{% endif %}
+
+<h2>Grants</h2>
+{% if grants %}
+<table>
+    <tr><th>Dataset</th><th>Version</th><th>Permission</th><th>Granted</th></tr>
+    {% for g in grants %}
+    <tr>
+        <td>{{ g.dataset.name }}</td>
+        <td>{{ g.dataset_version.version|default:"All" }}</td>
+        <td>{{ g.permission.name }}</td>
+        <td>{{ g.created|date:"Y-m-d H:i" }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No direct grants.</p>
+{% endif %}
+{% endblock %}
