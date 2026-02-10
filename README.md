@@ -27,6 +27,23 @@ python manage.py runserver
 
 The server starts at http://localhost:8000. The Django admin is at `/admin/`.
 
+### Google OAuth setup
+
+Login requires a Google OAuth 2.0 client. Without one the server runs but
+all login/authorize links will fail with a `client_id` error.
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+   and create an OAuth 2.0 Client ID (type: Web application).
+2. Add `http://localhost:8000/api/v1/oauth2callback` and
+   `http://localhost:8000/auth/callback` as authorized redirect URIs.
+3. Export the credentials before starting the server:
+
+```bash
+export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
+export GOOGLE_CLIENT_SECRET="your-client-secret"
+python manage.py runserver
+```
+
 ## Running tests
 
 ```bash
