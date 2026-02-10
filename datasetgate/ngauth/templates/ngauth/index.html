@@ -16,7 +16,10 @@
     <h1>DatasetGate</h1>
 
     {% if user_email %}
-        <div class="status">Logged in as <strong>{{ user_email }}</strong></div>
+        <div class="status">
+            Logged in as <strong>{{ user_email }}</strong>
+            &mdash; <a href="/web/datasets">Go to Dashboard</a>
+        </div>
     {% else %}
         <div class="status">
             Not logged in. <a href="/auth/login" class="btn">Login with Google</a>

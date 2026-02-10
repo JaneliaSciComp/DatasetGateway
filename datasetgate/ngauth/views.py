@@ -131,7 +131,8 @@ class AuthCallbackView(View):
 
         # Set ngauth cookie
         cookie_value = tokens.create_login_token(_get_session_key(), email)
-        response = HttpResponseRedirect("/login")
+        # Redirect to web dashboard; Neuroglancer popup flow uses /login directly
+        response = HttpResponseRedirect("/web/datasets")
         response.set_cookie(
             settings.NGAUTH_COOKIE_NAME,
             cookie_value,
