@@ -36,12 +36,20 @@ all login/authorize links will fail with a `client_id` error.
    and create an OAuth 2.0 Client ID (type: Web application).
 2. Add `http://localhost:8000/api/v1/oauth2callback` and
    `http://localhost:8000/auth/callback` as authorized redirect URIs.
-3. Export the credentials before starting the server:
+3. Download the JSON credentials and drop the file into the project:
+
+```bash
+mkdir -p datasetgate/secrets
+cp ~/Downloads/client_secret_*.json datasetgate/secrets/client_credentials.json
+python manage.py runserver
+```
+
+The `secrets/` directory is gitignored. Alternatively, you can set environment
+variables instead of using the JSON file:
 
 ```bash
 export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
 export GOOGLE_CLIENT_SECRET="your-client-secret"
-python manage.py runserver
 ```
 
 ## Running tests

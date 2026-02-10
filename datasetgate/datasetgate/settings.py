@@ -110,8 +110,24 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 7  # 7 days
 
 # Google OAuth configuration
+# Precedence: env vars > secrets/client_credentials.json
 GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+
+if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+    _creds_path = Path(
+        os.environ.get("CLIENT_CREDENTIALS_PATH", BASE_DIR / "secrets" / "client_credentials.json")
+    )
+    if _creds_path.exists():
+        import json
+
+        try:
+            _creds = json.loads(_creds_path.read_text())
+            _web = _creds.get("web") or _creds.get("installed") or {}
+            GOOGLE_CLIENT_ID = GOOGLE_CLIENT_ID or _web.get("client_id", "")
+            GOOGLE_CLIENT_SECRET = GOOGLE_CLIENT_SECRET or _web.get("client_secret", "")
+        except (json.JSONDecodeError, KeyError):
+            pass
 
 # ngauth configuration
 NGAUTH_SESSION_KEY = os.environ.get("NGAUTH_SESSION_KEY", "").encode() or None
