@@ -215,6 +215,175 @@ Deprecated but still referenced in CAVEclient.
 
 ---
 
+## SCIM 2.0 Provisioning Endpoints
+
+The `scim` branch of middle_auth implements [SCIM 2.0](https://tools.ietf.org/html/rfc7643) (System for Cross-domain Identity Management) endpoints for machine-to-machine provisioning of users, groups, and datasets.
+
+### Overview
+
+SCIM 2.0 (RFC 7643 / RFC 7644) provides a standardized REST API for identity provisioning. These endpoints enable external identity providers (e.g., Okta, Azure AD) to automatically manage users, groups, and dataset assignments without using the admin UI.
+
+### Base URL
+
+```
+/{URL_PREFIX}/scim/v2
+```
+
+Default: `/auth/scim/v2`
+
+### Authentication
+
+All SCIM endpoints require a Bearer token with super admin privileges, enforced by `scim_auth_required`:
+
+```
+Authorization: Bearer {admin_token}
+```
+
+### Discovery Endpoints
+
+#### `GET /auth/scim/v2/ServiceProviderConfig`
+
+Returns the SCIM service provider configuration, including supported features (patch, bulk, filter, sort, changePassword, etag).
+
+#### `GET /auth/scim/v2/ResourceTypes`
+
+Returns the list of supported resource types: `User`, `Group`, and `Dataset` (custom).
+
+#### `GET /auth/scim/v2/Schemas`
+
+Returns full JSON schemas for all supported resource types.
+
+### User CRUD
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/auth/scim/v2/Users` | List users (with filtering and pagination) |
+| `GET` | `/auth/scim/v2/Users/{scim_id}` | Get a single user |
+| `POST` | `/auth/scim/v2/Users` | Create a new user |
+| `PUT` | `/auth/scim/v2/Users/{scim_id}` | Replace a user (full update) |
+| `PATCH` | `/auth/scim/v2/Users/{scim_id}` | Partially update a user |
+| `DELETE` | `/auth/scim/v2/Users/{scim_id}` | Deactivate a user |
+
+**Schema URNs:**
+- `urn:ietf:params:scim:schemas:core:2.0:User`
+- `urn:ietf:params:scim:schemas:extension:neuroglancer:2.0:User` (custom extension with `admin`, `pi`, `gdprConsent`, `serviceAccount` fields)
+
+**Key field mappings:**
+- `userName` → `email`
+- `displayName` / `name.formatted` → `name`
+- `active` → `is_active` (deactivation only; no hard delete)
+- `externalId` → `external_id`
+- `id` → `scim_id` (UUID5 deterministic from internal ID)
+
+### Group CRUD
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/auth/scim/v2/Groups` | List groups (with filtering and pagination) |
+| `GET` | `/auth/scim/v2/Groups/{scim_id}` | Get a single group (includes members) |
+| `POST` | `/auth/scim/v2/Groups` | Create a new group |
+| `PUT` | `/auth/scim/v2/Groups/{scim_id}` | Replace a group (full update) |
+| `PATCH` | `/auth/scim/v2/Groups/{scim_id}` | Partially update a group (add/remove members) |
+| `DELETE` | `/auth/scim/v2/Groups/{scim_id}` | Delete a group |
+
+**Schema URN:** `urn:ietf:params:scim:schemas:core:2.0:Group`
+
+**Key field mappings:**
+- `displayName` → `name`
+- `members` → `UserGroup` M:M relationship (each member has `value` = user SCIM ID and `display` = user name)
+
+### Dataset CRUD (Custom Resource)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/auth/scim/v2/Datasets` | List datasets (with filtering and pagination) |
+| `GET` | `/auth/scim/v2/Datasets/{scim_id}` | Get a single dataset |
+| `POST` | `/auth/scim/v2/Datasets` | Create a new dataset |
+| `PUT` | `/auth/scim/v2/Datasets/{scim_id}` | Replace a dataset (full update) |
+| `PATCH` | `/auth/scim/v2/Datasets/{scim_id}` | Partially update a dataset |
+| `DELETE` | `/auth/scim/v2/Datasets/{scim_id}` | Delete a dataset |
+
+**Schema URN:** `urn:ietf:params:scim:schemas:neuroglancer:2.0:Dataset` (custom)
+
+**Key field mappings:**
+- `name` → `name` (dataset slug)
+- `tosId` → `tos_id` (FK to TOS document)
+- `serviceTables` → associated `ServiceTable` records (service name + table name pairs)
+
+### ID Mapping
+
+SCIM IDs are deterministic UUID5 values generated from internal integer IDs:
+
+```python
+uuid5(SCIM_NAMESPACE, f"{resource_type}:{internal_id}")
+```
+
+Where `SCIM_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")`.
+
+Each resource also supports an `externalId` field for mapping to the identity provider's internal ID. Lookup priority: `externalId` first, then `scim_id`.
+
+### Filtering
+
+Supports RFC 7644 filter expressions on list endpoints via the `filter` query parameter:
+
+```
+GET /auth/scim/v2/Users?filter=userName eq "user@example.org"
+GET /auth/scim/v2/Groups?filter=displayName co "admin"
+```
+
+Supported operators: `eq`, `ne`, `co` (contains), `sw` (starts with), `ew` (ends with), `pr` (present), `gt`, `ge`, `lt`, `le`. Logical operators `and`, `or`, and `not` are supported.
+
+### Pagination
+
+SCIM uses 1-based pagination with `startIndex` and `count` parameters:
+
+```
+GET /auth/scim/v2/Users?startIndex=1&count=50
+```
+
+- `startIndex` defaults to 1 (1-based index)
+- `count` defaults to 100, max 1000
+- `count=0` returns only `totalResults` (per RFC 7644 §3.4.2.4)
+
+**Response format:**
+```json
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"],
+  "totalResults": 150,
+  "itemsPerPage": 50,
+  "startIndex": 1,
+  "Resources": [...]
+}
+```
+
+### Error Response Format
+
+SCIM errors use `application/scim+json` content type:
+
+```json
+{
+  "schemas": ["urn:ietf:params:scim:api:messages:2.0:Error"],
+  "status": "404",
+  "scimType": "invalidValue",
+  "detail": "Resource not found"
+}
+```
+
+### New Model Fields
+
+The SCIM implementation adds the following fields to existing models:
+
+| Model | Field | Type | Description |
+|-------|-------|------|-------------|
+| User | `scim_id` | String(36), unique, indexed | UUID5 SCIM identifier |
+| User | `external_id` | String(255), unique, indexed | External system identifier |
+| Group | `scim_id` | String(36), unique, indexed | UUID5 SCIM identifier |
+| Group | `external_id` | String(255), unique, indexed | External system identifier |
+| Dataset | `scim_id` | String(36), unique, indexed | UUID5 SCIM identifier |
+| Dataset | `external_id` | String(255), unique, indexed | External system identifier |
+
+---
+
 ## Endpoints NOT Required for CAVE Service Compatibility
 
 The following endpoint groups are only called by middle_auth's own admin UI. A replacement can implement equivalent functionality with any API design:
@@ -248,7 +417,7 @@ These are the `middle_auth_client` decorators used by CAVE services. A replaceme
 
 ### Strategy A: Replace the server, keep middle_auth_client
 
-Implement the ~10 endpoints above with the same request/response contract. The `middle_auth_client` decorators don't care what's behind the URLs. This is the least disruptive path — no CAVE service code changes required, only deployment config (`AUTH_URL` env var).
+Implement the ~10 endpoints above with the same request/response contract. The `middle_auth_client` decorators don't care what's behind the URLs. This is the least disruptive path — no CAVE service code changes required, only deployment config (`AUTH_URL` env var). Note: the SCIM 2.0 endpoints add ~18 additional provisioning endpoints (3 discovery + 5 per resource type × 3 resource types) for machine-to-machine management.
 
 ### Strategy B: Replace both server and client
 
