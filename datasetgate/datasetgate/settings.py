@@ -139,5 +139,9 @@ NGAUTH_COOKIE_NAME = "ngauth_login"
 CAVE_TOKEN_COOKIE_NAME = "middle_auth_token"
 CAVE_TOKEN_COOKIE_AGE = 60 * 60 * 24 * 7  # 7 days
 
+# Cross-subdomain cookie domain (e.g., ".example.org" to share cookies
+# across auth.example.org and app.example.org). Empty = browser default.
+AUTH_COOKIE_DOMAIN = os.environ.get("AUTH_COOKIE_DOMAIN", "")
+
 # Permission cache TTL
 PERMISSION_CACHE_TTL = 300  # seconds

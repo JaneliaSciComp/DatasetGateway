@@ -82,6 +82,11 @@ class AuthLoginView(View):
     def get(self, request):
         from urllib.parse import urlencode
 
+        # Store post-login redirect target (default: /login for Neuroglancer popup flow)
+        next_url = request.GET.get("next", "")
+        if next_url:
+            request.session["oauth_next"] = next_url
+
         callback_url = request.build_absolute_uri("/auth/callback")
         state = secrets.token_urlsafe(32)
         request.session["oauth_state"] = state
@@ -129,16 +134,22 @@ class AuthCallbackView(View):
             },
         )
 
-        # Set ngauth cookie
+        # Set ngauth cookie and redirect
         cookie_value = tokens.create_login_token(_get_session_key(), email)
-        # Redirect to web dashboard; Neuroglancer popup flow uses /login directly
-        response = HttpResponseRedirect("/web/datasets")
+        next_url = request.session.pop("oauth_next", "/login")
+        response = HttpResponseRedirect(next_url)
+        cookie_kwargs = {
+            "max_age": tokens.MAX_COOKIE_LIFETIME_SECONDS,
+            "httponly": True,
+            "samesite": "Lax",
+        }
+        cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
+        if cookie_domain:
+            cookie_kwargs["domain"] = cookie_domain
         response.set_cookie(
             settings.NGAUTH_COOKIE_NAME,
             cookie_value,
-            max_age=tokens.MAX_COOKIE_LIFETIME_SECONDS,
-            httponly=True,
-            samesite="Lax",
+            **cookie_kwargs,
         )
         return response
 

@@ -11,3 +11,4 @@ staticfiles/
 *.egg
 .pytest_cache/
 secrets/
+codebases/
