@@ -1,9 +1,9 @@
-"""CAVE-compatible token authentication for DRF.
+"""Unified token authentication for DRF.
 
-Checks token in this order (matching middle_auth_client):
-1. middle_auth_token cookie
+Checks token in this order:
+1. dsg_token cookie
 2. Authorization: Bearer {token} header
-3. ?middle_auth_token= query parameter
+3. ?dsg_token= query parameter
 
 Looks up token in the APIKey table, returns the associated User.
 """
@@ -17,12 +17,12 @@ from rest_framework.exceptions import AuthenticationFailed
 from .cache import build_permission_cache
 
 
-class CaveTokenAuthentication(BaseAuthentication):
-    """DRF authentication class for CAVE-style tokens."""
+class TokenAuthentication(BaseAuthentication):
+    """DRF authentication class for DatasetGate API tokens."""
 
-    COOKIE_NAME = "middle_auth_token"
-    QUERY_PARAM = "middle_auth_token"
-    CACHE_PREFIX = "cave_auth_"
+    COOKIE_NAME = settings.AUTH_COOKIE_NAME
+    QUERY_PARAM = "dsg_token"
+    CACHE_PREFIX = "dsg_auth_"
 
     def authenticate_header(self, request):
         """Return a string to be used as the WWW-Authenticate header.

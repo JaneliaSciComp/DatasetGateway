@@ -1,8 +1,9 @@
-# DatasetGate Implementation Plan
+# DatasetGate Implementation Record
 
-> **Note:** This plan was written before implementation. Sections marked
-> *"Implementation note (retrospective)"* were added afterward to record
-> deviations, bugs, and fixes encountered during the actual build.
+> **Note:** This document was originally written as the build plan before
+> implementation began. It has been updated to reflect what was actually
+> built. Sections marked *"Implementation note (retrospective)"* record
+> deviations, bugs, and fixes encountered during the build.
 
 ## Context
 
@@ -43,10 +44,10 @@ Add a new section documenting the SCIM 2.0 provisioning endpoints derived from t
 |----------|--------|-----------|
 | API framework | Django REST Framework (DRF) | Serializers, ViewSets, auth classes, pagination, content negotiation |
 | Multi-dataset routing | `DatasetContextMiddleware` strips `/{dataset}/{service_type}/` prefix | Matches Architecture.md recommendation; no CAVE service code changes |
-| Token auth | Custom DRF `CaveTokenAuthentication` class | Checks cookie → header → query param, same order as middle_auth_client |
+| Token auth | Custom DRF `TokenAuthentication` class | Checks `dsg_token` cookie → `Bearer` header → `?dsg_token=` query param |
 | SCIM endpoints | Separate Django app with DRF ViewSets | Custom renderer/parser for `application/scim+json` |
 | Token storage | Database `APIKey` model + Django cache | Replaces CAVE's Redis; Django cache swappable to Redis later |
-| ngauth tokens | HMAC-SHA256 encoded tokens (port from tos-ngauth) | Cookie name: `ngauth_login`; same format as tos-ngauth reference |
+| ngauth tokens | HMAC-SHA256 encoded tokens (port from tos-ngauth) | Internal plumbing for Neuroglancer cross-origin `/token` flow only |
 | TOS scope | Both dataset-wide and per-version (admin chooses) | Admin sets per TOSDocument whether it applies to entire dataset or specific version |
 | GCS auth | Both bucket IAM + downscoped tokens | `/activate` adds user to bucket IAM; `/gcs_token` issues downscoped tokens for Neuroglancer |
 | Dependency management | `pyproject.toml` | Modern Python packaging standard |
@@ -66,17 +67,18 @@ datasetgate/                          # Project root
         middleware.py                 # DatasetContextMiddleware
     core/                             # Models, auth, shared utilities
         apps.py, models.py, admin.py
-        authentication.py             # CaveTokenAuthentication
+        authentication.py             # TokenAuthentication
         permissions.py                # DRF permission classes
         cache.py                      # build_permission_cache() — port of User.create_cache()
         management/commands/          # seed_permissions.py, seed_groups.py
         migrations/
         tests/
     cave_api/                         # CAVE compatibility (~10 critical endpoints)
-        apps.py, urls.py, views.py, serializers.py
+        apps.py, urls.py, views.py
+        oauth_views.py                # OAuth flow and token management
         tests/
     auth_api/                         # DatasetGate authorization API
-        apps.py, urls.py, views.py, serializers.py
+        apps.py, urls.py, views.py
         tests/
     ngauth/                           # Neuroglancer ngauth endpoints
         apps.py, urls.py, views.py
@@ -103,7 +105,7 @@ datasetgate/                          # Project root
 
 Port from CAVE's SQLAlchemy models + Architecture.md extensions:
 
-- **User** — `google_sub`, `email`, `display_name`, `is_active`, `is_admin`, `pi`, `gdpr_consent`, `parent` (FK self, for service accounts), `read_only`, `scim_id`, `external_id`
+- **User** — `google_sub`, `email`, `display_name`, `is_active`, `admin`, `pi`, `gdpr_consent`, `parent` (FK self, for service accounts), `read_only`, `scim_id`, `external_id`
 - **Group** — `name`, `scim_id`, `external_id`
 - **UserGroup** — M:M through (`user`, `group`, `is_admin`)
 - **Permission** — `name` (view, edit)
@@ -121,10 +123,10 @@ Port from CAVE's SQLAlchemy models + Architecture.md extensions:
 
 ### Authentication Flow
 
-**`core/authentication.py` — `CaveTokenAuthentication`:**
-1. Check `middle_auth_token` cookie
-2. Check `Authorization: Bearer {token}` header (takes priority)
-3. Check `?middle_auth_token=` query param
+**`core/authentication.py` — `TokenAuthentication`:**
+1. Check `dsg_token` cookie
+2. Check `Authorization: Bearer {token}` header
+3. Check `?dsg_token=` query param
 4. Look up token in `APIKey` table → get user → build permission cache
 5. Cache result for 300s via `django.core.cache`
 
@@ -160,7 +162,7 @@ Port of `User.create_cache()` from middle_auth. Must produce identical JSON:
 - Generate initial migration
 
 **Step 4: Implement authentication system**
-- `core/authentication.py`: `CaveTokenAuthentication`
+- `core/authentication.py`: `TokenAuthentication`
 - `core/cache.py`: `build_permission_cache()` — faithful port of `User.create_cache()`
 - `core/permissions.py`: `IsAdmin`, `IsDatasetAdmin`
 - `datasetgate/middleware.py`: `DatasetContextMiddleware`
@@ -184,7 +186,7 @@ Port of `User.create_cache()` from middle_auth. Must produce identical JSON:
 >    when no authentication class claims the request, unless at least one
 >    class defines `authenticate_header()`. Added
 >    `authenticate_header(self, request)` returning `"Bearer"` to
->    `CaveTokenAuthentication`.
+>    `TokenAuthentication` (originally named `CaveTokenAuthentication`).
 >
 > 3. **Stale permission cache across tests.** Django's `locmem` cache
 >    persists across test methods within a `TestCase`. A test that modified a
@@ -201,8 +203,10 @@ Port of `User.create_cache()` from middle_auth. Must produce identical JSON:
 - Public data: `TableHasPublicView`, `RootIsPublicView`, `RootAllPublicView` — backed by `PublicRoot` model with full DB queries
 
 **Step 7: Implement CAVE OAuth flow and token management**
+
+All views in `cave_api/oauth_views.py`:
 - `AuthorizeView`: `GET/POST /api/v1/authorize` — Google OAuth redirect
-- `OAuth2CallbackView`: `GET /api/v1/oauth2callback` — exchange code, create/update user, set cookie
+- `OAuth2CallbackView`: `GET /api/v1/oauth2callback` — exchange code, create/update user, set `dsg_token` cookie
 - `LogoutView`: `GET/POST /api/v1/logout`
 - `CreateTokenView`: `POST /api/v1/create_token`
 - `UserTokensView`: `GET /api/v1/user/token`

@@ -72,6 +72,68 @@ The design keeps the **ngauth token path stable** (e.g. `/token`) while making t
 - The system stores the stable Google subject identifier (`google_sub`) and primary email.
 - Email domain allow-listing can be enabled if desired (optional).
 
+### Login Flow
+
+Both OAuth entry points follow the same sequence:
+
+1. **Redirect to Google** — The user visits `/auth/login` (Neuroglancer
+   flow) or `/api/v1/authorize` (CAVE flow). The server generates an
+   OAuth state token, stores it in the session, and redirects the browser
+   to Google's authorization endpoint with `openid email profile` scopes.
+
+2. **Google callback** — After consent, Google redirects back to the
+   callback URL (`/auth/callback` or `/api/v1/oauth2callback`) with an
+   authorization code.
+
+3. **Code exchange** — The server sends the code to Google's token
+   endpoint (`https://oauth2.googleapis.com/token`) and receives an ID
+   token.
+
+4. **ID token verification** — The server verifies the ID token signature
+   and claims using `google.oauth2.id_token.verify_oauth2_token()`,
+   extracting the user's email, name, and Google subject ID.
+
+5. **User upsert** — The server creates or updates the `User` record
+   (keyed by email) with the Google subject ID and profile info.
+
+6. **API key creation** — The server creates a new `APIKey` record
+   linked to the user. The key value is a random token stored in the
+   database.
+
+7. **Cookie set** — The server sets the `dsg_token` cookie to the API
+   key value (HttpOnly, SameSite=Lax, 7-day TTL) and redirects the
+   browser to the original destination.
+
+The two flows are functionally identical — they differ only in callback
+URL and redirect behavior. Both produce the same `dsg_token` cookie
+backed by the same `APIKey` table.
+
+### Unified `dsg_token` Cookie
+
+All authentication flows converge on a single cookie: **`dsg_token`**.
+
+On login (via either the ngauth OAuth flow or the CAVE OAuth flow), the
+server creates a DB-stored `APIKey` and sets `dsg_token` to its value.
+All consumers — CAVE services, neuPrint, celltyping-light, clio-store,
+and the web UI — read the same cookie. The DRF `TokenAuthentication`
+class checks for the token in this order:
+
+1. `dsg_token` cookie
+2. `Authorization: Bearer {token}` header
+3. `?dsg_token=` query parameter
+
+It looks up the token in the `APIKey` table, returns the associated user,
+and attaches the permission cache to the request.
+
+### Cross-Origin HMAC Tokens (Neuroglancer Only)
+
+Neuroglancer's cross-origin `/token` endpoint cannot use the `dsg_token`
+cookie directly (different origin). Instead, `POST /token` reads the
+`dsg_token` cookie, looks up the user via `APIKey`, then creates a
+short-lived HMAC-signed token that Neuroglancer can pass to
+`POST /gcs_token` for downscoped GCS access. This HMAC mechanism is
+internal plumbing — no external consumer needs to know about it.
+
 ### Session Model
 - Browser UI uses standard Django **session cookies** (secure, HttpOnly, same-site).
 - API calls from other systems use either:

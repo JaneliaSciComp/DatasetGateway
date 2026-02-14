@@ -10,7 +10,10 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
+from django.conf import settings
+
 from core.models import (
+    APIKey,
     Dataset,
     DatasetAdmin,
     DatasetVersion,
@@ -28,30 +31,25 @@ from core.models import (
 
 
 def _get_web_user(request):
-    """Get user from session email (set during ngauth or CAVE OAuth)."""
+    """Get user from session or dsg_token cookie."""
+    # 1. Session email
     email = request.session.get("user_email")
-    if not email:
-        # Try ngauth cookie
-        from ngauth.views import _get_user_from_cookie
+    if email:
+        try:
+            return User.objects.get(email=email)
+        except User.DoesNotExist:
+            return None
 
-        email = _get_user_from_cookie(request)
-    if not email:
-        # Try CAVE token cookie
-        from django.conf import settings
-        from core.models import APIKey
+    # 2. dsg_token cookie (APIKey lookup)
+    token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
+    if token:
+        try:
+            api_key = APIKey.objects.select_related("user").get(key=token)
+            return api_key.user
+        except APIKey.DoesNotExist:
+            pass
 
-        token = request.COOKIES.get(settings.CAVE_TOKEN_COOKIE_NAME)
-        if token:
-            try:
-                api_key = APIKey.objects.select_related("user").get(key=token)
-                return api_key.user
-            except APIKey.DoesNotExist:
-                pass
-        return None
-    try:
-        return User.objects.get(email=email)
-    except User.DoesNotExist:
-        return None
+    return None
 
 
 class DatasetsView(View):

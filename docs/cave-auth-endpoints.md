@@ -22,11 +22,13 @@ Pointing CAVE services at a replacement is a deployment config change — update
 
 ### Token Delivery
 
-Tokens reach CAVE services via three mechanisms (checked in this order by `middle_auth_client`):
+Tokens reach CAVE services via three mechanisms (checked in this order by DatasetGate's `TokenAuthentication`):
 
-1. HTTP cookie: `middle_auth_token`
+1. HTTP cookie: `dsg_token`
 2. Authorization header: `Bearer {token}`
-3. Query parameter: `?middle_auth_token=...`
+3. Query parameter: `?dsg_token=...`
+
+> **Note:** The original CAVE `middle_auth_client` uses `middle_auth_token` as the cookie and query param name. DatasetGate unifies to `dsg_token`. CAVE services using `middle_auth_client` with `Bearer` header auth are unaffected; those relying on cookie or query param names need the updated client or config.
 
 ---
 
@@ -183,7 +185,7 @@ Initiates Google OAuth flow. Returns authorization URL (for programmatic clients
 
 #### `GET /api/v1/oauth2callback`
 
-Google OAuth callback. Exchanges code for token, creates/updates user, sets `middle_auth_token` cookie (7-day TTL), redirects to original URL.
+Google OAuth callback. Exchanges code for token, creates/updates user, sets `dsg_token` cookie (7-day TTL), redirects to original URL.
 
 #### `GET/POST /api/v1/logout`
 

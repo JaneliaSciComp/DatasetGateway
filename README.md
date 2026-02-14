@@ -52,6 +52,29 @@ export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
 export GOOGLE_CLIENT_SECRET="your-client-secret"
 ```
 
+## Authentication
+
+All users authenticate via **Google OpenID Connect**. There are two OAuth
+entry points that both produce the same result:
+
+- `/auth/login` — used by Neuroglancer's popup login flow
+- `/api/v1/authorize` — used by CAVE clients and browser-based apps
+
+On successful login, the server exchanges the Google authorization code
+for an ID token, verifies it, creates (or updates) the user record, and
+generates a DB-stored API key. The key is set as the `dsg_token` cookie.
+
+API requests are authenticated by the `TokenAuthentication` class, which
+checks for the token in this order:
+
+1. `dsg_token` cookie
+2. `Authorization: Bearer {token}` header
+3. `?dsg_token=` query parameter
+
+For Neuroglancer's cross-origin use case, `POST /token` reads the
+`dsg_token` cookie and returns a short-lived HMAC-signed token that
+Neuroglancer passes to `POST /gcs_token` for downscoped GCS access.
+
 ## Running tests
 
 ```bash
@@ -78,6 +101,7 @@ The container runs migrations automatically on startup.
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth 2.0 client ID. |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins. |
+| `AUTH_COOKIE_DOMAIN` | *(empty)* | Cookie domain for cross-subdomain auth (e.g., `.example.org`). |
 | `PORT` | `8080` | Port for gunicorn (Docker). |
 | `GUNICORN_WORKERS` | `2` | Number of gunicorn worker processes. |
 | `LOG_LEVEL` | `info` | Gunicorn log level. |
@@ -88,5 +112,5 @@ The container runs migrations automatically on startup.
   deployment strategy
 - [CAVE auth endpoints](docs/cave-auth-endpoints.md) — CAVE API compatibility
   reference and SCIM 2.0 provisioning
-- [Implementation plan](docs/implementation-plan.md) — build plan with
-  retrospective notes on what changed during implementation
+- [Implementation record](docs/implemented-plan.md) — what was built,
+  with retrospective notes on deviations from the original plan

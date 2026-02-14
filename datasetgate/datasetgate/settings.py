@@ -89,7 +89,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # DRF configuration
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "core.authentication.CaveTokenAuthentication",
+        "core.authentication.TokenAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -133,11 +133,10 @@ if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
 NGAUTH_ALLOWED_ORIGINS = os.environ.get(
     "NGAUTH_ALLOWED_ORIGINS", r"^https?://.*\.neuroglancer\.org$"
 )
-NGAUTH_COOKIE_NAME = "ngauth_login"
 
-# CAVE auth token cookie
-CAVE_TOKEN_COOKIE_NAME = "middle_auth_token"
-CAVE_TOKEN_COOKIE_AGE = 60 * 60 * 24 * 7  # 7 days
+# Unified auth token cookie (replaces ngauth_login and middle_auth_token)
+AUTH_COOKIE_NAME = "dsg_token"
+AUTH_COOKIE_AGE = 60 * 60 * 24 * 7  # 7 days
 
 # Cross-subdomain cookie domain (e.g., ".example.org" to share cookies
 # across auth.example.org and app.example.org). Empty = browser default.

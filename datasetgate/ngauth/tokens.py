@@ -1,7 +1,7 @@
 """HMAC-SHA256 token encode/decode — port from tos-ngauth auth.py.
 
 Token format: base64(hmac_sha256(json) + json)
-Cookie name: ngauth_login
+Used internally for Neuroglancer cross-origin /token and /gcs_token flows.
 """
 
 import base64

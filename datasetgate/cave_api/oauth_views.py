@@ -67,7 +67,7 @@ class OAuth2CallbackView(APIView):
     """GET /api/v1/oauth2callback
 
     Google OAuth callback. Exchanges code for token, creates/updates
-    user, sets middle_auth_token cookie, redirects to original URL.
+    user, sets dsg_token cookie, redirects to original URL.
     """
 
     permission_classes = [AllowAny]
@@ -123,12 +123,18 @@ class OAuth2CallbackView(APIView):
         # Redirect with cookie
         redirect_url = request.session.pop("oauth_redirect", "/")
         response = HttpResponseRedirect(redirect_url)
+        cookie_kwargs = {
+            "max_age": settings.AUTH_COOKIE_AGE,
+            "httponly": True,
+            "samesite": "Lax",
+        }
+        cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
+        if cookie_domain:
+            cookie_kwargs["domain"] = cookie_domain
         response.set_cookie(
-            settings.CAVE_TOKEN_COOKIE_NAME,
+            settings.AUTH_COOKIE_NAME,
             api_key.key,
-            max_age=settings.CAVE_TOKEN_COOKIE_AGE,
-            httponly=True,
-            samesite="Lax",
+            **cookie_kwargs,
         )
 
         return response
@@ -190,12 +196,16 @@ class LogoutView(APIView):
     def _logout(self, request):
         # Delete the API key if authenticated
         if request.user and hasattr(request.user, "pk"):
-            token = request.COOKIES.get(settings.CAVE_TOKEN_COOKIE_NAME)
+            token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
             if token:
                 APIKey.objects.filter(key=token).delete()
 
         response = Response({"status": "logged out"})
-        response.delete_cookie(settings.CAVE_TOKEN_COOKIE_NAME)
+        delete_kwargs = {}
+        cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
+        if cookie_domain:
+            delete_kwargs["domain"] = cookie_domain
+        response.delete_cookie(settings.AUTH_COOKIE_NAME, **delete_kwargs)
         return response
 
 

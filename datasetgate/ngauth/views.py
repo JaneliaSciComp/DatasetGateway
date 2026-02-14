@@ -16,7 +16,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
-from core.models import Dataset, DatasetVersion, TOSAcceptance, TOSDocument, User
+from core.models import APIKey, Dataset, DatasetVersion, TOSAcceptance, TOSDocument, User
 
 from . import gcs, tokens
 
@@ -27,14 +27,15 @@ def _get_session_key():
 
 
 def _get_user_from_cookie(request):
-    """Extract user email from ngauth cookie."""
-    cookie_value = request.COOKIES.get(settings.NGAUTH_COOKIE_NAME)
+    """Extract user email from dsg_token cookie (APIKey lookup)."""
+    cookie_value = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
     if not cookie_value:
         return None
-    token = tokens.decode_user_token(_get_session_key(), cookie_value)
-    if token:
-        return token.user_id
-    return None
+    try:
+        api_key = APIKey.objects.select_related("user").get(key=cookie_value)
+        return api_key.user.email
+    except APIKey.DoesNotExist:
+        return None
 
 
 def _is_origin_allowed(origin):
@@ -125,7 +126,7 @@ class AuthCallbackView(View):
             return JsonResponse({"error": "No email in token"}, status=400)
 
         # Ensure user exists
-        User.objects.get_or_create(
+        user, _created = User.objects.get_or_create(
             email=email,
             defaults={
                 "google_sub": user_info.get("sub", ""),
@@ -134,12 +135,12 @@ class AuthCallbackView(View):
             },
         )
 
-        # Set ngauth cookie and redirect
-        cookie_value = tokens.create_login_token(_get_session_key(), email)
+        # Create APIKey and set dsg_token cookie
+        api_key = APIKey.objects.create(user=user, description="ngauth login token")
         next_url = request.session.pop("oauth_next", "/login")
         response = HttpResponseRedirect(next_url)
         cookie_kwargs = {
-            "max_age": tokens.MAX_COOKIE_LIFETIME_SECONDS,
+            "max_age": settings.AUTH_COOKIE_AGE,
             "httponly": True,
             "samesite": "Lax",
         }
@@ -147,8 +148,8 @@ class AuthCallbackView(View):
         if cookie_domain:
             cookie_kwargs["domain"] = cookie_domain
         response.set_cookie(
-            settings.NGAUTH_COOKIE_NAME,
-            cookie_value,
+            settings.AUTH_COOKIE_NAME,
+            api_key.key,
             **cookie_kwargs,
         )
         return response
@@ -207,7 +208,11 @@ class LogoutView(View):
 
     def post(self, request):
         response = JsonResponse({"status": "logged out"})
-        response.delete_cookie(settings.NGAUTH_COOKIE_NAME)
+        delete_kwargs = {}
+        cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
+        if cookie_domain:
+            delete_kwargs["domain"] = cookie_domain
+        response.delete_cookie(settings.AUTH_COOKIE_NAME, **delete_kwargs)
         return response
 
 
@@ -283,11 +288,18 @@ class TokenView(View):
             else:
                 return JsonResponse({"error": "Origin not allowed"}, status=403, headers=headers)
 
-        user_email = _get_user_from_cookie(request)
-        if not user_email:
+        # Look up user from dsg_token cookie (APIKey)
+        cookie_value = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
+        if not cookie_value:
+            return JsonResponse({"error": "Not logged in"}, status=401, headers=headers)
+        try:
+            api_key = APIKey.objects.select_related("user").get(key=cookie_value)
+        except APIKey.DoesNotExist:
             return JsonResponse({"error": "Not logged in"}, status=401, headers=headers)
 
-        # Create temporary cross-origin token
+        user_email = api_key.user.email
+
+        # Create temporary cross-origin HMAC token for Neuroglancer
         key = _get_session_key()
         user_token = tokens.UserToken(
             user_id=user_email,

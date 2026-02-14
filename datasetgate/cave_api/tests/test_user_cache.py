@@ -118,12 +118,12 @@ class TestUserCacheView(TestCase):
         self.assertIn("fish2", data["datasets_admin"])
 
     def test_cookie_authentication(self):
-        self.client.cookies["middle_auth_token"] = self.api_key.key
+        self.client.cookies["dsg_token"] = self.api_key.key
         resp = self.client.get("/api/v1/user/cache")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["email"], "alice@example.org")
 
     def test_query_param_authentication(self):
-        resp = self.client.get(f"/api/v1/user/cache?middle_auth_token={self.api_key.key}")
+        resp = self.client.get(f"/api/v1/user/cache?dsg_token={self.api_key.key}")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["email"], "alice@example.org")
