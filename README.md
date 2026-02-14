@@ -108,6 +108,8 @@ The container runs migrations automatically on startup.
 
 ## Documentation
 
+- [User manual](docs/user-manual.md) — setup, admin workflows, user
+  workflows, management commands
 - [Architecture](docs/architecture.md) — system design, authorization model,
   deployment strategy
 - [CAVE auth endpoints](docs/cave-auth-endpoints.md) — CAVE API compatibility
