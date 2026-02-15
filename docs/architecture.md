@@ -271,26 +271,52 @@ TOS is tracked at the dataset/version level.
 
 ## GCS Authorization Strategy
 
-This system preserves the operational behavior of `tos-ngauth` while generalizing it.
+This system preserves the operational behavior of `tos-ngauth` while
+generalizing it. Dataset data is stored in Google Cloud Storage (GCS)
+buckets. DatasetGate controls who can read that data through two
+mechanisms that can coexist.
 
-### Two modes (can coexist)
+### Mode 1: Bucket IAM membership ("activate" flow)
 
-1. **Bucket IAM membership mode** (tos-ngauth “activate” style)
-   - Upon TOS acceptance + eligibility, the system can “activate” a user by adding them to the bucket IAM policy (or an IAM group).
-   - Pros: simple for tools expecting bucket IAM to reflect access
-   - Cons: IAM propagation delay; broader privileges depending on IAM policy
+When a user accepts the TOS and calls `POST /activate` with a bucket
+name, DatasetGate adds the user's Google email to the bucket's IAM
+policy with the `roles/storage.objectViewer` role. After IAM propagation
+(which can take minutes), the user can access the bucket directly with
+their own Google credentials.
 
-2. **Downscoped token mode**
-   - The service issues short-lived, scoped tokens for GCS access.
-   - Pros: tight scope, fast changes, avoids IAM propagation delays for access toggles
-   - Cons: requires downstream clients to use these tokens correctly
+- Pros: simple for tools that check bucket IAM directly
+- Cons: IAM propagation delay; the user gets read access to the entire
+  bucket, not just a specific prefix
 
-A dataset/version can choose a preferred mode, or both can be supported with configuration.
+### Mode 2: Downscoped tokens (Neuroglancer flow)
+
+When Neuroglancer calls `POST /gcs_token`, DatasetGate generates a
+short-lived GCS access token that is restricted to a single bucket.
+This uses Google's [Credential Access Boundaries](https://cloud.google.com/iam/docs/downscoping-short-lived-credentials)
+(Security Token Service API):
+
+1. DatasetGate first verifies the user has `objectViewer` access on the
+   bucket via a direct IAM policy check.
+2. It then takes its own service account credential and exchanges it
+   with Google's STS endpoint (`sts.googleapis.com/v1/token`) for a new
+   token whose permissions are narrowed to `roles/storage.objectViewer`
+   on just that one bucket.
+3. The resulting token is returned to the browser. Neuroglancer uses it
+   to read data directly from GCS. The token expires after a short
+   period (set by Google, typically 1 hour).
+
+This means the browser never receives a credential that can access
+anything beyond the specific bucket, and the credential expires
+automatically.
+
+- Pros: tight scope, instant (no IAM propagation delay), short-lived
+- Cons: requires the client to request new tokens periodically
 
 ### Dataset mapping
-- Each dataset version maps to:
-  - a GCS bucket (`gcs_bucket`)
-  - optionally a prefix/path constraint if needed later
+
+Each dataset version maps to a GCS bucket (and optionally a path
+prefix). This mapping determines which bucket a user gets access to
+when they are granted permission on a dataset version.
 
 ---
 
