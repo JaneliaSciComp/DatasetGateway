@@ -17,6 +17,38 @@ A typical setup uses a Django superuser for initial configuration (creating
 datasets, groups, permissions) and DatasetGate admins for day-to-day
 management (granting user access).
 
+### How services use DatasetGate
+
+DatasetGate is the central auth layer for multiple platforms. Each
+platform authenticates users through DatasetGate but in slightly
+different ways:
+
+**CAVE services** — CAVE is a set of microservices for connectomics
+annotation (MaterializationEngine, AnnotationEngine, PyChunkedGraph,
+etc.). Each service has an `AUTH_URL` environment variable pointing at
+DatasetGate. On every authenticated request, the service calls
+`GET /api/v1/user/cache` with the user's token to validate identity and
+check permissions. DatasetGate is a drop-in replacement for CAVE's
+original auth server (`middle_auth`) — no CAVE service code changes are
+needed, only the `AUTH_URL` config.
+
+**Neuroglancer** — Neuroglancer is a web-based 3D viewer for
+neuroscience data stored in Google Cloud Storage (GCS). It uses the
+"ngauth" protocol: when a user opens a protected dataset, Neuroglancer
+shows a login popup pointing at DatasetGate's `/auth/login`. After
+Google OAuth, the user gets a `dsg_token` cookie. Neuroglancer then
+calls `POST /token` (server-side, so it can read the cookie) to get a
+short-lived token, and exchanges that for a time-limited GCS read
+credential via `POST /gcs_token`. This lets the browser load data
+directly from cloud storage without exposing long-lived credentials.
+
+**neuPrint, celltyping-light, Clio** — These services validate users
+by calling DatasetGate's `/api/v1/user/cache` with the user's token,
+the same pattern as CAVE. When deployed on sibling subdomains with
+`AUTH_COOKIE_DOMAIN` configured (e.g., `.janelia.org`), the `dsg_token`
+cookie is shared automatically — users log in once and are authenticated
+across all services.
+
 ### Authorization model
 
 Access to datasets is controlled through two mechanisms:
@@ -167,13 +199,24 @@ until the user accepts it.
 
 ### Logging in
 
-1. Visit the DatasetGate server (e.g., `http://localhost:8000`)
-2. Click "Log in" — redirects to Google OAuth
-3. After authenticating with Google, a `dsg_token` cookie is set
-4. You are redirected back to the site
+There are two ways to log in, depending on which service you're using:
 
-The `dsg_token` cookie authenticates all subsequent requests. It is
-shared across subdomains when `AUTH_COOKIE_DOMAIN` is configured.
+**From the DatasetGate web UI or Neuroglancer:**
+1. Visit the DatasetGate server or open a Neuroglancer login popup
+2. Click "Log in" → redirects to `/auth/login` → Google OAuth
+3. After authenticating, a `dsg_token` cookie is set
+4. You are redirected back (to the web UI, or Neuroglancer closes the popup)
+
+**From a CAVE client or browser app:**
+1. The app redirects you to `/api/v1/authorize` → Google OAuth
+2. After authenticating, a `dsg_token` cookie is set
+3. You are redirected back to the app
+
+Both flows do the same thing: authenticate with Google, create a
+DatasetGate API key, and set the `dsg_token` cookie. The cookie is
+shared across subdomains when `AUTH_COOKIE_DOMAIN` is configured
+(e.g., `.janelia.org`), so you only need to log in once to access
+all services.
 
 ### Browsing datasets
 

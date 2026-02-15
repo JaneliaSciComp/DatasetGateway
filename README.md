@@ -54,26 +54,40 @@ export GOOGLE_CLIENT_SECRET="your-client-secret"
 
 ## Authentication
 
-All users authenticate via **Google OpenID Connect**. There are two OAuth
-entry points that both produce the same result:
+All users authenticate via **Google OpenID Connect**. On successful login,
+the server creates a DB-stored API key and sets it as the `dsg_token`
+cookie. This single cookie is shared by all services in the ecosystem.
 
-- `/auth/login` — used by Neuroglancer's popup login flow
-- `/api/v1/authorize` — used by CAVE clients and browser-based apps
-
-On successful login, the server exchanges the Google authorization code
-for an ID token, verifies it, creates (or updates) the user record, and
-generates a DB-stored API key. The key is set as the `dsg_token` cookie.
-
-API requests are authenticated by the `TokenAuthentication` class, which
-checks for the token in this order:
+API requests are authenticated by checking for the token in this order:
 
 1. `dsg_token` cookie
 2. `Authorization: Bearer {token}` header
 3. `?dsg_token=` query parameter
 
-For Neuroglancer's cross-origin use case, `POST /token` reads the
-`dsg_token` cookie and returns a short-lived HMAC-signed token that
-Neuroglancer passes to `POST /gcs_token` for downscoped GCS access.
+### How each platform authenticates
+
+**CAVE services** (MaterializationEngine, AnnotationEngine, etc.) call
+DatasetGate's `/api/v1/user/cache` endpoint on every request to validate
+the user's token and retrieve their permissions. This is a drop-in
+replacement for CAVE's original `middle_auth` server — CAVE services
+only need their `AUTH_URL` environment variable pointed at DatasetGate.
+Users log in via `/api/v1/authorize`, which redirects through Google
+OAuth and sets the `dsg_token` cookie.
+
+**Neuroglancer** uses the [ngauth protocol](https://github.com/google/neuroglancer/tree/master/ngauth_server).
+Users log in via a popup that hits `/auth/login` → Google OAuth →
+`dsg_token` cookie. Because Neuroglancer runs on a different origin
+(e.g., `neuroglancer.org`), it cannot read the cookie directly. Instead
+it calls `POST /token`, which reads the cookie server-side and returns a
+short-lived token. Neuroglancer then exchanges that token for a
+time-limited GCS access credential via `POST /gcs_token`, which grants
+read access to the specific cloud storage bucket holding the dataset.
+
+**Other services** (neuPrint, celltyping-light, Clio) validate users by
+calling `/api/v1/user/cache` with the `dsg_token` value, the same way
+CAVE services do. When all services share a cookie domain (configured
+via `AUTH_COOKIE_DOMAIN`), users log in once and are authenticated
+everywhere.
 
 ## Running tests
 
