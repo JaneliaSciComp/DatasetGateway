@@ -236,11 +236,16 @@ TOS is tracked at the dataset/version level.
 - id
 - user_id
 - dataset_id
-- dataset_version_id (nullable)
-- applies_to_all_versions (boolean) OR dataset_version_id null means wildcard
-- permission (e.g., read)
+- dataset_version_id (nullable; null means all versions)
+- permission (e.g., view, edit)
 - granted_by_user_id
-- created_at / updated_at
+- created_at
+
+Direct user→dataset permission grants. Both `Grant` and
+`GroupDatasetPermission` records are merged into the permission cache
+returned by `/api/v1/user/cache`. This allows per-user permissions
+without creating per-user groups — used by the clio-store migration
+and the web UI's grant management.
 
 **TOSDocument**
 - id
@@ -367,7 +372,12 @@ Downstream systems (CAVE/WebKnossos/neuprint/Clio) can use:
 - `GET /api/v1/datasets` → list datasets user can see (filtered)
 - `GET /api/v1/datasets/<dataset>/versions` → list versions user can access
 - `POST /api/v1/authorize` → evaluate access for a user to dataset/version with requested permission(s)
-  - returns allow/deny + reason (e.g., “requires TOS acceptance”, “grant missing”, etc.)
+  - returns allow/deny + reason (e.g., "requires TOS acceptance", "grant missing", etc.)
+
+### Group endpoints
+- `GET /api/v1/groups/<group_name>/members` → list email addresses of
+  group members. Used by clio-store to scope annotation visibility
+  (users see annotations from people in their groups).
 
 ### Token endpoints (optional for non-Neuroglancer systems)
 - `POST /api/v1/token/gcs` → returns a downscoped token for dataset/version if allowed
