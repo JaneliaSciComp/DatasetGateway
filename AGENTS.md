@@ -1,13 +1,50 @@
 # Repository Guidelines
 
+## Repository layout
+
+The git root is the top-level `DatasetGate/` directory. Orient yourself
+here before doing anything else — do not assume your working directory is
+the repo root.
+
+```
+DatasetGate/              ← git root
+├── README.md             ← project overview, quick-start, env vars
+├── CLAUDE.md
+├── AGENTS.md             ← this file
+├── .gitignore
+├── docs/                 ← architecture, API reference, user manual
+│   ├── architecture.md
+│   ├── cave-auth-endpoints.md
+│   ├── clio-support.md
+│   ├── implemented-plan.md
+│   └── user-manual.md
+└── datasetgate/          ← Django project (the only Python package)
+    ├── pyproject.toml    ← build config, dependencies, pixi config
+    ├── pixi.lock
+    ├── manage.py
+    ├── Dockerfile
+    ├── datasetgate/      ← Django settings package
+    ├── core/             ← shared models, middleware
+    ├── cave_api/         ← CAVE-compatible auth endpoints
+    ├── auth_api/         ← Clio/neuprint auth endpoints
+    ├── ngauth/           ← Neuroglancer GCS token endpoints
+    ├── scim/             ← SCIM 2.0 provisioning
+    └── web/              ← browser login/admin UI
+```
+
+**Important:** All Python code, tests, and the pixi environment live
+under `datasetgate/`. Run `pixi` commands from that directory. The
+top-level `DatasetGate/` contains documentation and repo-level config
+only.
+
 ## Commands
 
 ```bash
-# TODO: Add your project's build, test, and lint commands
-# Example:
-# npm test
-# pytest
-# make lint
+cd datasetgate
+pixi install                              # create/update environment
+pixi run python manage.py check           # verify Django loads
+pixi run -e dev python -m pytest          # run tests (dev environment)
+pixi shell                                # interactive shell in env
 ```
 
 ## Conventions
@@ -20,6 +57,8 @@
   ```
   For example: `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`, `Co-Authored-By: Gemini 2.5 Pro <noreply@google.com>`
 - Keep changes focused — one logical change per commit.
+- If your changes add, remove, or rename files/directories shown in the
+  "Repository layout" tree above, update that tree to match.
 
 ## Code Style
 

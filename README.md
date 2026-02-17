@@ -14,14 +14,23 @@ across multiple platforms:
 
 ## Quick start
 
-Prerequisites: Python 3.11+
+Prerequisites: [pixi](https://pixi.sh)
 
 ```bash
 cd datasetgate
-pip install -e ".[dev]"
+pixi install
+pixi run python manage.py migrate
+pixi run python manage.py seed_permissions
+pixi run python manage.py seed_groups
+pixi run python manage.py runserver
+```
+
+Or use `pixi shell` to drop into the environment and run commands directly:
+
+```bash
+cd datasetgate
+pixi shell
 python manage.py migrate
-python manage.py seed_permissions
-python manage.py seed_groups
 python manage.py runserver
 ```
 
@@ -93,7 +102,7 @@ everywhere.
 
 ```bash
 cd datasetgate
-python -m pytest
+pixi run -e dev python -m pytest
 ```
 
 ## Docker

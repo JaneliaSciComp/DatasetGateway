@@ -10,5 +10,6 @@ db.sqlite3
 staticfiles/
 *.egg
 .pytest_cache/
+.pixi/
 secrets/
 codebases/
