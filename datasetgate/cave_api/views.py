@@ -5,7 +5,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from core.models import PublicRoot, ServiceTable, User
+from core.models import Group, PublicRoot, ServiceTable, User
 
 
 class UserCacheView(APIView):
@@ -129,6 +129,29 @@ class UserListView(APIView):
                 for u in users
             ]
         )
+
+
+class GroupMembersView(APIView):
+    """GET /api/v1/groups/<group_name>/members
+
+    Returns list of email addresses for members of the given group.
+    Used by clio-store to scope annotation visibility.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, group_name):
+        try:
+            group = Group.objects.get(name=group_name)
+        except Group.DoesNotExist:
+            return Response(
+                {"error": "Group not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        emails = list(
+            group.user_groups.select_related("user")
+            .values_list("user__email", flat=True)
+        )
+        return Response(emails)
 
 
 class TableHasPublicView(APIView):

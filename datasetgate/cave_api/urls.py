@@ -17,6 +17,11 @@ urlpatterns = [
     path("username", views.UsernameView.as_view(), name="username"),
     path("user", views.UserListView.as_view(), name="user-list"),
     path(
+        "groups/<str:group_name>/members",
+        views.GroupMembersView.as_view(),
+        name="group-members",
+    ),
+    path(
         "table/<str:table_id>/has_public",
         views.TableHasPublicView.as_view(),
         name="table-has-public",

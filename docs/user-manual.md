@@ -312,6 +312,50 @@ at `/admin/` for operations not available in the web UI:
 
 ---
 
+## Service-Specific Notes
+
+DatasetGate integrates with multiple services, each with its own
+authentication pattern and considerations. This section provides a
+quick summary; see the linked documents for full details.
+
+### CAVE
+
+CAVE services (MaterializationEngine, AnnotationEngine, PyChunkedGraph,
+etc.) set `AUTH_URL` to DatasetGate's base URL. On every authenticated
+request, the service calls `GET /api/v1/user/cache` with the user's
+token. DatasetGate is a drop-in replacement for CAVE's original
+`middle_auth` server -- no CAVE code changes are needed.
+
+### Clio (clio-store)
+
+clio-store delegates auth to DatasetGate when the `DSG_URL` environment
+variable is set. A migration command (`import_clio_auth`) imports users,
+roles, and groups from Firestore into DatasetGate.
+
+Key consideration: clio-store's `public` flag on datasets lives in
+Firestore (not DatasetGate) and grants implicit read access to all
+authenticated users. This means dataset access is determined by two
+sources -- DatasetGate permissions AND the Firestore `public` flag.
+
+See [Clio integration details](clio-support.md) for permission mapping,
+the `public` flag behavior, migration steps, and configuration.
+
+### Neuroglancer
+
+Neuroglancer uses the ngauth protocol. After Google OAuth login,
+DatasetGate issues short-lived tokens that Neuroglancer exchanges for
+time-limited GCS read credentials. See the
+[architecture document](architecture.md) for the token flow.
+
+### neuPrint
+
+neuPrint validates users by calling `GET /api/v1/user/cache` with the
+user's token, the same pattern as CAVE. When deployed on sibling
+subdomains with `AUTH_COOKIE_DOMAIN` configured, the `dsg_token` cookie
+is shared automatically.
+
+---
+
 ## Management Commands Reference
 
 All commands are run from the `datasetgate/` directory.
@@ -325,3 +369,4 @@ All commands are run from the `datasetgate/` directory.
 | `python manage.py seed_permissions` | Custom | Create `view` and `edit` permission types |
 | `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `lab_head`, `user`) |
 | `python manage.py make_admin EMAIL` | Custom | Promote a user to DatasetGate admin (user must exist) |
+| `python manage.py import_clio_auth FILE` | Custom | Import clio-store auth data from exported JSON (see [Clio integration](clio-support.md)) |

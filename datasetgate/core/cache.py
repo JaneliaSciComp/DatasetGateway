@@ -89,13 +89,22 @@ def _get_permissions(user, ignore_tos=False):
     """Port of User._get_permissions().
 
     Returns list of dicts: [{"id": ..., "name": ..., "permissions": [...]}, ...]
+    Merges both group-based permissions (GroupDatasetPermission) and
+    direct user grants (Grant).
     """
-    from .models import GroupDatasetPermission, TOSAcceptance
+    from .models import Grant, GroupDatasetPermission, TOSAcceptance
 
     tos_user_id = user.parent_id if user.is_service_account else user.pk
 
-    qs = (
+    # --- Group-based permissions (existing) ---
+    group_qs = (
         GroupDatasetPermission.objects.filter(group__user_groups__user=user)
+        .select_related("dataset", "permission")
+    )
+
+    # --- Direct grants ---
+    grant_qs = (
+        Grant.objects.filter(user=user)
         .select_related("dataset", "permission")
     )
 
@@ -105,16 +114,17 @@ def _get_permissions(user, ignore_tos=False):
             user_id=tos_user_id
         ).values_list("tos_document_id", flat=True)
 
-        qs = qs.filter(
-            Q(dataset__tos__isnull=True) | Q(dataset__tos_id__in=accepted_tos_ids)
-        )
+        tos_filter = Q(dataset__tos__isnull=True) | Q(dataset__tos_id__in=accepted_tos_ids)
+        group_qs = group_qs.filter(tos_filter)
+        grant_qs = grant_qs.filter(tos_filter)
 
     if user.read_only:
-        qs = qs.exclude(permission__name="edit")
+        group_qs = group_qs.exclude(permission__name="edit")
+        grant_qs = grant_qs.exclude(permission__name="edit")
 
     # Aggregate into {dataset_id: {"id": ..., "name": ..., "permissions": [...]}}
     temp = {}
-    for gdp in qs:
+    for gdp in group_qs:
         did = gdp.dataset_id
         if did not in temp:
             temp[did] = {
@@ -126,29 +136,52 @@ def _get_permissions(user, ignore_tos=False):
         if pname not in temp[did]["permissions"]:
             temp[did]["permissions"].append(pname)
 
+    for grant in grant_qs:
+        did = grant.dataset_id
+        if did not in temp:
+            temp[did] = {
+                "id": did,
+                "name": grant.dataset.name,
+                "permissions": [],
+            }
+        pname = grant.permission.name
+        if pname not in temp[did]["permissions"]:
+            temp[did]["permissions"].append(pname)
+
     return list(temp.values())
 
 
 def _datasets_missing_tos(user):
     """Port of User.datasets_missing_tos().
 
-    Returns list of dicts for datasets where user has permissions but
-    hasn't accepted the required TOS.
+    Returns list of dicts for datasets where user has permissions (via
+    groups or direct grants) but hasn't accepted the required TOS.
     """
-    from .models import GroupDatasetPermission, TOSAcceptance, TOSDocument
+    from .models import Grant, GroupDatasetPermission, TOSAcceptance
 
     tos_user_id = user.parent_id if user.is_service_account else user.pk
 
-    # Get all datasets user has permissions on that have a TOS requirement
-    datasets_with_tos = (
+    # Get datasets from group-based permissions that have a TOS requirement
+    group_datasets = set(
         GroupDatasetPermission.objects.filter(
             group__user_groups__user=user,
             dataset__tos__isnull=False,
         )
-        .select_related("dataset", "dataset__tos")
         .values_list("dataset_id", "dataset__name", "dataset__tos_id", "dataset__tos__name")
         .distinct()
     )
+
+    # Get datasets from direct grants that have a TOS requirement
+    grant_datasets = set(
+        Grant.objects.filter(
+            user=user,
+            dataset__tos__isnull=False,
+        )
+        .values_list("dataset_id", "dataset__name", "dataset__tos_id", "dataset__tos__name")
+        .distinct()
+    )
+
+    datasets_with_tos = group_datasets | grant_datasets
 
     # Find which TOS the user has already accepted
     accepted_tos_ids = set(
