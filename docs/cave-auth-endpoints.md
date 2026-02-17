@@ -51,20 +51,39 @@ The single most important endpoint. Every `@auth_required` and `@auth_requires_p
 ```json
 {
   "id": 42,
+  "parent_id": null,
+  "service_account": false,
   "name": "username",
   "email": "user@example.org",
   "admin": false,
+  "pi": "",
+  "affiliations": [],
   "groups": ["group1", "group2"],
-  "datasets_admin": ["fish2", "fanc"],
+  "groups_admin": [],
+  "permissions": {
+    "fish2": 2,
+    "fanc": 1
+  },
   "permissions_v2": {
     "fish2": ["view", "edit"],
     "fanc": ["view"]
   },
   "permissions_v2_ignore_tos": {
     "fish2": ["view", "edit"]
-  }
+  },
+  "missing_tos": [],
+  "datasets_admin": ["fish2"]
 }
 ```
+
+Field notes:
+- `parent_id` / `service_account` — non-null when the token belongs to a service account (child of a human user)
+- `permissions` — legacy v1 format mapping dataset name to a numeric level (0=none, 1=view, 2=edit); the max level across all permissions for that dataset
+- `permissions_v2` — permissions filtered by TOS acceptance
+- `permissions_v2_ignore_tos` — permissions regardless of TOS acceptance
+- `missing_tos` — list of `{dataset_id, dataset_name, tos_id, tos_name}` for datasets where the user has permissions but hasn't accepted the required TOS
+- `groups_admin` — groups where the user has the admin role
+- `affiliations` — currently always `[]` (not yet implemented)
 
 **Response (401):** Token invalid or expired.
 

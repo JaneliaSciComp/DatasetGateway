@@ -165,12 +165,14 @@ Users can be any combination of:
 These roles govern who can **manage grants**, not necessarily who can **access data** (which is dataset/version permission based).
 
 ### Dataset permissions (data access)
-Define permissions such as:
-- `read` (view/access dataset)
-- `write` (optional; if relevant later)
-- `manage` (manage dataset settings; typically for creators/admins)
+Implemented:
+- `view` — read/access dataset
+- `edit` — write/modify dataset
 
-The initial focus is usually `read`.
+These are seeded by `python manage.py seed_permissions`.
+
+Not yet implemented:
+- `manage` (manage dataset settings; typically for creators/admins)
 
 ---
 
@@ -202,74 +204,131 @@ TOS is tracked at the dataset/version level.
 - Django migrations manage schema evolution.
 - Plan to migrate to Postgres if concurrency/availability needs increase.
 
-### Key tables (conceptual)
+### Database tables
+
+Items marked *(not yet implemented)* are design goals that don't exist
+in the current codebase.
 
 **User**
 - id
-- google_sub (unique)
-- email
+- google_sub (unique, nullable)
+- email (unique)
+- name
 - display_name
-- is_active
-- created_at / updated_at
+- admin (boolean)
+- is_active (boolean)
+- gdpr_consent (boolean)
+- pi (string)
+- read_only (boolean)
+- parent_id (FK to self, nullable — for service accounts)
+- scim_id, external_id (SCIM 2.0 identifiers)
+- created / updated
 
-**Role / Group** (or Django Groups)
-- name: admin, sc, lab_head, user
+**Group**
+- id
+- name (unique, e.g., admin, sc, lab_head, user)
+- scim_id, external_id (SCIM 2.0 identifiers)
+
+**UserGroup** (M:M through table)
+- user (FK to User)
+- group (FK to Group)
+- is_admin (boolean)
+- unique constraint on (user, group)
+
+**Permission**
+- id
+- name (unique — currently `view` and `edit`)
 
 **Dataset**
-- id / slug (e.g., "fish2")
-- name
+- id
+- name (unique slug, e.g., "fish2")
 - description
-- owner/creator user or group
-- created_at / updated_at
+- tos (FK to TOSDocument, nullable)
+- scim_id, external_id (SCIM 2.0 identifiers)
+- owner/creator user or group *(not yet implemented)*
 
 **DatasetVersion**
 - id
-- dataset_id
-- version string (e.g., "v1", "2026-01-15")
-- description
-- gcs_bucket (or bucket mapping)
-- optional: prefix/path constraints
-- is_public (optional)
-- created_at / updated_at
+- dataset (FK to Dataset)
+- version (string, e.g., "v1", "2026-01")
+- description *(not yet implemented)*
+- gcs_bucket (string)
+- prefix (string, optional path within bucket)
+- is_public (boolean)
+- unique constraint on (dataset, version)
 
 **Grant**
 - id
-- user_id
-- dataset_id
-- dataset_version_id (nullable; null means all versions)
-- permission (e.g., view, edit)
-- granted_by_user_id
-- created_at
+- user (FK to User)
+- dataset (FK to Dataset)
+- dataset_version (FK to DatasetVersion, nullable — null means all versions)
+- permission (FK to Permission, e.g., view, edit)
+- granted_by (FK to User, nullable)
+- created
 
-Direct user→dataset permission grants. Both `Grant` and
-`GroupDatasetPermission` records are merged into the permission cache
-returned by `/api/v1/user/cache`. This allows per-user permissions
-without creating per-user groups — used by the clio-store migration
-and the web UI's grant management.
+Both `Grant` and `GroupDatasetPermission` records are merged into the
+permission cache returned by `/api/v1/user/cache`. This allows per-user
+permissions without creating per-user groups — used by the clio-store
+migration and the web UI's grant management.
+
+**GroupDatasetPermission**
+- group (FK to Group)
+- dataset (FK to Dataset)
+- permission (FK to Permission)
+- unique constraint on (group, dataset, permission)
+
+**DatasetAdmin**
+- user (FK to User)
+- dataset (FK to Dataset)
+- unique constraint on (user, dataset)
+
+**ServiceTable**
+- service_name (string)
+- table_name (string)
+- dataset (FK to Dataset)
+- unique constraint on (service_name, table_name)
+
+Maps a CAVE service/table pair to a dataset, used by
+`GET /api/v1/service/{namespace}/table/{table_id}/dataset`.
+
+**PublicRoot**
+- service_table (FK to ServiceTable)
+- root_id (bigint)
+- unique constraint on (service_table, root_id)
+
+**APIKey**
+- user (FK to User)
+- key (unique, indexed — random 64-char hex token)
+- description (string)
+- created
+- last_used (nullable)
 
 **TOSDocument**
 - id
-- dataset_id (nullable if global)
-- dataset_version_id (nullable if dataset-wide)
-- tos_version string/hash
-- content / url
+- name
+- text (full terms text)
+- dataset (FK to Dataset, nullable — null means global)
+- dataset_version (FK to DatasetVersion, nullable — null means dataset-wide)
+- tos_version string/hash *(not yet implemented)*
+- content / url *(not yet implemented — currently text only)*
 - effective_date
 - retired_date (nullable)
 
 **TOSAcceptance**
 - id
-- user_id
-- dataset_id
-- dataset_version_id
-- tos_document_id
+- user (FK to User)
+- tos_document (FK to TOSDocument)
 - accepted_at
-- ip_address/user_agent (optional)
+- ip_address (optional)
+- user_agent *(not yet implemented)*
+- unique constraint on (user, tos_document)
 
-**AuditLog** (recommended)
-- actor_user_id
-- action
-- target_type / target_id
-- before/after JSON (optional)
+**AuditLog**
+- actor (FK to User, nullable)
+- action (string)
+- target_type (string)
+- target_id (string)
+- before_state / after_state (JSON, nullable)
 - timestamp
 
 ---
@@ -371,8 +430,11 @@ Downstream systems (CAVE/WebKnossos/neuprint/Clio) can use:
 ### Policy endpoints
 - `GET /api/v1/datasets` → list datasets user can see (filtered)
 - `GET /api/v1/datasets/<dataset>/versions` → list versions user can access
-- `POST /api/v1/authorize` → evaluate access for a user to dataset/version with requested permission(s)
+- `POST /api/v1/check-access` → evaluate access for a user to dataset/version with requested permission(s)
   - returns allow/deny + reason (e.g., "requires TOS acceptance", "grant missing", etc.)
+
+Note: `/api/v1/authorize` is the CAVE OAuth flow endpoint, not the
+policy check.
 
 ### Group endpoints
 - `GET /api/v1/groups/<group_name>/members` → list email addresses of

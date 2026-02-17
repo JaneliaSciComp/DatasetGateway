@@ -40,6 +40,10 @@ uses its own role names internally. The mapping is:
 | `datasets_admin` includes `ds` | `datasets[ds]` includes `"dataset_admin"` | Per-dataset admin (can delete annotations) |
 | `groups` list | `groups` set | Used for annotation visibility scoping |
 
+During migration (import), the reverse mapping also handles `clio_read`:
+both `clio_read` and `clio_general` per-dataset roles map to a `view`
+grant in DatasetGate.
+
 clio-store's legacy `clio_general` as a *global* role (meaning access to
 all datasets) has no DatasetGate equivalent. Per-dataset permissions plus
 the Firestore `public` flag cover all existing behavior. Admin users
