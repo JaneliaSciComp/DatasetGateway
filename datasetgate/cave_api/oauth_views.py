@@ -127,6 +127,7 @@ class OAuth2CallbackView(APIView):
             "max_age": settings.AUTH_COOKIE_AGE,
             "httponly": True,
             "samesite": "Lax",
+            "secure": settings.AUTH_COOKIE_SECURE,
         }
         cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
         if cookie_domain:

@@ -105,6 +105,42 @@ docker run -p 8080:8080 datasetgate
 
 The container runs migrations automatically on startup.
 
+## Production deployment
+
+DatasetGate is designed for a single-server Docker deployment behind a
+reverse proxy that handles TLS.
+
+1. **Configure environment variables:**
+
+   ```bash
+   cp datasetgate/.env.example datasetgate/.env
+   # Edit .env — at minimum set DJANGO_SECRET_KEY, DJANGO_ALLOWED_HOSTS,
+   # DJANGO_DEBUG=False, and Google OAuth credentials.
+   ```
+
+2. **Start the service:**
+
+   ```bash
+   docker compose -f datasetgate/docker-compose.yml up -d
+   ```
+
+3. **Create an admin user and seed data:**
+
+   ```bash
+   docker compose -f datasetgate/docker-compose.yml exec datasetgate python manage.py createsuperuser
+   docker compose -f datasetgate/docker-compose.yml exec datasetgate python manage.py seed_permissions
+   docker compose -f datasetgate/docker-compose.yml exec datasetgate python manage.py seed_groups
+   ```
+
+4. **Put a reverse proxy in front for TLS.** Nginx or Caddy both work.
+   Point it at `localhost:8080`. If the proxy terminates TLS, set
+   `SECURE_SSL_REDIRECT=False` in `.env` so Django doesn't double-redirect.
+
+The SQLite database and static files are stored in Docker volumes
+(`datasetgate-data` and `datasetgate-static`) so they survive container
+restarts. If you need PostgreSQL or Redis, swap the `DATABASES` / `CACHES`
+settings and add services to `docker-compose.yml`.
+
 ## Environment variables
 
 | Variable | Default | Description |
@@ -112,6 +148,8 @@ The container runs migrations automatically on startup.
 | `DJANGO_SECRET_KEY` | insecure dev key | Secret key for sessions and CSRF. **Set in production.** |
 | `DJANGO_DEBUG` | `True` | Set to `False` in production. |
 | `DJANGO_ALLOWED_HOSTS` | `*` | Comma-separated list of allowed hostnames. |
+| `DATABASE_PATH` | `db.sqlite3` | Path to SQLite database file. |
+| `SECURE_SSL_REDIRECT` | `True` (prod) | Set to `False` if reverse proxy handles TLS. |
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth 2.0 client ID. |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins. |

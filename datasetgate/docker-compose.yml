@@ -1,0 +1,19 @@
+# DatasetGate single-server deployment
+# Put nginx or caddy in front for TLS termination.
+
+services:
+  datasetgate:
+    build: .
+    env_file: .env
+    environment:
+      - DATABASE_PATH=/app/data/db.sqlite3
+    ports:
+      - "8080:8080"
+    volumes:
+      - datasetgate-data:/app/data
+      - datasetgate-static:/app/staticfiles
+    restart: unless-stopped
+
+volumes:
+  datasetgate-data:
+  datasetgate-static:

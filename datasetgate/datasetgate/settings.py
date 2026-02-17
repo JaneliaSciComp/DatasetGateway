@@ -3,16 +3,27 @@
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-dev-key-change-in-production",
-)
+_INSECURE_SECRET_KEY = "django-insecure-dev-key-change-in-production"
+
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", _INSECURE_SECRET_KEY)
 
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in ("true", "1", "yes")
 
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",")
+
+if not DEBUG:
+    if SECRET_KEY == _INSECURE_SECRET_KEY:
+        raise ImproperlyConfigured(
+            "You must set DJANGO_SECRET_KEY when running with DEBUG=False."
+        )
+    if ALLOWED_HOSTS == ["*"]:
+        raise ImproperlyConfigured(
+            "You must set DJANGO_ALLOWED_HOSTS when running with DEBUG=False."
+        )
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -64,7 +75,7 @@ WSGI_APPLICATION = "datasetgate.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "NAME": Path(os.environ.get("DATABASE_PATH", BASE_DIR / "db.sqlite3")),
     }
 }
 
@@ -144,3 +155,18 @@ AUTH_COOKIE_DOMAIN = os.environ.get("AUTH_COOKIE_DOMAIN", "")
 
 # Permission cache TTL
 PERMISSION_CACHE_TTL = 300  # seconds
+
+# Auth cookie secure flag — HTTPS-only cookies in production
+AUTH_COOKIE_SECURE = not DEBUG
+
+# Production security settings
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_SSL_REDIRECT = os.environ.get(
+        "SECURE_SSL_REDIRECT", "True"
+    ).lower() in ("true", "1", "yes")
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
