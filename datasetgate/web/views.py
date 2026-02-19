@@ -30,6 +30,13 @@ from core.models import (
 )
 
 
+def _is_sc_or_admin(user):
+    """Check if user is a global admin or member of the 'sc' group."""
+    if user.admin:
+        return True
+    return UserGroup.objects.filter(user=user, group__name="sc").exists()
+
+
 def _get_web_user(request):
     """Get user from session or dsg_token cookie."""
     # 1. Session email
@@ -59,6 +66,8 @@ class DatasetsView(View):
         user = _get_web_user(request)
         datasets = Dataset.objects.all().order_by("name")
 
+        is_sc_or_admin = user and _is_sc_or_admin(user)
+
         dataset_list = []
         for d in datasets:
             versions = DatasetVersion.objects.filter(dataset=d)
@@ -76,7 +85,63 @@ class DatasetsView(View):
         return render(request, "web/datasets.html", {
             "user": user,
             "dataset_list": dataset_list,
+            "is_sc_or_admin": is_sc_or_admin,
         })
+
+
+class DatasetAdminManageView(View):
+    """GET/POST /web/dataset-admins/<slug:dataset> — SC promotes lab heads."""
+
+    def get(self, request, dataset):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login")
+
+        ds = get_object_or_404(Dataset, name=dataset)
+
+        if not _is_sc_or_admin(user):
+            return render(request, "web/access_denied.html", {"user": user})
+
+        admins = DatasetAdmin.objects.filter(dataset=ds).select_related("user").order_by("user__email")
+
+        return render(request, "web/dataset_admin_manage.html", {
+            "user": user,
+            "dataset": ds,
+            "admins": admins,
+        })
+
+    def post(self, request, dataset):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login")
+
+        ds = get_object_or_404(Dataset, name=dataset)
+
+        if not _is_sc_or_admin(user):
+            return render(request, "web/access_denied.html", {"user": user})
+
+        action = request.POST.get("action")
+
+        if action == "add":
+            email = request.POST.get("email", "").strip()
+            try:
+                target_user = User.objects.get(email=email)
+            except User.DoesNotExist:
+                messages.error(request, f"User not found: {email}")
+                return redirect("web-dataset-admin-manage", dataset=dataset)
+
+            _, created = DatasetAdmin.objects.get_or_create(user=target_user, dataset=ds)
+            if created:
+                messages.success(request, f"Added {email} as lab head")
+            else:
+                messages.info(request, f"{email} is already a lab head")
+
+        elif action == "remove":
+            admin_id = request.POST.get("admin_id")
+            DatasetAdmin.objects.filter(pk=admin_id, dataset=ds).delete()
+            messages.success(request, "Removed lab head")
+
+        return redirect("web-dataset-admin-manage", dataset=dataset)
 
 
 class TOSAcceptView(View):

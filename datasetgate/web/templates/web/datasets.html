@@ -29,6 +29,9 @@
         <a href="/web/grants/{{ item.dataset.name }}" class="btn btn-sm">Manage Grants</a>
         <a href="/web/public-roots/{{ item.dataset.name }}" class="btn btn-sm">Public Roots</a>
     {% endif %}
+    {% if is_sc_or_admin %}
+        <a href="/web/dataset-admins/{{ item.dataset.name }}" class="btn btn-sm">Manage Lab Heads</a>
+    {% endif %}
 </div>
 {% empty %}
 <p>No datasets available.</p>

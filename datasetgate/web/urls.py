@@ -7,5 +7,6 @@ urlpatterns = [
     path("tos/<int:tos_id>/accept", views.TOSAcceptView.as_view(), name="web-tos-accept"),
     path("my-datasets", views.MyDatasetsView.as_view(), name="web-my-datasets"),
     path("grants/<slug:dataset>", views.GrantManageView.as_view(), name="web-grant-manage"),
+    path("dataset-admins/<slug:dataset>", views.DatasetAdminManageView.as_view(), name="web-dataset-admin-manage"),
     path("public-roots/<slug:dataset>", views.PublicRootManageView.as_view(), name="web-public-roots"),
 ]
