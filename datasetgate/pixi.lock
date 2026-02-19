@@ -29,8 +29,9 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f3/85/1637cd4af66fa687396e757dec650f28025f2a2f5a5531a3208dc0ec43f2/charset_normalizer-3.4.4-cp312-cp312-macosx_10_13_universal2.whl
       - pypi: https://files.pythonhosted.org/packages/f7/81/b0bb27f2ba931a65409c6b8a8b358a7f03c0e46eceacddff55f7c84b1f3b/cryptography-46.0.5-cp311-abi3-macosx_10_9_universal2.whl
       - pypi: https://files.pythonhosted.org/packages/91/a7/2b112ab430575bf3135b8304ac372248500d99c352f777485f53fdb9537e/django-5.2.11-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/08/7c/0613ef129685b59e4ffbe592788fd76461fb1947743f89d1874b7d70dc83/django_allauth-65.14.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b0/ce/bf8b9d3f415be4ac5588545b5fcdbbb841977db1c1d923f7568eeabe1689/djangorestframework-3.16.1-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/77/b6/85c4d21067220b9a78cfb81f516f9725ea6befc1544ec9bd2c1acd97c324/google_api_core-2.29.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/45/27/09c33d67f7e0dcf06d7ac17d196594e66989299374bfb0d4331d1038e76b/google_api_core-2.30.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/83/1d/d6466de3a5249d35e832a52834115ca9d1d0de6abc22065f049707516d47/google_auth-2.48.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/84/21/fb96db432d187b07756e62971c4d89bdef70259e4cfa76ee32bcc0ac97d1/google_auth_oauthlib-1.2.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/89/20/bfa472e327c8edee00f04beecc80baeddd2ab33ee0e86fd7654da49d45e9/google_cloud_core-2.5.0-py3-none-any.whl
@@ -48,6 +49,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/44/b5/a96872e5184f354da9c84ae119971a0a4c221fe9b27a4d94bd43f2596727/pyasn1-0.6.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/6f/01/c26ce75ba460d5cd503da9e13b21a33804d38c2165dec7b716d06b13010c/pyjwt-2.11.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3b/5d/63d4ae3b9daea098d5d6f5da83984853c1bbacd5dc826764b249fe119d24/requests_oauthlib-2.0.0-py2.py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/64/8d/0133e4eb4beed9e425d9a98ed6e081a55d195481b7632472be1af08d2f6b/rsa-4.9.1-py3-none-any.whl
@@ -85,8 +87,9 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/f3/85/1637cd4af66fa687396e757dec650f28025f2a2f5a5531a3208dc0ec43f2/charset_normalizer-3.4.4-cp312-cp312-macosx_10_13_universal2.whl
       - pypi: https://files.pythonhosted.org/packages/f7/81/b0bb27f2ba931a65409c6b8a8b358a7f03c0e46eceacddff55f7c84b1f3b/cryptography-46.0.5-cp311-abi3-macosx_10_9_universal2.whl
       - pypi: https://files.pythonhosted.org/packages/91/a7/2b112ab430575bf3135b8304ac372248500d99c352f777485f53fdb9537e/django-5.2.11-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/08/7c/0613ef129685b59e4ffbe592788fd76461fb1947743f89d1874b7d70dc83/django_allauth-65.14.3-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/b0/ce/bf8b9d3f415be4ac5588545b5fcdbbb841977db1c1d923f7568eeabe1689/djangorestframework-3.16.1-py3-none-any.whl
-      - pypi: https://files.pythonhosted.org/packages/77/b6/85c4d21067220b9a78cfb81f516f9725ea6befc1544ec9bd2c1acd97c324/google_api_core-2.29.0-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/45/27/09c33d67f7e0dcf06d7ac17d196594e66989299374bfb0d4331d1038e76b/google_api_core-2.30.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/83/1d/d6466de3a5249d35e832a52834115ca9d1d0de6abc22065f049707516d47/google_auth-2.48.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/84/21/fb96db432d187b07756e62971c4d89bdef70259e4cfa76ee32bcc0ac97d1/google_auth_oauthlib-1.2.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/89/20/bfa472e327c8edee00f04beecc80baeddd2ab33ee0e86fd7654da49d45e9/google_cloud_core-2.5.0-py3-none-any.whl
@@ -107,6 +110,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/0c/c3/44f3fbbfa403ea2a7c779186dc20772604442dde72947e7d01069cbe98e3/pycparser-3.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl
+      - pypi: https://files.pythonhosted.org/packages/6f/01/c26ce75ba460d5cd503da9e13b21a33804d38c2165dec7b716d06b13010c/pyjwt-2.11.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/3b/ab/b3226f0bd7cdcf710fbede2b3548584366da3b19b5021e74f5bde2a8fa3f/pytest-9.0.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/83/a5/41d091f697c09609e7ef1d5d61925494e0454ebf51de7de05f0f0a728f1d/pytest_django-4.12.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl
@@ -197,10 +201,11 @@ packages:
 - pypi: ./
   name: datasetgate
   version: 0.1.0
-  sha256: 4a2596e62f53983c4de3c9fef34fc926b43a5dee535be7c59afc37029daa999b
+  sha256: ee0d248ba5015034b7a99e11f7e066c9505720ab6341b8213eb8ddc8b24cf81b
   requires_dist:
   - django>=5.1,<6.0
   - djangorestframework>=3.15,<4.0
+  - django-allauth[socialaccount]>=65.0
   - google-auth>=2.0
   - google-auth-oauthlib>=1.0
   - google-cloud-storage>=2.0
@@ -221,6 +226,26 @@ packages:
   - argon2-cffi>=19.1.0 ; extra == 'argon2'
   - bcrypt ; extra == 'bcrypt'
   requires_python: '>=3.10'
+- pypi: https://files.pythonhosted.org/packages/08/7c/0613ef129685b59e4ffbe592788fd76461fb1947743f89d1874b7d70dc83/django_allauth-65.14.3-py3-none-any.whl
+  name: django-allauth
+  version: 65.14.3
+  sha256: 1d8e1127bdffceb8001bdd9bafbf97661f81e92f4b7bd4f6e799167b0311286d
+  requires_dist:
+  - django>=4.2.16
+  - asgiref>=3.8.1
+  - pyjwt[crypto]>=2.0,<3 ; extra == 'headless'
+  - pyyaml>=6,<7 ; extra == 'headless-spec'
+  - oauthlib>=3.3.0,<4 ; extra == 'idp-oidc'
+  - pyjwt[crypto]>=2.0,<3 ; extra == 'idp-oidc'
+  - qrcode>=7.0.0,<9 ; extra == 'mfa'
+  - fido2>=1.1.2,<3 ; extra == 'mfa'
+  - python3-openid>=3.0.8,<4 ; extra == 'openid'
+  - python3-saml>=1.15.0,<2.0.0 ; extra == 'saml'
+  - python3-openid>=3.0.8,<4 ; extra == 'steam'
+  - oauthlib>=3.3.0,<4 ; extra == 'socialaccount'
+  - requests>=2.0.0,<3 ; extra == 'socialaccount'
+  - pyjwt[crypto]>=2.0,<3 ; extra == 'socialaccount'
+  requires_python: '>=3.8'
 - pypi: https://files.pythonhosted.org/packages/b0/ce/bf8b9d3f415be4ac5588545b5fcdbbb841977db1c1d923f7568eeabe1689/djangorestframework-3.16.1-py3-none-any.whl
   name: djangorestframework
   version: 3.16.1
@@ -228,18 +253,17 @@ packages:
   requires_dist:
   - django>=4.2
   requires_python: '>=3.9'
-- pypi: https://files.pythonhosted.org/packages/77/b6/85c4d21067220b9a78cfb81f516f9725ea6befc1544ec9bd2c1acd97c324/google_api_core-2.29.0-py3-none-any.whl
+- pypi: https://files.pythonhosted.org/packages/45/27/09c33d67f7e0dcf06d7ac17d196594e66989299374bfb0d4331d1038e76b/google_api_core-2.30.0-py3-none-any.whl
   name: google-api-core
-  version: 2.29.0
-  sha256: d30bc60980daa36e314b5d5a3e5958b0200cb44ca8fa1be2b614e932b75a3ea9
+  version: 2.30.0
+  sha256: 80be49ee937ff9aba0fd79a6eddfde35fe658b9953ab9b79c57dd7061afa8df5
   requires_dist:
-  - googleapis-common-protos>=1.56.2,<2.0.0
-  - protobuf>=3.19.5,!=3.20.0,!=3.20.1,!=4.21.0,!=4.21.1,!=4.21.2,!=4.21.3,!=4.21.4,!=4.21.5,<7.0.0
+  - googleapis-common-protos>=1.56.3,<2.0.0
+  - protobuf>=4.25.8,<7.0.0
   - proto-plus>=1.22.3,<2.0.0
   - proto-plus>=1.25.0,<2.0.0 ; python_full_version >= '3.13'
   - google-auth>=2.14.1,<3.0.0
-  - requests>=2.18.0,<3.0.0
-  - importlib-metadata>=1.4 ; python_full_version < '3.8'
+  - requests>=2.20.0,<3.0.0
   - google-auth[aiohttp]>=2.35.0,<3.0.0 ; extra == 'async-rest'
   - grpcio>=1.33.2,<2.0.0 ; extra == 'grpc'
   - grpcio>=1.49.1,<2.0.0 ; python_full_version >= '3.11' and extra == 'grpc'
@@ -247,9 +271,7 @@ packages:
   - grpcio-status>=1.33.2,<2.0.0 ; extra == 'grpc'
   - grpcio-status>=1.49.1,<2.0.0 ; python_full_version >= '3.11' and extra == 'grpc'
   - grpcio-status>=1.75.1,<2.0.0 ; python_full_version >= '3.14' and extra == 'grpc'
-  - grpcio-gcp>=0.2.2,<1.0.0 ; extra == 'grpcgcp'
-  - grpcio-gcp>=0.2.2,<1.0.0 ; extra == 'grpcio-gcp'
-  requires_python: '>=3.7'
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/83/1d/d6466de3a5249d35e832a52834115ca9d1d0de6abc22065f049707516d47/google_auth-2.48.0-py3-none-any.whl
   name: google-auth
   version: 2.48.0
@@ -576,6 +598,25 @@ packages:
   requires_dist:
   - colorama>=0.4.6 ; extra == 'windows-terminal'
   requires_python: '>=3.8'
+- pypi: https://files.pythonhosted.org/packages/6f/01/c26ce75ba460d5cd503da9e13b21a33804d38c2165dec7b716d06b13010c/pyjwt-2.11.0-py3-none-any.whl
+  name: pyjwt
+  version: 2.11.0
+  sha256: 94a6bde30eb5c8e04fee991062b534071fd1439ef58d2adc9ccb823e7bcd0469
+  requires_dist:
+  - cryptography>=3.4.0 ; extra == 'crypto'
+  - coverage[toml]==7.10.7 ; extra == 'dev'
+  - cryptography>=3.4.0 ; extra == 'dev'
+  - pre-commit ; extra == 'dev'
+  - pytest>=8.4.2,<9.0.0 ; extra == 'dev'
+  - sphinx ; extra == 'dev'
+  - sphinx-rtd-theme ; extra == 'dev'
+  - zope-interface ; extra == 'dev'
+  - sphinx ; extra == 'docs'
+  - sphinx-rtd-theme ; extra == 'docs'
+  - zope-interface ; extra == 'docs'
+  - coverage[toml]==7.10.7 ; extra == 'tests'
+  - pytest>=8.4.2,<9.0.0 ; extra == 'tests'
+  requires_python: '>=3.9'
 - pypi: https://files.pythonhosted.org/packages/3b/ab/b3226f0bd7cdcf710fbede2b3548584366da3b19b5021e74f5bde2a8fa3f/pytest-9.0.2-py3-none-any.whl
   name: pytest
   version: 9.0.2

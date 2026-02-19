@@ -21,6 +21,7 @@ class DatasetContextMiddleware:
 
     # Paths that should never be treated as dataset prefixes
     PASSTHROUGH_PREFIXES = (
+        "/accounts/",
         "/admin/",
         "/api/",
         "/auth/",

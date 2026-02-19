@@ -32,7 +32,12 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.sites",
     "rest_framework",
+    "allauth",
+    "allauth.account",
+    "allauth.socialaccount",
+    "allauth.socialaccount.providers.google",
     "core",
     "cave_api",
     "auth_api",
@@ -41,6 +46,8 @@ INSTALLED_APPS = [
     "web",
 ]
 
+SITE_ID = 1
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -48,6 +55,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
+    "allauth.account.middleware.AccountMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "datasetgate.middleware.DatasetContextMiddleware",
 ]
@@ -99,6 +107,24 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = "core.User"
 
+# django-allauth configuration
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    "allauth.account.auth_backends.AuthenticationBackend",
+]
+
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
+ACCOUNT_LOGIN_METHODS = {"email"}
+ACCOUNT_SIGNUP_FIELDS = ["email*"]
+ACCOUNT_EMAIL_VERIFICATION = "none"
+ACCOUNT_LOGIN_ON_GET = True
+
+SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION = True
+SOCIALACCOUNT_EMAIL_AUTHENTICATION_AUTO_CONNECT = True
+SOCIALACCOUNT_ADAPTER = "core.allauth_adapter.SocialAccountAdapter"
+ACCOUNT_ADAPTER = "core.allauth_adapter.AccountAdapter"
+
 # DRF configuration
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -141,6 +167,17 @@ if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
             GOOGLE_CLIENT_SECRET = GOOGLE_CLIENT_SECRET or _web.get("client_secret", "")
         except (json.JSONDecodeError, KeyError):
             pass
+
+SOCIALACCOUNT_PROVIDERS = {
+    "google": {
+        "SCOPE": ["openid", "email", "profile"],
+        "AUTH_PARAMS": {"access_type": "online"},
+        "APP": {
+            "client_id": GOOGLE_CLIENT_ID,
+            "secret": GOOGLE_CLIENT_SECRET,
+        },
+    },
+}
 
 # ngauth configuration
 NGAUTH_ALLOWED_ORIGINS = os.environ.get(
