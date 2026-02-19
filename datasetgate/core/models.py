@@ -5,11 +5,29 @@ Ported from CAVE's SQLAlchemy models with extensions from Architecture.md.
 
 import secrets
 
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 from django.db import models
 from django.utils import timezone
 
 
-class User(models.Model):
+class UserManager(BaseUserManager):
+    """Manager for the custom User model (no passwords — Google OAuth + APIKey only)."""
+
+    def create_user(self, email, name="", **extra_fields):
+        if not email:
+            raise ValueError("Users must have an email address")
+        email = self.normalize_email(email)
+        user = self.model(email=email, name=name, **extra_fields)
+        user.set_unusable_password()
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, email, name="", **extra_fields):
+        extra_fields.setdefault("admin", True)
+        return self.create_user(email, name, **extra_fields)
+
+
+class User(AbstractBaseUser):
     """User identity, linked to Google OAuth."""
 
     google_sub = models.CharField(max_length=255, unique=True, blank=True, null=True)
@@ -39,16 +57,31 @@ class User(models.Model):
     # M:M to Group through UserGroup
     groups = models.ManyToManyField("Group", through="UserGroup", related_name="users")
 
+    objects = UserManager()
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["name"]
+    EMAIL_FIELD = "email"
+
     class Meta:
-        db_table = "user"
+        db_table = "dsg_user"
 
     def __str__(self):
         return self.email
 
     @property
-    def is_authenticated(self):
-        """Required by DRF's IsAuthenticated permission."""
-        return True
+    def is_staff(self):
+        return self.admin
+
+    @property
+    def is_superuser(self):
+        return self.admin
+
+    def has_perm(self, perm, obj=None):
+        return self.admin
+
+    def has_module_perms(self, app_label):
+        return self.admin
 
     @property
     def is_service_account(self):
@@ -71,7 +104,7 @@ class Group(models.Model):
     )
 
     class Meta:
-        db_table = "group"
+        db_table = "dsg_group"
 
     def __str__(self):
         return self.name
@@ -108,10 +141,20 @@ class Permission(models.Model):
 class Dataset(models.Model):
     """A neuroscience dataset."""
 
+    ACCESS_CLOSED = "closed"
+    ACCESS_PUBLIC = "public"
+    ACCESS_MODE_CHOICES = [
+        (ACCESS_CLOSED, "Closed — invite only"),
+        (ACCESS_PUBLIC, "Public — self-service access"),
+    ]
+
     name = models.SlugField(max_length=255, unique=True)
     description = models.TextField(blank=True, default="")
     tos = models.ForeignKey(
         "TOSDocument", on_delete=models.SET_NULL, null=True, blank=True, related_name="datasets"
+    )
+    access_mode = models.CharField(
+        max_length=10, choices=ACCESS_MODE_CHOICES, default=ACCESS_CLOSED
     )
 
     # SCIM 2.0 fields
@@ -180,6 +223,13 @@ class GroupDatasetPermission(models.Model):
 class Grant(models.Model):
     """Direct user grant on a dataset (optionally scoped to a version)."""
 
+    SOURCE_MANUAL = "manual"
+    SOURCE_SELF_SERVICE = "self_service"
+    SOURCE_CHOICES = [
+        (SOURCE_MANUAL, "Added by admin or lab head"),
+        (SOURCE_SELF_SERVICE, "Self-service TOS acceptance"),
+    ]
+
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="grants")
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="grants")
     dataset_version = models.ForeignKey(
@@ -188,6 +238,9 @@ class Grant(models.Model):
     permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
     granted_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="grants_given"
+    )
+    source = models.CharField(
+        max_length=20, choices=SOURCE_CHOICES, default=SOURCE_MANUAL
     )
     created = models.DateTimeField(auto_now_add=True)
 
@@ -232,6 +285,10 @@ class TOSDocument(models.Model):
         null=True,
         blank=True,
         related_name="tos_documents",
+    )
+    invite_token = models.CharField(
+        max_length=64, unique=True, default=secrets.token_urlsafe,
+        help_text="Unguessable token for TOS page URLs on closed datasets",
     )
     effective_date = models.DateTimeField(default=timezone.now)
     retired_date = models.DateTimeField(null=True, blank=True)

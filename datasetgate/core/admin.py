@@ -35,6 +35,8 @@ class UserAdmin(admin.ModelAdmin):
     list_display = ("id", "email", "name", "admin", "is_active", "created")
     list_filter = ("admin", "is_active", "read_only")
     search_fields = ("email", "name", "display_name")
+    readonly_fields = ("password",)
+    exclude = ("password",)
     inlines = [UserGroupInline, APIKeyInline]
 
 
@@ -67,7 +69,8 @@ class DatasetAdminInline(admin.TabularInline):
 
 @admin.register(Dataset)
 class DatasetModelAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "tos")
+    list_display = ("id", "name", "tos", "access_mode")
+    list_filter = ("access_mode",)
     search_fields = ("name",)
     inlines = [DatasetVersionInline, DatasetAdminInline, ServiceTableInline]
 
@@ -87,8 +90,8 @@ class GroupDatasetPermissionAdmin(admin.ModelAdmin):
 
 @admin.register(Grant)
 class GrantAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "dataset", "dataset_version", "permission", "granted_by")
-    list_filter = ("permission",)
+    list_display = ("id", "user", "dataset", "dataset_version", "permission", "granted_by", "source")
+    list_filter = ("permission", "source")
     search_fields = ("user__email", "dataset__name")
 
 
