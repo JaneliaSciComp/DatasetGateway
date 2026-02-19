@@ -9,9 +9,13 @@ from core.models import (
     APIKey,
     Dataset,
     DatasetAdmin,
+    DatasetVersion,
     Grant,
     Group,
+    GroupDatasetPermission,
     Permission,
+    TOSAcceptance,
+    TOSDocument,
     User,
     UserGroup,
 )
@@ -203,3 +207,65 @@ class TestGrantManageEnhanced(_WebTestBase):
         self._login(self.lab_head_key)
         resp = self.client.get(f"/web/grants/{self.dataset.name}")
         self.assertContains(resp, "Added by admin or lab head")
+
+
+# ──────────────────────────────────────────────────────────────
+# Commit 3: Enhanced user dashboard
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestMyDatasetsDashboard(_WebTestBase):
+    def test_shows_direct_grants(self):
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm, source=Grant.SOURCE_MANUAL,
+        )
+        self._login(self.regular_key)
+        resp = self.client.get("/web/my-datasets")
+        self.assertContains(resp, "test-dataset")
+        self.assertContains(resp, "view")
+
+    def test_shows_group_permissions(self):
+        group = Group.objects.create(name="researchers")
+        UserGroup.objects.create(user=self.regular_user, group=group)
+        GroupDatasetPermission.objects.create(
+            group=group, dataset=self.dataset, permission=self.view_perm,
+        )
+        self._login(self.regular_key)
+        resp = self.client.get("/web/my-datasets")
+        self.assertContains(resp, "researchers")
+        self.assertContains(resp, "Group-Based Permissions")
+
+    def test_shows_admin_datasets(self):
+        self._login(self.lab_head_key)
+        resp = self.client.get("/web/my-datasets")
+        self.assertContains(resp, "Datasets You Admin")
+        self.assertContains(resp, "test-dataset")
+        self.assertContains(resp, "Manage Grants")
+
+    def test_shows_groups(self):
+        self._login(self.sc_key)
+        resp = self.client.get("/web/my-datasets")
+        self.assertContains(resp, "sc")
+
+    def test_shows_missing_tos_with_invite_token(self):
+        tos = TOSDocument.objects.create(
+            name="Test TOS", text="Terms here", dataset=self.dataset,
+            invite_token="test-invite-token-abc",
+        )
+        self.dataset.tos = tos
+        self.dataset.save()
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm,
+        )
+        self._login(self.regular_key)
+        resp = self.client.get("/web/my-datasets")
+        self.assertContains(resp, "Action Required")
+        self.assertContains(resp, "test-invite-token-abc")
+
+    def test_unauthenticated_redirects(self):
+        resp = self.client.get("/web/my-datasets")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/auth/login", resp.url)

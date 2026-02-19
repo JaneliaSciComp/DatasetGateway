@@ -178,25 +178,55 @@ class TOSAcceptView(View):
 
 
 class MyDatasetsView(View):
-    """GET /web/my-datasets — User's accepted datasets and history."""
+    """GET /web/my-datasets — Comprehensive user dashboard."""
 
     def get(self, request):
         user = _get_web_user(request)
         if not user:
             return redirect("/auth/login")
 
-        acceptances = TOSAcceptance.objects.filter(user=user).select_related(
-            "tos_document"
-        ).order_by("-accepted_at")
+        from core.cache import build_permission_cache
 
+        perm_cache = build_permission_cache(user)
+
+        # Groups
+        groups = perm_cache["groups"]
+
+        # Datasets this user admins
+        admin_datasets = DatasetAdmin.objects.filter(user=user).select_related("dataset")
+
+        # Missing TOS — enrich with invite_token for link generation
+        missing_tos = perm_cache["missing_tos"]
+        tos_ids = [item["tos_id"] for item in missing_tos]
+        tos_tokens = dict(
+            TOSDocument.objects.filter(pk__in=tos_ids).values_list("pk", "invite_token")
+        )
+        for item in missing_tos:
+            item["invite_token"] = tos_tokens.get(item["tos_id"], "")
+
+        # Direct grants
         grants = Grant.objects.filter(user=user).select_related(
             "dataset", "permission", "dataset_version"
         ).order_by("-created")
 
+        # Group-based permissions
+        group_perms = GroupDatasetPermission.objects.filter(
+            group__user_groups__user=user
+        ).select_related("group", "dataset", "permission").order_by("dataset__name")
+
+        # TOS acceptances
+        acceptances = TOSAcceptance.objects.filter(user=user).select_related(
+            "tos_document"
+        ).order_by("-accepted_at")
+
         return render(request, "web/my_datasets.html", {
             "user": user,
-            "acceptances": acceptances,
+            "groups": groups,
+            "admin_datasets": admin_datasets,
+            "missing_tos": missing_tos,
             "grants": grants,
+            "group_perms": group_perms,
+            "acceptances": acceptances,
         })
 
 
