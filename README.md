@@ -44,7 +44,7 @@ all login/authorize links will fail with a `client_id` error.
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
    and create an OAuth 2.0 Client ID (type: Web application).
 2. Add `http://localhost:8000/api/v1/oauth2callback` and
-   `http://localhost:8000/auth/callback` as authorized redirect URIs.
+   `http://localhost:8000/accounts/google/login/callback/` as authorized redirect URIs.
 3. Download the JSON credentials and drop the file into the project:
 
 ```bash

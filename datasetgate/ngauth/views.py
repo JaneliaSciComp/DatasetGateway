@@ -6,17 +6,17 @@ plus TOS gating and GCS token issuance.
 
 import json
 import re
-import secrets
 import time
 
 from django.conf import settings
+from django.contrib.auth import logout as auth_logout
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
-from core.models import APIKey, Dataset, DatasetVersion, TOSAcceptance, TOSDocument, User
+from core.models import APIKey, TOSAcceptance, TOSDocument, User
 
 from . import gcs, tokens
 
@@ -78,118 +78,15 @@ class HealthView(View):
 
 
 class AuthLoginView(View):
-    """GET /auth/login — Initiate OAuth."""
+    """GET /auth/login — Initiate OAuth via allauth."""
 
     def get(self, request):
-        from urllib.parse import urlencode
-
         # Store post-login redirect target (default: /login for Neuroglancer popup flow)
         next_url = request.GET.get("next", "")
         if next_url:
             request.session["oauth_next"] = next_url
 
-        callback_url = request.build_absolute_uri("/auth/callback")
-        state = secrets.token_urlsafe(32)
-        request.session["oauth_state"] = state
-
-        params = {
-            "client_id": settings.GOOGLE_CLIENT_ID,
-            "redirect_uri": callback_url,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "state": state,
-        }
-
-        return HttpResponseRedirect(
-            f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-        )
-
-
-class AuthCallbackView(View):
-    """GET /auth/callback — OAuth callback."""
-
-    def get(self, request):
-        code = request.GET.get("code")
-        error = request.GET.get("error")
-
-        if error or not code:
-            return JsonResponse({"error": error or "Missing code"}, status=400)
-
-        # Exchange code for tokens
-        callback_url = request.build_absolute_uri("/auth/callback")
-        user_info = self._exchange_and_verify(code, callback_url)
-        if user_info is None:
-            return JsonResponse({"error": "Authentication failed"}, status=500)
-
-        email = user_info.get("email", "")
-        if not email:
-            return JsonResponse({"error": "No email in token"}, status=400)
-
-        # Ensure user exists
-        user, _created = User.objects.get_or_create(
-            email=email,
-            defaults={
-                "google_sub": user_info.get("sub", ""),
-                "name": user_info.get("name", email.split("@")[0]),
-                "display_name": user_info.get("name", ""),
-            },
-        )
-
-        # Create APIKey and set dsg_token cookie
-        api_key = APIKey.objects.create(user=user, description="ngauth login token")
-        next_url = request.session.pop("oauth_next", "/login")
-        response = HttpResponseRedirect(next_url)
-        cookie_kwargs = {
-            "max_age": settings.AUTH_COOKIE_AGE,
-            "httponly": True,
-            "samesite": "Lax",
-            "secure": settings.AUTH_COOKIE_SECURE,
-        }
-        cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
-        if cookie_domain:
-            cookie_kwargs["domain"] = cookie_domain
-        response.set_cookie(
-            settings.AUTH_COOKIE_NAME,
-            api_key.key,
-            **cookie_kwargs,
-        )
-        return response
-
-    def _exchange_and_verify(self, code, redirect_uri):
-        """Exchange code and verify ID token."""
-        import urllib.request
-        from urllib.parse import urlencode
-
-        data = urlencode({
-            "client_id": settings.GOOGLE_CLIENT_ID,
-            "client_secret": settings.GOOGLE_CLIENT_SECRET,
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri,
-        }).encode()
-
-        try:
-            req = urllib.request.Request(
-                "https://oauth2.googleapis.com/token",
-                data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                token_data = json.loads(resp.read())
-        except Exception:
-            return None
-
-        try:
-            from google.oauth2 import id_token
-            from google.auth.transport import requests as google_requests
-
-            return id_token.verify_oauth2_token(
-                token_data.get("id_token", ""),
-                google_requests.Request(),
-                settings.GOOGLE_CLIENT_ID,
-            )
-        except Exception:
-            return None
+        return HttpResponseRedirect("/accounts/google/login/")
 
 
 class LoginStatusView(View):
@@ -205,9 +102,10 @@ class LoginStatusView(View):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class LogoutView(View):
-    """POST /logout — Clear ngauth cookie."""
+    """POST /logout — Clear ngauth cookie and allauth session."""
 
     def post(self, request):
+        auth_logout(request)
         response = JsonResponse({"status": "logged out"})
         delete_kwargs = {}
         cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")

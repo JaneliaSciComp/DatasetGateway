@@ -74,39 +74,33 @@ The design keeps the **ngauth token path stable** (e.g. `/token`) while making t
 
 ### Login Flow
 
-Both OAuth entry points follow the same sequence:
+The Neuroglancer flow (`/auth/login`) delegates to **django-allauth** for
+OAuth. The CAVE flow (`/api/v1/authorize`) uses its own OAuth callback but
+follows the same pattern. Both produce the same `dsg_token` cookie.
 
 1. **Redirect to Google** — The user visits `/auth/login` (Neuroglancer
-   flow) or `/api/v1/authorize` (CAVE flow). The server generates an
-   OAuth state token, stores it in the session, and redirects the browser
-   to Google's authorization endpoint with `openid email profile` scopes.
+   flow) or `/api/v1/authorize` (CAVE flow). The server redirects to
+   allauth's Google login (`/accounts/google/login/`) or directly to
+   Google's authorization endpoint with `openid email profile` scopes.
 
 2. **Google callback** — After consent, Google redirects back to the
-   callback URL (`/auth/callback` or `/api/v1/oauth2callback`) with an
-   authorization code.
+   callback URL (`/accounts/google/login/callback/` for allauth, or
+   `/api/v1/oauth2callback` for CAVE).
 
-3. **Code exchange** — The server sends the code to Google's token
-   endpoint (`https://oauth2.googleapis.com/token`) and receives an ID
-   token.
+3. **User upsert** — allauth creates or matches the `User` record by
+   email. The `SocialAccountAdapter.populate_user()` sets the user's
+   name and display_name from Google profile data.
 
-4. **ID token verification** — The server verifies the ID token signature
-   and claims using `google.oauth2.id_token.verify_oauth2_token()`,
-   extracting the user's email, name, and Google subject ID.
+4. **API key creation** — The `AccountAdapter.login()` creates a new
+   `APIKey` record and stashes the key value in the Django session.
 
-5. **User upsert** — The server creates or updates the `User` record
-   (keyed by email) with the Google subject ID and profile info.
+5. **Cookie set** — The `DSGTokenCookieMiddleware` picks up the token
+   from the session and sets the `dsg_token` cookie (HttpOnly,
+   SameSite=Lax, 7-day TTL). The browser is redirected to the original
+   destination.
 
-6. **API key creation** — The server creates a new `APIKey` record
-   linked to the user. The key value is a random token stored in the
-   database.
-
-7. **Cookie set** — The server sets the `dsg_token` cookie to the API
-   key value (HttpOnly, SameSite=Lax, 7-day TTL) and redirects the
-   browser to the original destination.
-
-The two flows are functionally identical — they differ only in callback
-URL and redirect behavior. Both produce the same `dsg_token` cookie
-backed by the same `APIKey` table.
+Both flows produce the same `dsg_token` cookie backed by the same
+`APIKey` table.
 
 ### Unified `dsg_token` Cookie
 
@@ -209,20 +203,23 @@ TOS is tracked at the dataset/version level.
 Items marked *(not yet implemented)* are design goals that don't exist
 in the current codebase.
 
-**User**
+**User** (extends `AbstractBaseUser`)
 - id
 - google_sub (unique, nullable)
-- email (unique)
+- email (unique) — `USERNAME_FIELD`
 - name
 - display_name
-- admin (boolean)
+- admin (boolean) — maps to `is_staff` / `is_superuser`
 - is_active (boolean)
+- password (inherited from AbstractBaseUser, always unusable)
+- last_login (inherited from AbstractBaseUser)
 - gdpr_consent (boolean)
 - pi (string)
 - read_only (boolean)
 - parent_id (FK to self, nullable — for service accounts)
 - scim_id, external_id (SCIM 2.0 identifiers)
 - created / updated
+- db_table: `dsg_user`
 
 **Group**
 - id
@@ -244,6 +241,7 @@ in the current codebase.
 - name (unique slug, e.g., "fish2")
 - description
 - tos (FK to TOSDocument, nullable)
+- access_mode (`closed` or `public` — controls invite-only vs self-service TOS)
 - scim_id, external_id (SCIM 2.0 identifiers)
 - owner/creator user or group *(not yet implemented)*
 
@@ -264,6 +262,7 @@ in the current codebase.
 - dataset_version (FK to DatasetVersion, nullable — null means all versions)
 - permission (FK to Permission, e.g., view, edit)
 - granted_by (FK to User, nullable)
+- source (`manual` or `self_service` — tracks grant provenance)
 - created
 
 Both `Grant` and `GroupDatasetPermission` records are merged into the
@@ -309,6 +308,7 @@ Maps a CAVE service/table pair to a dataset, used by
 - text (full terms text)
 - dataset (FK to Dataset, nullable — null means global)
 - dataset_version (FK to DatasetVersion, nullable — null means dataset-wide)
+- invite_token (unique, auto-generated — unguessable token for TOS page URLs on closed datasets)
 - tos_version string/hash *(not yet implemented)*
 - content / url *(not yet implemented — currently text only)*
 - effective_date
@@ -407,8 +407,8 @@ Endpoints marked with **ngauth** are required by the [ngauth protocol](https://g
 |--------|------|-------------|--------|
 | `GET` | `/` | Landing page with TOS | ngauth* |
 | `GET` | `/health` | Health check | — |
-| `GET` | `/auth/login` | Initiate OAuth | — |
-| `GET` | `/auth/callback` | OAuth callback | ngauth |
+| `GET` | `/auth/login` | Initiate OAuth (redirects to allauth) | — |
+| `GET` | `/accounts/google/login/callback/` | OAuth callback (allauth) | — |
 | `POST` | `/activate` | Provision access | — |
 | `GET` | `/success` | Success page | — |
 | `GET` | `/login` | Login status page | ngauth |

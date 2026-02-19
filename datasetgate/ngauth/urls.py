@@ -6,7 +6,6 @@ urlpatterns = [
     path("", views.IndexView.as_view(), name="ngauth-index"),
     path("health", views.HealthView.as_view(), name="ngauth-health"),
     path("auth/login", views.AuthLoginView.as_view(), name="ngauth-auth-login"),
-    path("auth/callback", views.AuthCallbackView.as_view(), name="ngauth-auth-callback"),
     path("login", views.LoginStatusView.as_view(), name="ngauth-login-status"),
     path("logout", views.LogoutView.as_view(), name="ngauth-logout"),
     path("activate", views.ActivateView.as_view(), name="ngauth-activate"),
