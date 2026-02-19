@@ -6,14 +6,34 @@ Bridges allauth's login/signup flow with DatasetGate's APIKey token system.
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
 
+from .models import APIKey
+
 
 class AccountAdapter(DefaultAccountAdapter):
     """Custom account adapter — creates APIKey on login and handles redirects."""
 
-    pass
+    def login(self, request, user):
+        """Create an APIKey and stash the token value in the session.
+
+        The DSGTokenCookieMiddleware picks it up and sets the dsg_token cookie
+        on the response (which we don't control here since allauth redirects).
+        """
+        super().login(request, user)
+        api_key = APIKey.objects.create(user=user, description="allauth login token")
+        request.session["dsg_token_value"] = api_key.key
+
+    def get_login_redirect_url(self, request):
+        """Redirect to the URL stored before OAuth, or the default."""
+        return request.session.pop("oauth_next", "/login")
 
 
 class SocialAccountAdapter(DefaultSocialAccountAdapter):
     """Custom social account adapter — populates user fields from Google profile."""
 
-    pass
+    def populate_user(self, request, sociallogin, data):
+        user = super().populate_user(request, sociallogin, data)
+        name = data.get("name") or ""
+        if name:
+            user.name = name
+            user.display_name = name
+        return user
