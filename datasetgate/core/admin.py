@@ -1,4 +1,8 @@
 from django.contrib import admin
+from django.contrib.auth.models import Group as AuthGroup
+
+# Unregister Django's built-in Group — we use core.Group instead
+admin.site.unregister(AuthGroup)
 
 from .models import (
     APIKey,
