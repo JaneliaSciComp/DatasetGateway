@@ -246,23 +246,30 @@ class GrantManageView(View):
             perm_id = request.POST.get("permission")
             version_id = request.POST.get("version") or None
 
-            try:
-                target_user = User.objects.get(email=email)
-            except User.DoesNotExist:
-                messages.error(request, f"User not found: {email}")
-                return redirect("web-grant-manage", dataset=dataset)
+            target_user, user_created = User.objects.get_or_create(
+                email=email,
+                defaults={"name": email.split("@")[0]},
+            )
+            if user_created:
+                target_user.set_unusable_password()
+                target_user.save()
 
             perm = get_object_or_404(Permission, pk=perm_id)
             dv = DatasetVersion.objects.get(pk=version_id) if version_id else None
 
-            Grant.objects.get_or_create(
+            _, grant_created = Grant.objects.get_or_create(
                 user=target_user,
                 dataset=ds,
                 dataset_version=dv,
                 permission=perm,
-                defaults={"granted_by": user},
+                defaults={"granted_by": user, "source": Grant.SOURCE_MANUAL},
             )
-            messages.success(request, f"Granted {perm.name} to {email}")
+            if user_created:
+                messages.success(request, f"Created user and granted {perm.name} to {email}")
+            elif grant_created:
+                messages.success(request, f"Granted {perm.name} to {email}")
+            else:
+                messages.info(request, f"{email} already has {perm.name}")
 
         elif action == "revoke":
             grant_id = request.POST.get("grant_id")

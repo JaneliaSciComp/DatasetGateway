@@ -137,3 +137,69 @@ class TestDatasetAdminManage(_WebTestBase):
         self._login(self.regular_key)
         resp = self.client.get("/web/datasets")
         self.assertNotContains(resp, "Manage Lab Heads")
+
+
+# ──────────────────────────────────────────────────────────────
+# Commit 2: Lab heads add users (enhance GrantManageView)
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestGrantManageEnhanced(_WebTestBase):
+    def test_lab_head_grants_existing_user(self):
+        self._login(self.lab_head_key)
+        resp = self.client.post(
+            f"/web/grants/{self.dataset.name}",
+            {"action": "grant", "email": "regular@example.org", "permission": self.view_perm.pk},
+        )
+        self.assertEqual(resp.status_code, 302)
+        grant = Grant.objects.get(user=self.regular_user, dataset=self.dataset)
+        self.assertEqual(grant.source, Grant.SOURCE_MANUAL)
+        self.assertEqual(grant.granted_by, self.lab_head)
+
+    def test_lab_head_grants_new_email_creates_user(self):
+        self._login(self.lab_head_key)
+        resp = self.client.post(
+            f"/web/grants/{self.dataset.name}",
+            {"action": "grant", "email": "newbie@example.org", "permission": self.view_perm.pk},
+        )
+        self.assertEqual(resp.status_code, 302)
+        new_user = User.objects.get(email="newbie@example.org")
+        self.assertEqual(new_user.name, "newbie")
+        self.assertFalse(new_user.has_usable_password())
+        grant = Grant.objects.get(user=new_user, dataset=self.dataset)
+        self.assertEqual(grant.source, Grant.SOURCE_MANUAL)
+
+    def test_grant_success_message_for_new_user(self):
+        self._login(self.lab_head_key)
+        resp = self.client.post(
+            f"/web/grants/{self.dataset.name}",
+            {"action": "grant", "email": "newbie@example.org", "permission": self.view_perm.pk},
+            follow=True,
+        )
+        self.assertContains(resp, "Created user and granted")
+
+    def test_global_admin_can_manage_grants(self):
+        self._login(self.admin_key)
+        resp = self.client.get(f"/web/grants/{self.dataset.name}")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_regular_user_denied(self):
+        self._login(self.regular_key)
+        resp = self.client.get(f"/web/grants/{self.dataset.name}")
+        self.assertContains(resp, "Access Denied")
+
+    def test_unauthenticated_redirects(self):
+        resp = self.client.get(f"/web/grants/{self.dataset.name}")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/auth/login", resp.url)
+
+    def test_grant_manage_shows_source_column(self):
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm, granted_by=self.lab_head,
+            source=Grant.SOURCE_MANUAL,
+        )
+        self._login(self.lab_head_key)
+        resp = self.client.get(f"/web/grants/{self.dataset.name}")
+        self.assertContains(resp, "Added by admin or lab head")
