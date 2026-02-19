@@ -269,3 +269,200 @@ class TestMyDatasetsDashboard(_WebTestBase):
         resp = self.client.get("/web/my-datasets")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/auth/login", resp.url)
+
+
+# ──────────────────────────────────────────────────────────────
+# Commit 4: TOS landing pages (closed + public flows)
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestTOSLandingClosed(_WebTestBase):
+    """TOS landing page for closed (invite-only) datasets."""
+
+    def setUp(self):
+        super().setUp()
+        self.dataset.access_mode = Dataset.ACCESS_CLOSED
+        self.dataset.save()
+        self.tos = TOSDocument.objects.create(
+            name="Closed TOS", text="Accept these terms.",
+            dataset=self.dataset, invite_token="closed-tok-123",
+        )
+        self.dataset.tos = self.tos
+        self.dataset.save()
+        # Give regular_user a grant so they're "pre-added"
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm, source=Grant.SOURCE_MANUAL,
+        )
+
+    def test_pre_added_user_can_view(self):
+        self._login(self.regular_key)
+        resp = self.client.get("/web/tos/closed-tok-123/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Closed TOS")
+        self.assertContains(resp, "I Accept")
+
+    def test_pre_added_user_can_accept(self):
+        self._login(self.regular_key)
+        resp = self.client.post("/web/tos/closed-tok-123/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            TOSAcceptance.objects.filter(user=self.regular_user, tos_document=self.tos).exists()
+        )
+
+    def test_dataset_admin_can_accept(self):
+        self._login(self.lab_head_key)
+        resp = self.client.post("/web/tos/closed-tok-123/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            TOSAcceptance.objects.filter(user=self.lab_head, tos_document=self.tos).exists()
+        )
+
+    def test_global_admin_can_accept(self):
+        self._login(self.admin_key)
+        resp = self.client.post("/web/tos/closed-tok-123/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(
+            TOSAcceptance.objects.filter(user=self.admin_user, tos_document=self.tos).exists()
+        )
+
+    def test_user_without_grant_is_denied(self):
+        """SC user without grant/admin on closed dataset is denied."""
+        self._login(self.sc_key)
+        resp = self.client.get("/web/tos/closed-tok-123/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Access Restricted")
+
+    def test_unauthenticated_sees_login_link(self):
+        resp = self.client.get("/web/tos/closed-tok-123/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Login to accept")
+        self.assertContains(resp, "?next=/web/tos/closed-tok-123/")
+
+
+@pytest.mark.django_db
+class TestTOSLandingPublic(_WebTestBase):
+    """TOS landing page for public (self-service) datasets."""
+
+    def setUp(self):
+        super().setUp()
+        self.dataset.access_mode = Dataset.ACCESS_PUBLIC
+        self.dataset.save()
+        self.tos = TOSDocument.objects.create(
+            name="Public TOS", text="Public terms.",
+            dataset=self.dataset, invite_token="public-tok-456",
+        )
+        self.dataset.tos = self.tos
+        self.dataset.save()
+
+    def test_any_user_can_view(self):
+        self._login(self.regular_key)
+        resp = self.client.get("/web/tos/public-tok-456/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Public TOS")
+        self.assertContains(resp, "Public")
+
+    def test_acceptance_creates_self_service_grant(self):
+        self._login(self.regular_key)
+        resp = self.client.post("/web/tos/public-tok-456/")
+        self.assertEqual(resp.status_code, 302)
+        grant = Grant.objects.get(user=self.regular_user, dataset=self.dataset)
+        self.assertEqual(grant.source, Grant.SOURCE_SELF_SERVICE)
+        self.assertEqual(grant.permission.name, "view")
+
+    def test_acceptance_is_idempotent(self):
+        self._login(self.regular_key)
+        self.client.post("/web/tos/public-tok-456/")
+        self.client.post("/web/tos/public-tok-456/")
+        self.assertEqual(
+            Grant.objects.filter(user=self.regular_user, dataset=self.dataset).count(), 1
+        )
+        self.assertEqual(
+            TOSAcceptance.objects.filter(user=self.regular_user, tos_document=self.tos).count(), 1
+        )
+
+
+@pytest.mark.django_db
+class TestTOSLandingBucketIAM(_WebTestBase):
+    """Bucket IAM provisioning on TOS acceptance."""
+
+    def setUp(self):
+        super().setUp()
+        self.dataset.access_mode = Dataset.ACCESS_PUBLIC
+        self.dataset.save()
+        self.tos = TOSDocument.objects.create(
+            name="Bucket TOS", text="Terms.",
+            dataset=self.dataset, invite_token="bucket-tok-789",
+        )
+        self.dataset.tos = self.tos
+        self.dataset.save()
+        self.dv1 = DatasetVersion.objects.create(
+            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+        )
+        self.dv2 = DatasetVersion.objects.create(
+            dataset=self.dataset, version="v2", gcs_bucket="bucket-b",
+        )
+        self.dv_empty = DatasetVersion.objects.create(
+            dataset=self.dataset, version="v3", gcs_bucket="",
+        )
+
+    def test_bucket_iam_called_per_version(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add:
+            mock_add.return_value = True
+            self.client.post("/web/tos/bucket-tok-789/")
+
+        called_buckets = sorted(c.args[0] for c in mock_add.call_args_list)
+        self.assertEqual(called_buckets, ["bucket-a", "bucket-b"])
+        for call in mock_add.call_args_list:
+            self.assertEqual(call.args[1], "regular@example.org")
+
+    def test_empty_bucket_skipped(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add:
+            mock_add.return_value = True
+            self.client.post("/web/tos/bucket-tok-789/")
+
+        called_buckets = [c.args[0] for c in mock_add.call_args_list]
+        self.assertNotIn("", called_buckets)
+
+
+@pytest.mark.django_db
+class TestTOSLandingGeneral(_WebTestBase):
+    """General TOS landing tests."""
+
+    def test_invalid_token_returns_404(self):
+        self._login(self.regular_key)
+        resp = self.client.get("/web/tos/nonexistent-token/")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_already_accepted_shows_message(self):
+        self.dataset.access_mode = Dataset.ACCESS_PUBLIC
+        self.dataset.save()
+        tos = TOSDocument.objects.create(
+            name="Already TOS", text="Terms.",
+            dataset=self.dataset, invite_token="already-tok",
+        )
+        self.dataset.tos = tos
+        self.dataset.save()
+        TOSAcceptance.objects.create(user=self.regular_user, tos_document=tos)
+        self._login(self.regular_key)
+        resp = self.client.get("/web/tos/already-tok/")
+        self.assertContains(resp, "already accepted")
+
+    def test_datasets_page_uses_invite_token_links(self):
+        tos = TOSDocument.objects.create(
+            name="Link TOS", text="Terms.",
+            dataset=self.dataset, invite_token="link-tok",
+        )
+        self.dataset.tos = tos
+        self.dataset.save()
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "/web/tos/link-tok/")
+        self.assertNotContains(resp, f"/web/tos/{tos.pk}/accept")

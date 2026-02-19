@@ -1,16 +1,15 @@
 """Web UI views — dataset browsing, TOS acceptance, grant management."""
 
-import json
+import logging
 
 from django.contrib import messages
-from django.db.models import Q
-from django.http import JsonResponse
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views import View
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
 
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 from core.models import (
     APIKey,
@@ -361,3 +360,111 @@ class PublicRootManageView(View):
             messages.success(request, "Removed public root")
 
         return redirect("web-public-roots", dataset=dataset)
+
+
+class TOSLandingView(View):
+    """GET/POST /web/tos/<str:invite_token>/ — TOS landing page with access-mode enforcement."""
+
+    def _get_tos_doc(self, invite_token):
+        try:
+            return TOSDocument.objects.select_related("dataset").get(invite_token=invite_token)
+        except TOSDocument.DoesNotExist:
+            raise Http404
+
+    def _user_is_authorized(self, user, dataset):
+        """Check if user has Grant, DatasetAdmin, or is global admin."""
+        if user.admin:
+            return True
+        if DatasetAdmin.objects.filter(user=user, dataset=dataset).exists():
+            return True
+        if Grant.objects.filter(user=user, dataset=dataset).exists():
+            return True
+        return False
+
+    def get(self, request, invite_token):
+        user = _get_web_user(request)
+        tos_doc = self._get_tos_doc(invite_token)
+        dataset = tos_doc.dataset
+
+        already_accepted = False
+        if user:
+            already_accepted = TOSAcceptance.objects.filter(
+                user=user, tos_document=tos_doc
+            ).exists()
+
+        if not user:
+            return render(request, "web/tos_landing.html", {
+                "user": None,
+                "tos_doc": tos_doc,
+                "dataset": dataset,
+                "already_accepted": False,
+                "login_next": f"/web/tos/{invite_token}/",
+            })
+
+        if dataset and dataset.access_mode == Dataset.ACCESS_CLOSED:
+            if not self._user_is_authorized(user, dataset):
+                return render(request, "web/tos_landing_denied.html", {
+                    "user": user,
+                    "dataset": dataset,
+                })
+
+        return render(request, "web/tos_landing.html", {
+            "user": user,
+            "tos_doc": tos_doc,
+            "dataset": dataset,
+            "already_accepted": already_accepted,
+        })
+
+    def post(self, request, invite_token):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login")
+
+        tos_doc = self._get_tos_doc(invite_token)
+        dataset = tos_doc.dataset
+
+        # Re-check authorization for closed datasets
+        if dataset and dataset.access_mode == Dataset.ACCESS_CLOSED:
+            if not self._user_is_authorized(user, dataset):
+                return render(request, "web/tos_landing_denied.html", {
+                    "user": user,
+                    "dataset": dataset,
+                })
+
+        # For public datasets, auto-create view grant via self-service
+        if dataset and dataset.access_mode == Dataset.ACCESS_PUBLIC:
+            view_perm, _ = Permission.objects.get_or_create(name="view")
+            Grant.objects.get_or_create(
+                user=user,
+                dataset=dataset,
+                permission=view_perm,
+                dataset_version=None,
+                defaults={"source": Grant.SOURCE_SELF_SERVICE},
+            )
+
+        # Record TOS acceptance
+        _, created = TOSAcceptance.objects.get_or_create(
+            user=user,
+            tos_document=tos_doc,
+            defaults={"ip_address": request.META.get("REMOTE_ADDR")},
+        )
+
+        if created:
+            # Provision bucket IAM for all dataset versions
+            if dataset:
+                from ngauth.gcs import add_user_to_bucket
+
+                for dv in DatasetVersion.objects.filter(dataset=dataset).exclude(gcs_bucket=""):
+                    try:
+                        add_user_to_bucket(dv.gcs_bucket, user.email)
+                    except Exception:
+                        logger.exception(
+                            "Failed to provision bucket IAM",
+                            extra={"bucket": dv.gcs_bucket, "email": user.email},
+                        )
+
+            messages.success(request, f"Accepted: {tos_doc.name}")
+        else:
+            messages.info(request, f"You have already accepted: {tos_doc.name}")
+
+        return redirect("web-my-datasets")

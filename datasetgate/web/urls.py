@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     path("datasets", views.DatasetsView.as_view(), name="web-datasets"),
     path("tos/<int:tos_id>/accept", views.TOSAcceptView.as_view(), name="web-tos-accept"),
+    path("tos/<str:invite_token>/", views.TOSLandingView.as_view(), name="web-tos-landing"),
     path("my-datasets", views.MyDatasetsView.as_view(), name="web-my-datasets"),
     path("grants/<slug:dataset>", views.GrantManageView.as_view(), name="web-grant-manage"),
     path("dataset-admins/<slug:dataset>", views.DatasetAdminManageView.as_view(), name="web-dataset-admin-manage"),

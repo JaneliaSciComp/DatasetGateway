@@ -1,0 +1,13 @@
+{% extends "web/base.html" %}
+{% block title %}Access Restricted — DatasetGate{% endblock %}
+{% block content %}
+<h1>Access Restricted</h1>
+<p>
+    <strong>{{ dataset.name }}</strong> is an invite-only dataset.
+    You do not currently have access.
+</p>
+<p>
+    Please contact the dataset's lab head or administrator to request access.
+</p>
+<a href="/web/datasets">Back to datasets</a>
+{% endblock %}

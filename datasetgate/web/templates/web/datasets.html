@@ -9,7 +9,7 @@
     {% if item.dataset.description %}<p>{{ item.dataset.description }}</p>{% endif %}
 
     {% if item.dataset.tos %}
-        <p>Requires TOS: <a href="/web/tos/{{ item.dataset.tos_id }}/accept">{{ item.dataset.tos.name }}</a></p>
+        <p>Requires TOS: <a href="/web/tos/{{ item.dataset.tos.invite_token }}/">{{ item.dataset.tos.name }}</a></p>
     {% endif %}
 
     {% if item.versions %}
