@@ -9,7 +9,7 @@ difference is important before setting up the system.
 
 | Role | How to assign | What it grants |
 |------|--------------|----------------|
-| **Django superuser** | `python manage.py createsuperuser` | Access to the Django admin panel at `/admin/`. This is a Django built-in concept — it uses Django's own `auth_user` table, completely separate from DatasetGate's `User` model. The superuser logs in with a username/password, not Google OAuth. |
+| **Django superuser** | `python manage.py createsuperuser` | Access to the Django admin panel at `/admin/`. The superuser is a record in the same `core.User` table as all other users, but with `admin=True` and a usable password. The password is only used to log into the admin console — all other login flows use Google OAuth. |
 | **DatasetGate admin** | `python manage.py make_admin user@example.com` | Full access to all datasets. Can manage grants and public roots for any dataset via the web UI. Checked by the `admin` field on DatasetGate's `User` model. The user must have logged in via Google OAuth first. |
 | **Dataset admin** | Created via Django admin panel (DatasetAdmin record) | Can manage grants and public roots for specific datasets they are assigned to via the web UI at `/web/grants/<dataset>`. |
 
@@ -98,10 +98,10 @@ variables.
 python manage.py createsuperuser
 ```
 
-This is a built-in Django command. It prompts for a username, email, and
-password. This account is used only to access the Django admin panel at
-`/admin/` — it is not the same as a DatasetGate user and does not
-appear in DatasetGate's `User` table.
+This is a built-in Django command. It prompts for an email and password.
+The account is created in DatasetGate's `User` table with `admin=True`
+and a usable password. The password is only used to access the Django
+admin panel at `/admin/` — all other login flows use Google OAuth.
 
 ### 4. Start the server
 
