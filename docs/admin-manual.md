@@ -25,6 +25,17 @@ Place a `client_credentials.json` file in `datasetgate/secrets/`, or set
 the `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment variables.
 See the [README](../README.md#google-oauth-setup).
 
+In your Google Cloud Console OAuth client, add the following
+**Authorized redirect URI** for local development:
+
+```
+http://localhost:8000/accounts/google/login/callback/
+```
+
+This matches the Site domain set by the database migration. For
+production, add the production URI as well (e.g.,
+`https://auth.example.org/accounts/google/login/callback/`).
+
 ### 3. Create a superuser
 
 ```bash
@@ -270,9 +281,23 @@ page. You can delete old/unused keys here if needed.
 ### Sites
 
 Required by django-allauth. There should be exactly one record with
-`id=1`. The domain should match your deployment URL (e.g.,
-`localhost:8000` for development, `auth.example.org` for production).
-Allauth uses this to construct callback URLs.
+`id=1`. Allauth uses this domain to construct OAuth callback URLs
+(e.g., `http://<domain>/accounts/google/login/callback/`).
+
+The database migration sets this to `localhost:8000` by default so
+local development works out of the box. **For production**, update it
+to match your deployment domain:
+
+```bash
+pixi run python manage.py shell -c "
+from django.contrib.sites.models import Site
+Site.objects.update_or_create(id=1, defaults={'domain': 'auth.example.org', 'name': 'DatasetGate'})
+"
+```
+
+The corresponding redirect URI must also be registered in your Google
+Cloud Console OAuth client's **Authorized redirect URIs** (e.g.,
+`https://auth.example.org/accounts/google/login/callback/`).
 
 ---
 
