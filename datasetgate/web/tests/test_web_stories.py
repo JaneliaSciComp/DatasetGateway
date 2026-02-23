@@ -206,7 +206,7 @@ class TestGrantManageEnhanced(_WebTestBase):
         )
         self._login(self.lab_head_key)
         resp = self.client.get(f"/web/grants/{self.dataset.name}")
-        self.assertContains(resp, "Added by admin or lab head")
+        self.assertContains(resp, "Added by admin or team lead")
 
 
 # ──────────────────────────────────────────────────────────────

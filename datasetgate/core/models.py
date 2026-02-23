@@ -226,7 +226,7 @@ class Grant(models.Model):
     SOURCE_MANUAL = "manual"
     SOURCE_SELF_SERVICE = "self_service"
     SOURCE_CHOICES = [
-        (SOURCE_MANUAL, "Added by admin or lab head"),
+        (SOURCE_MANUAL, "Added by admin or team lead"),
         (SOURCE_SELF_SERVICE, "Self-service TOS acceptance"),
     ]
 
@@ -236,6 +236,9 @@ class Grant(models.Model):
         DatasetVersion, on_delete=models.CASCADE, null=True, blank=True, related_name="grants"
     )
     permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
+    group = models.ForeignKey(
+        Group, on_delete=models.CASCADE, null=True, blank=True, related_name="grants"
+    )
     granted_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="grants_given"
     )

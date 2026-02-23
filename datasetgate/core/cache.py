@@ -21,7 +21,7 @@ def build_permission_cache(user):
     permissions_ignore_tos = _get_permissions(user, ignore_tos=True)
 
     def permission_to_level(p):
-        return {"none": 0, "view": 1, "edit": 2}.get(p, 0)
+        return {"none": 0, "view": 1, "edit": 2, "manage": 3, "admin": 4}.get(p, 0)
 
     groups_list = _get_groups(user)
     groups_admin_list = _get_groups_admin(user)
@@ -118,10 +118,6 @@ def _get_permissions(user, ignore_tos=False):
         group_qs = group_qs.filter(tos_filter)
         grant_qs = grant_qs.filter(tos_filter)
 
-    if user.read_only:
-        group_qs = group_qs.exclude(permission__name="edit")
-        grant_qs = grant_qs.exclude(permission__name="edit")
-
     # Aggregate into {dataset_id: {"id": ..., "name": ..., "permissions": [...]}}
     temp = {}
     for gdp in group_qs:
@@ -130,11 +126,9 @@ def _get_permissions(user, ignore_tos=False):
             temp[did] = {
                 "id": did,
                 "name": gdp.dataset.name,
-                "permissions": [],
+                "permissions": set(),
             }
-        pname = gdp.permission.name
-        if pname not in temp[did]["permissions"]:
-            temp[did]["permissions"].append(pname)
+        temp[did]["permissions"].add(gdp.permission.name)
 
     for grant in grant_qs:
         did = grant.dataset_id
@@ -142,11 +136,20 @@ def _get_permissions(user, ignore_tos=False):
             temp[did] = {
                 "id": did,
                 "name": grant.dataset.name,
-                "permissions": [],
+                "permissions": set(),
             }
-        pname = grant.permission.name
-        if pname not in temp[did]["permissions"]:
-            temp[did]["permissions"].append(pname)
+        temp[did]["permissions"].add(grant.permission.name)
+
+    # Expand permission hierarchy: each level implies all levels below
+    hierarchy = {"admin": {"manage", "edit", "view"}, "manage": {"edit", "view"}, "edit": {"view"}}
+    for entry in temp.values():
+        expanded = set(entry["permissions"])
+        for p in list(entry["permissions"]):
+            expanded |= hierarchy.get(p, set())
+        # For read_only users, strip edit but keep manage/admin/view
+        if user.read_only:
+            expanded.discard("edit")
+        entry["permissions"] = sorted(expanded)
 
     return list(temp.values())
 
