@@ -4,8 +4,8 @@ Usage:
     python manage.py import_clio_auth exported_auth.json
 
 Reads the JSON produced by clio-store's scripts/export_auth.py and creates
-the corresponding User, Dataset, Grant, Group, UserGroup, and DatasetAdmin
-records in DatasetGate's database.
+the corresponding User, Dataset, Grant, Group, and UserGroup records in
+DatasetGate's database.
 """
 
 import json
@@ -15,7 +15,6 @@ from django.db import transaction
 
 from core.models import (
     Dataset,
-    DatasetAdmin,
     Grant,
     Group,
     GroupDatasetPermission,
@@ -46,6 +45,7 @@ class Command(BaseCommand):
         # Ensure permissions exist
         view_perm, _ = Permission.objects.get_or_create(name="view")
         edit_perm, _ = Permission.objects.get_or_create(name="edit")
+        admin_perm, _ = Permission.objects.get_or_create(name="admin")
 
         # Ensure a default "user" group exists (for public dataset grants)
         user_group, _ = Group.objects.get_or_create(name="user")
@@ -144,10 +144,10 @@ class Command(BaseCommand):
                     self.stdout.write(f"    {ds_name}: edit")
 
                 if "dataset_admin" in roles_set:
-                    DatasetAdmin.objects.get_or_create(
-                        user=user_obj, dataset=ds_obj,
+                    Grant.objects.get_or_create(
+                        user=user_obj, dataset=ds_obj, permission=admin_perm,
                     )
-                    self.stdout.write(f"    {ds_name}: dataset_admin")
+                    self.stdout.write(f"    {ds_name}: admin grant")
 
             # --- Process groups ---
             for group_name in udata.get("groups", []):

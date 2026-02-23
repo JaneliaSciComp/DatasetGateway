@@ -76,10 +76,10 @@ def _get_groups_admin(user):
 
 def _get_datasets_adminning(user):
     """Return list of dataset names the user is admin of."""
-    from .models import DatasetAdmin
+    from .models import Grant
 
     return list(
-        DatasetAdmin.objects.filter(user=user)
+        Grant.objects.filter(user=user, permission__name="admin")
         .select_related("dataset")
         .values_list("dataset__name", flat=True)
     )

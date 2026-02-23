@@ -8,7 +8,7 @@ from rest_framework.test import APIClient
 from core.models import (
     APIKey,
     Dataset,
-    DatasetAdmin,
+    Grant,
     Group,
     GroupDatasetPermission,
     Permission,
@@ -112,7 +112,8 @@ class TestUserCacheView(TestCase):
 
     def test_datasets_admin(self):
         dataset = Dataset.objects.create(name="fish2")
-        DatasetAdmin.objects.create(user=self.user, dataset=dataset)
+        admin_perm, _ = Permission.objects.get_or_create(name="admin")
+        Grant.objects.create(user=self.user, dataset=dataset, permission=admin_perm)
         resp = self.client.get("/api/v1/user/cache", **self._auth_header())
         data = resp.json()
         self.assertIn("fish2", data["datasets_admin"])
