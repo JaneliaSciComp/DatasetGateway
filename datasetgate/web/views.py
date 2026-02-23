@@ -256,7 +256,25 @@ class MyDatasetsView(View):
 
 
 class GrantManageView(View):
-    """GET/POST /web/grants/<slug:dataset> — Dataset grant management."""
+    """GET/POST /web/grants/<slug:dataset> — Dataset members page (SC/admin view).
+
+    Requires admin grant on dataset or global admin. Team leads with only
+    manage permission are redirected to their team dashboard.
+    """
+
+    def _check_access(self, user, ds):
+        """Return None if allowed, or a redirect response."""
+        if _has_dataset_admin(user, ds):
+            return None
+        # Team leads with manage-only → redirect to team dashboard
+        if _can_manage_dataset(user, ds):
+            # Find their group admin membership to redirect
+            team_group = UserGroup.objects.filter(
+                user=user, is_admin=True
+            ).select_related("group").first()
+            if team_group:
+                return redirect("web-team-dashboard", group_name=team_group.group.name)
+        return render(None, "web/access_denied.html", {"user": user})
 
     def get(self, request, dataset):
         user = _get_web_user(request)
@@ -265,12 +283,21 @@ class GrantManageView(View):
 
         ds = get_object_or_404(Dataset, name=dataset)
 
-        if not _can_manage_dataset(user, ds):
+        err = self._check_access(user, ds)
+        if err:
+            # Need request context for rendering
+            if hasattr(err, 'status_code') and err.status_code == 302:
+                return err
             return render(request, "web/access_denied.html", {"user": user})
 
         grants = Grant.objects.filter(dataset=ds).select_related(
-            "user", "permission", "dataset_version"
+            "user", "permission", "dataset_version", "group"
         ).order_by("user__email")
+
+        # Get unique groups for filtering
+        group_names = sorted(set(
+            g.group.name for g in grants if g.group_id
+        ))
 
         permissions = Permission.objects.all()
         versions = DatasetVersion.objects.filter(dataset=ds)
@@ -281,6 +308,7 @@ class GrantManageView(View):
             "grants": grants,
             "permissions": permissions,
             "versions": versions,
+            "group_names": group_names,
         })
 
     def post(self, request, dataset):
@@ -290,7 +318,7 @@ class GrantManageView(View):
 
         ds = get_object_or_404(Dataset, name=dataset)
 
-        if not _can_manage_dataset(user, ds):
+        if not _has_dataset_admin(user, ds):
             return render(request, "web/access_denied.html", {"user": user})
 
         action = request.POST.get("action")
