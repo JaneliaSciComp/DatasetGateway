@@ -15,8 +15,8 @@ through the Django admin console (`/admin/`). For end-user workflows
 cd datasetgate
 pixi install                          # or: pip install -e ".[dev]"
 pixi run python manage.py migrate     # creates all tables
-pixi run python manage.py seed_permissions   # creates "view" and "edit"
-pixi run python manage.py seed_groups        # creates admin, sc, lab_head, user
+pixi run python manage.py seed_permissions   # creates view, edit, manage, admin
+pixi run python manage.py seed_groups        # creates admin, sc, team_lead, user
 ```
 
 ### 2. Configure Google OAuth
@@ -108,11 +108,12 @@ system. It is organized into sections.
 | View audit logs | Admin console |
 | Manage API keys | Admin console |
 | Grant/revoke user access to a dataset | Web UI (`/web/grants/<dataset>`) — preferred for day-to-day use |
-| Promote lab heads (dataset admins) | Web UI (`/web/dataset-admins/<dataset>`) — SC/admin only |
+| Promote team leads | Web UI (`/web/team-leads/<dataset>`) — SC/admin only |
+| Manage team members and group grants | Web UI (`/web/team/<group>/`) — team leads |
 | Manage public roots | Web UI (`/web/public-roots/<dataset>`) |
 
-The web UI enforces authorization rules (only lab heads can manage
-their datasets, only SC can promote lab heads). The admin console
+The web UI enforces authorization rules (only team leads can manage
+their groups, only SC/admin can promote team leads). The admin console
 bypasses all of that — any superuser can edit anything. Use the web
 UI for routine operations and the admin console for initial setup,
 bulk changes, or debugging.
@@ -151,24 +152,26 @@ creation, use `import_clio_auth` instead.
 
 ### Groups
 
-Authorization groups (e.g., `sc`, `lab_head`, `user`). Not to be
+Authorization groups (e.g., `sc`, `team_lead`, `user`). Not to be
 confused with Django's built-in `auth.Group`, which is not used and has
 been hidden from the admin.
 
 The **User groups** inline on the Group detail page shows all members.
-Add rows here to add users to the group.
-
-The `sc` (steering committee) group has special significance: members
-can promote and demote lab heads (dataset admins) via the web UI.
+Add rows here to add users to the group. The `is_admin` flag on a
+`UserGroup` record designates the user as a team lead for that group.
 
 ### Permissions
 
-The abstract permission types. The system ships with two:
+The abstract permission types. The system ships with four, in a strict
+hierarchy (`admin` > `manage` > `edit` > `view`):
 
 - **view** — read access to dataset data
 - **edit** — write access to dataset data
+- **manage** — can manage grants within a group (team lead capability)
+- **admin** — full dataset administration (SC-level)
 
-You generally never need to add or change these.
+Each level implies all levels below it. You generally never need to add
+or change these.
 
 ### Datasets
 
@@ -179,16 +182,16 @@ Each row is a dataset. Key fields:
 | **Name** | Slug identifier used in URLs and API responses (e.g., `fish2`). Lowercase, no spaces. |
 | **Description** | Human-readable description shown on the web UI. |
 | **Tos** | Link to the TOS document users must accept. Leave blank if no TOS is required. |
-| **Access mode** | `Closed` (invite-only — users need a Grant or DatasetAdmin role) or `Public` (any authenticated user can self-service accept TOS and get view access). |
+| **Access mode** | `Closed` (invite-only — users need a Grant or admin role) or `Public` (any authenticated user can self-service accept TOS and get view access). |
 
 **Inline sections on the Dataset detail page:**
 
 - **Dataset versions** — the versioned releases. Each version maps to a
   GCS bucket. The `gcs_bucket` field is used for IAM provisioning and
   Neuroglancer token issuance.
-- **Dataset admins** — users who can manage grants for this dataset via
-  the web UI. (Lab heads are usually assigned here, but SC members can
-  also assign them via the web UI.)
+- **Grants** — users with `admin` permission on this dataset can manage
+  all grants via the web UI. Team leads (users with `manage` permission)
+  can manage grants within their group via the team dashboard.
 - **Service tables** — maps CAVE service/table names to this dataset.
   Only needed for CAVE API compatibility.
 
@@ -224,9 +227,10 @@ permission on one dataset (optionally scoped to a specific version).
 | **User** | The user receiving access. |
 | **Dataset** | Which dataset. |
 | **Dataset version** | If set, the grant applies to only this version. If blank, it applies to all versions. |
-| **Permission** | `view` or `edit`. |
-| **Granted by** | The admin or lab head who created this grant. |
-| **Source** | `manual` (created by an admin or lab head via the web UI) or `self_service` (user accepted TOS on a public dataset). |
+| **Permission** | `view`, `edit`, `manage`, or `admin`. |
+| **Group** | If set, the grant is scoped to this group (created by a team lead). If blank, the grant is not group-scoped (created by an admin or via self-service). |
+| **Granted by** | The admin or team lead who created this grant. |
+| **Source** | `manual` (created by an admin or team lead via the web UI) or `self_service` (user accepted TOS on a public dataset). |
 
 Grants are usually managed through the web UI at
 `/web/grants/<dataset>`, which enforces authorization. Editing them
@@ -349,8 +353,8 @@ All commands are run from the `datasetgate/` directory.
 | `python manage.py migrate` | Create/update database tables. |
 | `python manage.py createsuperuser` | Create a superuser for the admin console. |
 | `python manage.py changepassword EMAIL` | Reset a user's password (for admin console login). |
-| `python manage.py seed_permissions` | Create `view` and `edit` permission types. |
-| `python manage.py seed_groups` | Create default groups (`admin`, `sc`, `lab_head`, `user`). |
+| `python manage.py seed_permissions` | Create `view`, `edit`, `manage`, and `admin` permission types. |
+| `python manage.py seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
 | `python manage.py make_admin EMAIL` | Promote a user to DatasetGate global admin. |
 | `python manage.py import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
 | `python manage.py runserver` | Start the development server. |

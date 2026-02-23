@@ -1,21 +1,39 @@
 # DatasetGate User Manual
 
-## Concepts
+## Roles
 
-DatasetGate has three levels of admin privilege. Understanding the
-difference is important before setting up the system.
+DatasetGate uses a hierarchical role model. Each role has a specific
+scope of access and management capability.
 
-### Django superuser vs DatasetGate admin vs dataset admin
+| Role | How to assign | Dataset scope | User scope |
+|------|--------------|---------------|------------|
+| **Global admin** | `python manage.py make_admin user@example.com` (sets `user.admin=True`) | All datasets | All users |
+| **Dataset admin (SC)** | Grant with `admin` permission on a dataset | Assigned datasets only | All users on that dataset |
+| **Team lead** | Grant with `manage` permission on a dataset + `UserGroup.is_admin=True` | Datasets where they have `manage` | Only users in their group |
+| **Regular user** | No special role | N/A | N/A |
 
-| Role | How to assign | What it grants |
-|------|--------------|----------------|
-| **Django superuser** | `python manage.py createsuperuser` | Access to the Django admin panel at `/admin/`. The superuser is a record in the same `core.User` table as all other users, but with `admin=True` and a usable password. The password is only used to log into the admin console — all other login flows use Google OAuth. |
-| **DatasetGate admin** | `python manage.py make_admin user@example.com` | Full access to all datasets. Can manage grants and public roots for any dataset via the web UI. Checked by the `admin` field on DatasetGate's `User` model. The user must have logged in via Google OAuth first. |
-| **Dataset admin** | Created via Django admin panel (DatasetAdmin record) | Can manage grants and public roots for specific datasets they are assigned to via the web UI at `/web/grants/<dataset>`. |
+A **Django superuser** (created via `python manage.py createsuperuser`) is
+a special case: it has `admin=True` plus a usable password for the Django
+admin console at `/admin/`. The password is only used for the admin console
+— all other login flows use Google OAuth.
 
-A typical setup uses a Django superuser for initial configuration (creating
-datasets, groups, permissions) and DatasetGate admins for day-to-day
-management (granting user access).
+### Permission hierarchy
+
+Permissions follow a strict linear hierarchy: `admin` > `manage` > `edit` > `view`.
+Each level implies all levels below it. For example, a user with `manage`
+permission on a dataset automatically has `edit` and `view` as well.
+
+### Group-scoped grants
+
+Grants can optionally be scoped to a group. When a team lead creates a grant,
+it is associated with their group. This means:
+- Team lead A cannot see or revoke grants created by team lead B (different group)
+- Dataset admins (SC) can see all grants across all groups on their datasets
+- Global admins can see everything
+
+A typical setup uses a global admin for initial configuration (creating
+datasets, groups, permissions), dataset admins (SC) for dataset-level
+management, and team leads for day-to-day user access within their groups.
 
 ### How services use DatasetGate
 
@@ -53,13 +71,13 @@ across all services.
 
 Access to datasets is controlled through two mechanisms:
 
-- **Group permissions** — A group is granted a permission (view or edit)
-  on a dataset. All users in that group inherit the permission. Managed
-  via the Django admin panel.
+- **Group permissions** — A group is granted a permission (view, edit,
+  manage, or admin) on a dataset. All users in that group inherit the
+  permission. Managed via the Django admin panel.
 
 - **Direct grants** — A specific user is granted a permission on a
-  dataset, optionally scoped to a specific version. Managed via the web
-  UI by dataset admins.
+  dataset, optionally scoped to a specific version and/or group. Managed
+  via the web UI by dataset admins or team leads.
 
 If a dataset has an associated **Terms of Service (TOS)** document, users
 must accept the TOS before their permissions take effect. Permissions
@@ -82,8 +100,8 @@ python manage.py seed_groups
 
 `migrate` is a built-in Django command that creates the database tables.
 `seed_permissions` and `seed_groups` are custom commands that populate the
-`Permission` table with `view` and `edit`, and the `Group` table with
-`admin`, `sc`, `lab_head`, and `user`.
+`Permission` table with `view`, `edit`, `manage`, and `admin`, and the
+`Group` table with `admin`, `sc`, `team_lead`, and `user`.
 
 ### 2. Configure Google OAuth
 
@@ -221,8 +239,8 @@ all services.
 ### Browsing datasets
 
 After logging in, visit `/web/datasets` to see all datasets in the
-system. Each dataset shows its versions and whether you are an admin
-of that dataset.
+system. Each dataset shows its versions and whether you can manage
+that dataset.
 
 ### Accepting Terms of Service
 
@@ -238,8 +256,13 @@ API responses (the `/api/v1/user/cache` endpoint filters them out).
 ### Viewing your access
 
 Visit `/web/my-datasets` to see:
-- Which TOS documents you have accepted (and when)
-- Which grants you have been given (dataset, permission, version scope)
+- Your group memberships
+- Datasets you lead (have `admin` permission on)
+- Teams you lead (groups where you are an admin)
+- Action-required items (TOS needing acceptance)
+- Your direct grants (dataset, permission, version scope)
+- Group-based permissions
+- TOS acceptances
 
 ### Using the API
 
@@ -268,23 +291,66 @@ via browser redirect.
 
 ---
 
-## Dataset Admin Workflows
+## Team Lead Workflows
 
-Dataset admins can manage who has access to their datasets through the
-web UI. You are a dataset admin if either:
-- Your `admin` flag is set (global admin), or
-- You have a `DatasetAdmin` record for the specific dataset
+Team leads manage users within their group. You are a team lead if you
+have `manage` permission on a dataset and are a group admin
+(`UserGroup.is_admin=True`).
 
-### Managing grants
+### Managing your team
+
+1. Go to `/web/my-datasets`
+2. Click "Manage Team" next to your group name
+3. The team dashboard shows:
+   - Current group members
+   - Grants associated with your group
+
+### Adding team members
+
+1. On the team dashboard, enter an email in the "Add Member" form
+2. If the user doesn't exist, they are auto-created with an unusable password
+3. The user is added to your group
+
+### Granting dataset access to team members
+
+1. On the team dashboard, use the "Grant Dataset Access" form
+2. Select the user's email, a dataset (from datasets you can manage),
+   and a permission level (view, edit, or manage)
+3. The grant is created and scoped to your group
+
+You can grant up to your own permission level. If you have `manage`,
+you can grant `view`, `edit`, or `manage` (creating a sub-team-lead).
+You cannot grant `admin`.
+
+### Removing team members
+
+Click "Remove" next to a member. This also revokes all grants associated
+with your group for that user.
+
+---
+
+## Dataset Admin (SC) Workflows
+
+Dataset admins can manage all access to their datasets. You are a dataset
+admin if you have an `admin` grant on a specific dataset.
+
+### Managing dataset members
 
 1. Go to `/web/datasets`
 2. Click "Manage Grants" next to your dataset
-3. To **grant access**: enter the user's email, select a permission
-   (view or edit), optionally select a specific version, and submit
-4. To **revoke access**: click "Revoke" next to the grant
+3. The members page shows ALL grants across all groups
+4. To **grant access**: enter the user's email, select a permission
+   (view, edit, manage, or admin), optionally select a specific version
+5. To **revoke access**: click "Revoke" next to the grant
+6. Use the group filter to view grants by group
 
-Grants are immediate — no cache delay for the grant itself, though the
-user's permission cache may take up to 5 minutes to refresh.
+### Assigning team leads
+
+1. Go to `/web/datasets`
+2. Click "Manage Team Leads" next to your dataset
+3. Enter a user's email and click "Add" to grant them `manage` permission
+4. The user must also be a group admin (`UserGroup.is_admin=True`) to
+   use the team dashboard
 
 ### Managing public roots
 
@@ -299,9 +365,10 @@ For CAVE service tables that need public root IDs:
 
 ## Global Admin Workflows
 
-Global admins have all the capabilities of dataset admins for every
-dataset. Additionally, global admins should use the Django admin panel
-at `/admin/` for operations not available in the web UI:
+Global admins (`user.admin=True`) have all the capabilities of dataset
+admins for every dataset and can access any team dashboard. Additionally,
+global admins should use the Django admin panel at `/admin/` for
+operations not available in the web UI:
 
 - Creating and editing datasets, versions, and TOS documents
 - Managing groups and group memberships
@@ -366,7 +433,7 @@ All commands are run from the `datasetgate/` directory.
 | `python manage.py createsuperuser` | Django built-in | Create a Django admin panel login |
 | `python manage.py runserver` | Django built-in | Start the development server |
 | `python manage.py collectstatic` | Django built-in | Collect static files for production |
-| `python manage.py seed_permissions` | Custom | Create `view` and `edit` permission types |
-| `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `lab_head`, `user`) |
+| `python manage.py seed_permissions` | Custom | Create `view`, `edit`, `manage`, and `admin` permission types |
+| `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `team_lead`, `user`) |
 | `python manage.py make_admin EMAIL` | Custom | Promote a user to DatasetGate admin (user must exist) |
 | `python manage.py import_clio_auth FILE` | Custom | Import clio-store auth data from exported JSON (see [Clio integration](clio-support.md)) |

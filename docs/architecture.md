@@ -153,20 +153,22 @@ Authorization is **dataset-version scoped** with optional wildcards.
 Users can be any combination of:
 - `admin`
 - `sc` (steering committee)
-- `lab_head`
+- `team_lead`
 - `user`
 
 These roles govern who can **manage grants**, not necessarily who can **access data** (which is dataset/version permission based).
 
 ### Dataset permissions (data access)
-Implemented:
+
+Permissions follow a strict linear hierarchy: `admin` > `manage` > `edit` > `view`.
+Each level implies all levels below it.
+
 - `view` — read/access dataset
 - `edit` — write/modify dataset
+- `manage` — can manage grants within a group (team lead capability)
+- `admin` — full dataset administration
 
 These are seeded by `python manage.py seed_permissions`.
-
-Not yet implemented:
-- `manage` (manage dataset settings; typically for creators/admins)
 
 ---
 
@@ -223,7 +225,7 @@ in the current codebase.
 
 **Group**
 - id
-- name (unique, e.g., admin, sc, lab_head, user)
+- name (unique, e.g., admin, sc, team_lead, user)
 - scim_id, external_id (SCIM 2.0 identifiers)
 
 **UserGroup** (M:M through table)
@@ -234,7 +236,7 @@ in the current codebase.
 
 **Permission**
 - id
-- name (unique — currently `view` and `edit`)
+- name (unique — `view`, `edit`, `manage`, `admin`)
 
 **Dataset**
 - id
@@ -260,7 +262,8 @@ in the current codebase.
 - user (FK to User)
 - dataset (FK to Dataset)
 - dataset_version (FK to DatasetVersion, nullable — null means all versions)
-- permission (FK to Permission, e.g., view, edit)
+- permission (FK to Permission, e.g., view, edit, manage, admin)
+- group (FK to Group, nullable — if set, grant is scoped to this group)
 - granted_by (FK to User, nullable)
 - source (`manual` or `self_service` — tracks grant provenance)
 - created
@@ -275,11 +278,6 @@ migration and the web UI's grant management.
 - dataset (FK to Dataset)
 - permission (FK to Permission)
 - unique constraint on (group, dataset, permission)
-
-**DatasetAdmin**
-- user (FK to User)
-- dataset (FK to Dataset)
-- unique constraint on (user, dataset)
 
 **ServiceTable**
 - service_name (string)
@@ -455,7 +453,7 @@ policy check.
 - Accept TOS → triggers grant activation as configured
 - View “My datasets” and acceptance history
 
-### Team lead UI (lab_head / sc)
+### Team lead UI (team_lead / sc)
 - Manage members within their scope:
   - grant/revoke access to dataset versions
   - grant “all versions” access
