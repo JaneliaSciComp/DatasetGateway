@@ -212,6 +212,7 @@ class MyDatasetsView(View):
 
         # Groups
         groups = perm_cache["groups"]
+        teams_admin = perm_cache["groups_admin"]
 
         # Datasets this user leads (has admin grant on)
         admin_datasets = Grant.objects.filter(
@@ -245,6 +246,7 @@ class MyDatasetsView(View):
         return render(request, "web/my_datasets.html", {
             "user": user,
             "groups": groups,
+            "teams_admin": teams_admin,
             "admin_datasets": admin_datasets,
             "missing_tos": missing_tos,
             "grants": grants,
@@ -489,3 +491,129 @@ class TOSLandingView(View):
             messages.info(request, f"You have already accepted: {tos_doc.name}")
 
         return redirect("web-my-datasets")
+
+
+class TeamDashboardView(View):
+    """GET/POST /web/team/<slug:group_name>/ — Team lead manages group members and grants."""
+
+    def _get_group_and_check_admin(self, request, group_name):
+        """Return (user, group) or redirect/access-denied response."""
+        user = _get_web_user(request)
+        if not user:
+            return None, None, redirect("/auth/login")
+        group = get_object_or_404(Group, name=group_name)
+        if not (user.admin or UserGroup.objects.filter(user=user, group=group, is_admin=True).exists()):
+            return user, group, render(request, "web/access_denied.html", {"user": user})
+        return user, group, None
+
+    def get(self, request, group_name):
+        user, group, err = self._get_group_and_check_admin(request, group_name)
+        if err:
+            return err
+
+        members = UserGroup.objects.filter(group=group).select_related("user").order_by("user__email")
+
+        # Datasets the team lead can manage (has manage or admin grant)
+        managed_dataset_ids = Grant.objects.filter(
+            user=user, permission__name__in=["admin", "manage"]
+        ).values_list("dataset_id", flat=True)
+        managed_datasets = Dataset.objects.filter(pk__in=managed_dataset_ids).order_by("name")
+
+        # Grants scoped to this group on managed datasets
+        group_grants = Grant.objects.filter(
+            group=group, dataset__in=managed_datasets
+        ).select_related("user", "dataset", "permission").order_by("user__email", "dataset__name")
+
+        # Available permissions for granting (view, edit, manage — not admin)
+        grantable_permissions = Permission.objects.filter(name__in=["view", "edit", "manage"])
+
+        return render(request, "web/team_dashboard.html", {
+            "user": user,
+            "group": group,
+            "members": members,
+            "managed_datasets": managed_datasets,
+            "group_grants": group_grants,
+            "grantable_permissions": grantable_permissions,
+        })
+
+    def post(self, request, group_name):
+        user, group, err = self._get_group_and_check_admin(request, group_name)
+        if err:
+            return err
+
+        action = request.POST.get("action")
+
+        if action == "grant":
+            email = request.POST.get("email", "").strip()
+            dataset_name = request.POST.get("dataset", "").strip()
+            perm_name = request.POST.get("permission", "").strip()
+
+            ds = get_object_or_404(Dataset, name=dataset_name)
+
+            # Verify team lead has manage on this dataset
+            if not _can_manage_dataset(user, ds):
+                messages.error(request, "You do not have manage permission on this dataset")
+                return redirect("web-team-dashboard", group_name=group_name)
+
+            # Validate permission level: team lead can grant up to their own level
+            perm = get_object_or_404(Permission, name=perm_name)
+            level_map = {"view": 1, "edit": 2, "manage": 3, "admin": 4}
+            user_level = 0
+            for g in Grant.objects.filter(user=user, dataset=ds).select_related("permission"):
+                user_level = max(user_level, level_map.get(g.permission.name, 0))
+            if user.admin:
+                user_level = 4
+            if level_map.get(perm_name, 0) > user_level:
+                messages.error(request, "Cannot grant a permission level higher than your own")
+                return redirect("web-team-dashboard", group_name=group_name)
+
+            # Auto-add to group if not a member
+            target_user, user_created = User.objects.get_or_create(
+                email=email, defaults={"name": email.split("@")[0]},
+            )
+            if user_created:
+                target_user.set_unusable_password()
+                target_user.save()
+            UserGroup.objects.get_or_create(user=target_user, group=group)
+
+            _, grant_created = Grant.objects.get_or_create(
+                user=target_user, dataset=ds, permission=perm, group=group,
+                defaults={"granted_by": user, "source": Grant.SOURCE_MANUAL},
+            )
+            if grant_created:
+                messages.success(request, f"Granted {perm_name} on {dataset_name} to {email}")
+            else:
+                messages.info(request, f"{email} already has {perm_name} on {dataset_name}")
+
+        elif action == "revoke":
+            grant_id = request.POST.get("grant_id")
+            Grant.objects.filter(pk=grant_id, group=group).delete()
+            messages.success(request, "Grant revoked")
+
+        elif action == "add_member":
+            email = request.POST.get("email", "").strip()
+            target_user, user_created = User.objects.get_or_create(
+                email=email, defaults={"name": email.split("@")[0]},
+            )
+            if user_created:
+                target_user.set_unusable_password()
+                target_user.save()
+            _, created = UserGroup.objects.get_or_create(user=target_user, group=group)
+            if created:
+                messages.success(request, f"Added {email} to {group.name}")
+            else:
+                messages.info(request, f"{email} is already a member of {group.name}")
+
+        elif action == "remove_member":
+            member_id = request.POST.get("member_id")
+            try:
+                ug = UserGroup.objects.get(pk=member_id, group=group)
+                target_user = ug.user
+                # Revoke all grants scoped to this group for the user
+                Grant.objects.filter(user=target_user, group=group).delete()
+                ug.delete()
+                messages.success(request, f"Removed {target_user.email} from {group.name}")
+            except UserGroup.DoesNotExist:
+                messages.error(request, "Member not found")
+
+        return redirect("web-team-dashboard", group_name=group_name)

@@ -10,4 +10,5 @@ urlpatterns = [
     path("grants/<slug:dataset>", views.GrantManageView.as_view(), name="web-grant-manage"),
     path("team-leads/<slug:dataset>", views.TeamLeadManageView.as_view(), name="web-team-lead-manage"),
     path("public-roots/<slug:dataset>", views.PublicRootManageView.as_view(), name="web-public-roots"),
+    path("team/<slug:group_name>/", views.TeamDashboardView.as_view(), name="web-team-dashboard"),
 ]

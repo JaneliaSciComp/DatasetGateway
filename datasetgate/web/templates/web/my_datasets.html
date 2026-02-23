@@ -25,6 +25,19 @@
 <p>You are not a lead of any datasets.</p>
 {% endif %}
 
+{% if teams_admin %}
+<h2>Teams You Lead</h2>
+<table>
+    <tr><th>Group</th><th></th></tr>
+    {% for t in teams_admin %}
+    <tr>
+        <td>{{ t }}</td>
+        <td><a href="/web/team/{{ t }}/" class="btn btn-sm">Manage Team</a></td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+
 {% if missing_tos %}
 <h2>Action Required: Accept TOS</h2>
 <table>
