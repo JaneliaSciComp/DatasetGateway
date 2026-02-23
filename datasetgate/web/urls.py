@@ -8,6 +8,6 @@ urlpatterns = [
     path("tos/<str:invite_token>/", views.TOSLandingView.as_view(), name="web-tos-landing"),
     path("my-datasets", views.MyDatasetsView.as_view(), name="web-my-datasets"),
     path("grants/<slug:dataset>", views.GrantManageView.as_view(), name="web-grant-manage"),
-    path("dataset-admins/<slug:dataset>", views.DatasetAdminManageView.as_view(), name="web-dataset-admin-manage"),
+    path("team-leads/<slug:dataset>", views.TeamLeadManageView.as_view(), name="web-team-lead-manage"),
     path("public-roots/<slug:dataset>", views.PublicRootManageView.as_view(), name="web-public-roots"),
 ]

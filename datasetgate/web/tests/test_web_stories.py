@@ -8,7 +8,6 @@ from django.test import TestCase
 from core.models import (
     APIKey,
     Dataset,
-    DatasetAdmin,
     DatasetVersion,
     Grant,
     Group,
@@ -52,95 +51,105 @@ class _WebTestBase(TestCase):
         # Dataset
         self.dataset = Dataset.objects.create(name="test-dataset")
 
-        # Lab head is a DatasetAdmin (but NOT in sc group)
-        DatasetAdmin.objects.create(user=self.lab_head, dataset=self.dataset)
-
         # Permissions
-        self.view_perm = Permission.objects.create(name="view")
-        self.edit_perm = Permission.objects.create(name="edit")
+        self.view_perm, _ = Permission.objects.get_or_create(name="view")
+        self.edit_perm, _ = Permission.objects.get_or_create(name="edit")
+        self.admin_perm, _ = Permission.objects.get_or_create(name="admin")
+
+        # Lab head has admin grant on dataset (but NOT in sc group)
+        Grant.objects.create(
+            user=self.lab_head, dataset=self.dataset,
+            permission=self.admin_perm, source=Grant.SOURCE_MANUAL,
+        )
 
     def _login(self, api_key):
         self.client.cookies[settings.AUTH_COOKIE_NAME] = api_key.key
 
 
 # ──────────────────────────────────────────────────────────────
-# Commit 1: DatasetAdmin management (SC promotes lab heads)
+# Team lead management (SC promotes team leads)
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestDatasetAdminManage(_WebTestBase):
+class TestTeamLeadManage(_WebTestBase):
     def test_sc_member_can_view(self):
         self._login(self.sc_key)
-        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
+        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "labhead@example.org")
 
     def test_global_admin_can_view(self):
         self._login(self.admin_key)
-        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
+        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
         self.assertEqual(resp.status_code, 200)
 
     def test_lab_head_denied(self):
-        """Lab head (DatasetAdmin only, not SC) cannot manage lab heads."""
+        """Team lead (admin grant only, not SC) cannot manage team leads."""
         self._login(self.lab_head_key)
-        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
+        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Access Denied")
 
     def test_regular_user_denied(self):
         self._login(self.regular_key)
-        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
+        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Access Denied")
 
     def test_unauthenticated_redirects(self):
-        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
+        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/auth/login", resp.url)
 
-    def test_sc_can_add_lab_head(self):
+    def test_sc_can_add_team_lead(self):
         self._login(self.sc_key)
         new_user = User.objects.create(email="newlead@example.org", name="New Lead")
         resp = self.client.post(
-            f"/web/dataset-admins/{self.dataset.name}",
+            f"/web/team-leads/{self.dataset.name}",
             {"action": "add", "email": "newlead@example.org"},
         )
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(
-            DatasetAdmin.objects.filter(user=new_user, dataset=self.dataset).exists()
+            Grant.objects.filter(
+                user=new_user, dataset=self.dataset, permission__name="admin"
+            ).exists()
         )
 
     def test_add_nonexistent_email_shows_error(self):
         self._login(self.sc_key)
         resp = self.client.post(
-            f"/web/dataset-admins/{self.dataset.name}",
+            f"/web/team-leads/{self.dataset.name}",
             {"action": "add", "email": "nobody@example.org"},
             follow=True,
         )
         self.assertContains(resp, "User not found")
 
-    def test_sc_can_remove_lab_head(self):
+    def test_sc_can_remove_team_lead(self):
         self._login(self.sc_key)
-        da = DatasetAdmin.objects.get(user=self.lab_head, dataset=self.dataset)
+        grant = Grant.objects.get(
+            user=self.lab_head, dataset=self.dataset, permission=self.admin_perm
+        )
         resp = self.client.post(
-            f"/web/dataset-admins/{self.dataset.name}",
-            {"action": "remove", "admin_id": da.pk},
+            f"/web/team-leads/{self.dataset.name}",
+            {"action": "remove", "grant_id": grant.pk},
         )
         self.assertEqual(resp.status_code, 302)
         self.assertFalse(
-            DatasetAdmin.objects.filter(user=self.lab_head, dataset=self.dataset).exists()
+            Grant.objects.filter(
+                user=self.lab_head, dataset=self.dataset, permission__name="admin"
+            ).exists()
         )
 
-    def test_datasets_page_shows_manage_lab_heads_for_sc(self):
+    def test_datasets_page_shows_manage_team_leads_for_sc(self):
         self._login(self.sc_key)
         resp = self.client.get("/web/datasets")
-        self.assertContains(resp, "Manage Lab Heads")
+        self.assertContains(resp, "Manage Team Leads")
 
-    def test_datasets_page_hides_manage_lab_heads_for_regular(self):
+    def test_datasets_page_hides_manage_team_leads_for_regular(self):
         self._login(self.regular_key)
         resp = self.client.get("/web/datasets")
-        self.assertNotContains(resp, "Manage Lab Heads")
+        self.assertNotContains(resp, "Manage Team Leads")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -240,7 +249,7 @@ class TestMyDatasetsDashboard(_WebTestBase):
     def test_shows_admin_datasets(self):
         self._login(self.lab_head_key)
         resp = self.client.get("/web/my-datasets")
-        self.assertContains(resp, "Datasets You Admin")
+        self.assertContains(resp, "Datasets You Lead")
         self.assertContains(resp, "test-dataset")
         self.assertContains(resp, "Manage Grants")
 

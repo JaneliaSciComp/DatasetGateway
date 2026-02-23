@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 from core.models import (
     APIKey,
     Dataset,
-    DatasetAdmin,
     DatasetVersion,
     Grant,
     Group,
@@ -34,6 +33,24 @@ def _is_sc_or_admin(user):
     if user.admin:
         return True
     return UserGroup.objects.filter(user=user, group__name="sc").exists()
+
+
+def _has_dataset_admin(user, dataset):
+    """Check if user has admin grant on dataset, or is global admin."""
+    if user.admin:
+        return True
+    return Grant.objects.filter(
+        user=user, dataset=dataset, permission__name="admin"
+    ).exists()
+
+
+def _can_manage_dataset(user, dataset):
+    """Check if user has admin or manage grant on dataset, or is global admin."""
+    if user.admin:
+        return True
+    return Grant.objects.filter(
+        user=user, dataset=dataset, permission__name__in=["admin", "manage"]
+    ).exists()
 
 
 def _get_web_user(request):
@@ -70,15 +87,11 @@ class DatasetsView(View):
         dataset_list = []
         for d in datasets:
             versions = DatasetVersion.objects.filter(dataset=d)
-            is_admin = False
-            if user:
-                is_admin = user.admin or DatasetAdmin.objects.filter(
-                    user=user, dataset=d
-                ).exists()
+            can_manage = user and _can_manage_dataset(user, d)
             dataset_list.append({
                 "dataset": d,
                 "versions": versions,
-                "is_admin": is_admin,
+                "can_manage": can_manage,
             })
 
         return render(request, "web/datasets.html", {
@@ -88,8 +101,8 @@ class DatasetsView(View):
         })
 
 
-class DatasetAdminManageView(View):
-    """GET/POST /web/dataset-admins/<slug:dataset> — SC promotes lab heads."""
+class TeamLeadManageView(View):
+    """GET/POST /web/team-leads/<slug:dataset> — SC promotes team leads."""
 
     def get(self, request, dataset):
         user = _get_web_user(request)
@@ -101,9 +114,12 @@ class DatasetAdminManageView(View):
         if not _is_sc_or_admin(user):
             return render(request, "web/access_denied.html", {"user": user})
 
-        admins = DatasetAdmin.objects.filter(dataset=ds).select_related("user").order_by("user__email")
+        admin_perm = Permission.objects.filter(name="admin").first()
+        admins = Grant.objects.filter(
+            dataset=ds, permission=admin_perm
+        ).select_related("user").order_by("user__email") if admin_perm else Grant.objects.none()
 
-        return render(request, "web/dataset_admin_manage.html", {
+        return render(request, "web/team_lead_manage.html", {
             "user": user,
             "dataset": ds,
             "admins": admins,
@@ -127,20 +143,26 @@ class DatasetAdminManageView(View):
                 target_user = User.objects.get(email=email)
             except User.DoesNotExist:
                 messages.error(request, f"User not found: {email}")
-                return redirect("web-dataset-admin-manage", dataset=dataset)
+                return redirect("web-team-lead-manage", dataset=dataset)
 
-            _, created = DatasetAdmin.objects.get_or_create(user=target_user, dataset=ds)
+            admin_perm, _ = Permission.objects.get_or_create(name="admin")
+            _, created = Grant.objects.get_or_create(
+                user=target_user, dataset=ds, permission=admin_perm,
+                defaults={"granted_by": user, "source": Grant.SOURCE_MANUAL},
+            )
             if created:
-                messages.success(request, f"Added {email} as lab head")
+                messages.success(request, f"Added {email} as team lead")
             else:
-                messages.info(request, f"{email} is already a lab head")
+                messages.info(request, f"{email} is already a team lead")
 
         elif action == "remove":
-            admin_id = request.POST.get("admin_id")
-            DatasetAdmin.objects.filter(pk=admin_id, dataset=ds).delete()
-            messages.success(request, "Removed lab head")
+            grant_id = request.POST.get("grant_id")
+            admin_perm = Permission.objects.filter(name="admin").first()
+            if admin_perm:
+                Grant.objects.filter(pk=grant_id, dataset=ds, permission=admin_perm).delete()
+            messages.success(request, "Removed team lead")
 
-        return redirect("web-dataset-admin-manage", dataset=dataset)
+        return redirect("web-team-lead-manage", dataset=dataset)
 
 
 class TOSAcceptView(View):
@@ -191,8 +213,10 @@ class MyDatasetsView(View):
         # Groups
         groups = perm_cache["groups"]
 
-        # Datasets this user admins
-        admin_datasets = DatasetAdmin.objects.filter(user=user).select_related("dataset")
+        # Datasets this user leads (has admin grant on)
+        admin_datasets = Grant.objects.filter(
+            user=user, permission__name="admin"
+        ).select_related("dataset")
 
         # Missing TOS — enrich with invite_token for link generation
         missing_tos = perm_cache["missing_tos"]
@@ -230,7 +254,7 @@ class MyDatasetsView(View):
 
 
 class GrantManageView(View):
-    """GET/POST /web/grants/<slug:dataset> — Team lead grant management."""
+    """GET/POST /web/grants/<slug:dataset> — Dataset grant management."""
 
     def get(self, request, dataset):
         user = _get_web_user(request)
@@ -239,8 +263,7 @@ class GrantManageView(View):
 
         ds = get_object_or_404(Dataset, name=dataset)
 
-        # Check if user is admin of this dataset or global admin
-        if not (user.admin or DatasetAdmin.objects.filter(user=user, dataset=ds).exists()):
+        if not _can_manage_dataset(user, ds):
             return render(request, "web/access_denied.html", {"user": user})
 
         grants = Grant.objects.filter(dataset=ds).select_related(
@@ -265,7 +288,7 @@ class GrantManageView(View):
 
         ds = get_object_or_404(Dataset, name=dataset)
 
-        if not (user.admin or DatasetAdmin.objects.filter(user=user, dataset=ds).exists()):
+        if not _can_manage_dataset(user, ds):
             return render(request, "web/access_denied.html", {"user": user})
 
         action = request.POST.get("action")
@@ -318,7 +341,7 @@ class PublicRootManageView(View):
 
         ds = get_object_or_404(Dataset, name=dataset)
 
-        if not (user.admin or DatasetAdmin.objects.filter(user=user, dataset=ds).exists()):
+        if not _can_manage_dataset(user, ds):
             return render(request, "web/access_denied.html", {"user": user})
 
         service_tables = ServiceTable.objects.filter(dataset=ds).prefetch_related("public_roots")
@@ -336,7 +359,7 @@ class PublicRootManageView(View):
 
         ds = get_object_or_404(Dataset, name=dataset)
 
-        if not (user.admin or DatasetAdmin.objects.filter(user=user, dataset=ds).exists()):
+        if not _can_manage_dataset(user, ds):
             return render(request, "web/access_denied.html", {"user": user})
 
         action = request.POST.get("action")
@@ -372,10 +395,8 @@ class TOSLandingView(View):
             raise Http404
 
     def _user_is_authorized(self, user, dataset):
-        """Check if user has Grant, DatasetAdmin, or is global admin."""
+        """Check if user has Grant or is global admin."""
         if user.admin:
-            return True
-        if DatasetAdmin.objects.filter(user=user, dataset=dataset).exists():
             return True
         if Grant.objects.filter(user=user, dataset=dataset).exists():
             return True

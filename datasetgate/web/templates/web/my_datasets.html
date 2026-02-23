@@ -10,7 +10,7 @@
 <p>You are not a member of any groups.</p>
 {% endif %}
 
-<h2>Datasets You Admin</h2>
+<h2>Datasets You Lead</h2>
 {% if admin_datasets %}
 <table>
     <tr><th>Dataset</th><th></th></tr>
@@ -22,7 +22,7 @@
     {% endfor %}
 </table>
 {% else %}
-<p>You are not an admin of any datasets.</p>
+<p>You are not a lead of any datasets.</p>
 {% endif %}
 
 {% if missing_tos %}

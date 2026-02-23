@@ -10,8 +10,8 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "names", nargs="*", default=["admin", "sc", "lab_head", "user"],
-            help="Group names to create (default: admin, sc, lab_head, user)",
+            "names", nargs="*", default=["admin", "sc", "team_lead", "user"],
+            help="Group names to create (default: admin, sc, team_lead, user)",
         )
 
     def handle(self, *args, **options):

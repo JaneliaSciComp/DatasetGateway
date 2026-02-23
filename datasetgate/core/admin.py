@@ -8,7 +8,6 @@ from .models import (
     APIKey,
     AuditLog,
     Dataset,
-    DatasetAdmin as DatasetAdminModel,
     DatasetVersion,
     Grant,
     Group,
@@ -66,17 +65,12 @@ class DatasetVersionInline(admin.TabularInline):
     extra = 0
 
 
-class DatasetAdminInline(admin.TabularInline):
-    model = DatasetAdminModel
-    extra = 0
-
-
 @admin.register(Dataset)
 class DatasetModelAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "tos", "access_mode")
     list_filter = ("access_mode",)
     search_fields = ("name",)
-    inlines = [DatasetVersionInline, DatasetAdminInline, ServiceTableInline]
+    inlines = [DatasetVersionInline, ServiceTableInline]
 
 
 @admin.register(DatasetVersion)

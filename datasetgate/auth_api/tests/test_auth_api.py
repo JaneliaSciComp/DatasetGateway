@@ -8,7 +8,6 @@ from rest_framework.test import APIClient
 from core.models import (
     APIKey,
     Dataset,
-    DatasetAdmin,
     DatasetVersion,
     Grant,
     Group,
@@ -88,7 +87,8 @@ class TestDatasetsListView(TestCase):
         self.assertIn("secret-data", names)
 
     def test_dataset_admin_sees_their_dataset(self):
-        DatasetAdmin.objects.create(user=self.user, dataset=self.ds3)
+        admin_perm, _ = Permission.objects.get_or_create(name="admin")
+        Grant.objects.create(user=self.user, dataset=self.ds3, permission=admin_perm)
         cache.clear()
         resp = self.client.get("/api/v1/datasets", **self._auth())
         names = {d["name"] for d in resp.json()}
@@ -219,7 +219,8 @@ class TestAuthorizeDecisionView(TestCase):
 
     def test_dataset_admin_allowed(self):
         ds2 = Dataset.objects.create(name="private")
-        DatasetAdmin.objects.create(user=self.user, dataset=ds2)
+        admin_perm, _ = Permission.objects.get_or_create(name="admin")
+        Grant.objects.create(user=self.user, dataset=ds2, permission=admin_perm)
         cache.clear()
 
         resp = self.client.post(

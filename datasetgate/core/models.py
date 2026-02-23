@@ -187,19 +187,6 @@ class DatasetVersion(models.Model):
         return f"{self.dataset.name}:{self.version}"
 
 
-class DatasetAdmin(models.Model):
-    """Admin role for a specific dataset."""
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="admin_datasets")
-    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="admins")
-
-    class Meta:
-        db_table = "dataset_admin"
-        unique_together = [("user", "dataset")]
-
-    def __str__(self):
-        return f"{self.user} admin of {self.dataset}"
-
 
 class GroupDatasetPermission(models.Model):
     """Grants a permission on a dataset to a group."""

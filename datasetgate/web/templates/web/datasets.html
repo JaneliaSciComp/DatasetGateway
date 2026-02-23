@@ -25,12 +25,12 @@
     </table>
     {% endif %}
 
-    {% if item.is_admin %}
+    {% if item.can_manage %}
         <a href="/web/grants/{{ item.dataset.name }}" class="btn btn-sm">Manage Grants</a>
         <a href="/web/public-roots/{{ item.dataset.name }}" class="btn btn-sm">Public Roots</a>
     {% endif %}
     {% if is_sc_or_admin %}
-        <a href="/web/dataset-admins/{{ item.dataset.name }}" class="btn btn-sm">Manage Lab Heads</a>
+        <a href="/web/team-leads/{{ item.dataset.name }}" class="btn btn-sm">Manage Team Leads</a>
     {% endif %}
 </div>
 {% empty %}

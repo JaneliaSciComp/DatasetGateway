@@ -1,9 +1,9 @@
 {% extends "web/base.html" %}
-{% block title %}Manage Lab Heads: {{ dataset.name }} — DatasetGate{% endblock %}
+{% block title %}Manage Team Leads: {{ dataset.name }} — DatasetGate{% endblock %}
 {% block content %}
-<h1>Manage Lab Heads: {{ dataset.name }}</h1>
+<h1>Manage Team Leads: {{ dataset.name }}</h1>
 
-<h2>Add Lab Head</h2>
+<h2>Add Team Lead</h2>
 <form method="post">
     {% csrf_token %}
     <input type="hidden" name="action" value="add">
@@ -11,7 +11,7 @@
     <button type="submit" class="btn btn-sm">Add</button>
 </form>
 
-<h2>Current Lab Heads</h2>
+<h2>Current Team Leads</h2>
 {% if admins %}
 <table>
     <tr><th>Email</th><th>Name</th><th></th></tr>
@@ -23,7 +23,7 @@
             <form method="post" class="inline">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="remove">
-                <input type="hidden" name="admin_id" value="{{ a.pk }}">
+                <input type="hidden" name="grant_id" value="{{ a.pk }}">
                 <button type="submit" class="btn btn-danger btn-sm">Remove</button>
             </form>
         </td>
@@ -31,6 +31,6 @@
     {% endfor %}
 </table>
 {% else %}
-<p>No lab heads assigned yet.</p>
+<p>No team leads assigned yet.</p>
 {% endif %}
 {% endblock %}

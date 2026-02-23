@@ -35,8 +35,8 @@ class IsDatasetAdmin(BasePermission):
         if cache:
             return dataset_name in cache.get("datasets_admin", [])
 
-        from .models import DatasetAdmin
+        from .models import Grant
 
-        return DatasetAdmin.objects.filter(
-            user=request.user, dataset__name=dataset_name
+        return Grant.objects.filter(
+            user=request.user, dataset__name=dataset_name, permission__name="admin"
         ).exists()

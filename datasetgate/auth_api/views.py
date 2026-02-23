@@ -7,10 +7,10 @@ from rest_framework.views import APIView
 
 from core.models import (
     Dataset,
-    DatasetAdmin,
     DatasetVersion,
     Grant,
     GroupDatasetPermission,
+    Permission,
     TOSAcceptance,
     TOSDocument,
 )
@@ -56,9 +56,9 @@ class DatasetsListView(APIView):
                 "dataset_id", flat=True
             )
 
-            admin_dataset_ids = DatasetAdmin.objects.filter(user=user).values_list(
-                "dataset_id", flat=True
-            )
+            admin_dataset_ids = Grant.objects.filter(
+                user=user, permission__name="admin"
+            ).values_list("dataset_id", flat=True)
 
             datasets = Dataset.objects.filter(
                 Q(pk__in=group_dataset_ids)
@@ -136,8 +136,8 @@ class AuthorizeDecisionView(APIView):
         if user.admin:
             return Response({"allowed": True, "reason": "admin"})
 
-        # Dataset admins have access
-        if DatasetAdmin.objects.filter(user=user, dataset=dataset).exists():
+        # Dataset admins have access (users with admin grant)
+        if Grant.objects.filter(user=user, dataset=dataset, permission__name="admin").exists():
             return Response({"allowed": True, "reason": "dataset_admin"})
 
         # Check TOS requirement

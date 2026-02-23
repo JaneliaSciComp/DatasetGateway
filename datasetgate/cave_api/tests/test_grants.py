@@ -8,7 +8,6 @@ from rest_framework.test import APIClient
 from core.models import (
     APIKey,
     Dataset,
-    DatasetAdmin,
     Grant,
     Group,
     GroupDatasetPermission,
