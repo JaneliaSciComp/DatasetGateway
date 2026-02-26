@@ -1,4 +1,4 @@
-# DatasetGate Admin Manual
+# DatasetGateway Admin Manual
 
 This manual covers initial system setup and day-to-day administration
 through the Django admin console (`/admin/`). For end-user workflows
@@ -12,7 +12,7 @@ through the Django admin console (`/admin/`). For end-user workflows
 ### 1. Install dependencies and create the database
 
 ```bash
-cd datasetgate
+cd dsg
 pixi install                          # or: pip install -e ".[dev]"
 pixi run python manage.py migrate     # creates all tables
 pixi run python manage.py seed_permissions   # creates view, edit, manage, admin
@@ -21,7 +21,7 @@ pixi run python manage.py seed_groups        # creates admin, sc, team_lead, use
 
 ### 2. Configure Google OAuth
 
-Place a `client_credentials.json` file in `datasetgate/secrets/`, or set
+Place a `client_credentials.json` file in `dsg/secrets/`, or set
 the `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment variables.
 See the [README](../README.md#google-oauth-setup).
 
@@ -43,7 +43,7 @@ pixi run python manage.py createsuperuser
 ```
 
 This creates a record in the `core.User` table (the same table all
-DatasetGate users live in) with `admin=True` and a usable password. The
+DatasetGateway users live in) with `admin=True` and a usable password. The
 password is only used to log into the Django admin console at `/admin/`.
 All other login flows use Google OAuth.
 
@@ -82,7 +82,7 @@ The server starts at `http://localhost:8000`. The admin console is at
 To start completely fresh:
 
 ```bash
-cd datasetgate
+cd dsg
 rm db.sqlite3
 pixi run python manage.py migrate
 pixi run python manage.py seed_permissions
@@ -122,11 +122,11 @@ bulk changes, or debugging.
 
 ## CORE Section
 
-This is where all DatasetGate-specific data lives.
+This is where all DatasetGateway-specific data lives.
 
 ### Users
 
-Each row is a DatasetGate user. Key fields:
+Each row is a DatasetGateway user. Key fields:
 
 | Field | Meaning |
 |-------|---------|
@@ -295,7 +295,7 @@ to match your deployment domain:
 ```bash
 pixi run python manage.py shell -c "
 from django.contrib.sites.models import Site
-Site.objects.update_or_create(id=1, defaults={'domain': 'auth.example.org', 'name': 'DatasetGate'})
+Site.objects.update_or_create(id=1, defaults={'domain': 'auth.example.org', 'name': 'DatasetGateway'})
 "
 ```
 
@@ -313,7 +313,7 @@ logins. You generally don't need to touch them.
 - **Social applications** — the Google OAuth app configuration. If you
   configured OAuth via environment variables or `client_credentials.json`,
   this may be empty (allauth reads from Django settings instead).
-- **Social accounts** — links between DatasetGate users and their Google
+- **Social accounts** — links between DatasetGateway users and their Google
   accounts. Created automatically on first OAuth login.
 - **Social application tokens** — OAuth tokens from Google. Managed
   automatically.
@@ -346,7 +346,7 @@ logins. You generally don't need to touch them.
 
 ## Management Commands Reference
 
-All commands are run from the `datasetgate/` directory.
+All commands are run from the `dsg/` directory.
 
 | Command | Purpose |
 |---------|---------|
@@ -355,7 +355,7 @@ All commands are run from the `datasetgate/` directory.
 | `python manage.py changepassword EMAIL` | Reset a user's password (for admin console login). |
 | `python manage.py seed_permissions` | Create `view`, `edit`, `manage`, and `admin` permission types. |
 | `python manage.py seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
-| `python manage.py make_admin EMAIL` | Promote a user to DatasetGate global admin. |
+| `python manage.py make_admin EMAIL` | Promote a user to DatasetGateway global admin. |
 | `python manage.py import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
 | `python manage.py runserver` | Start the development server. |
 | `python manage.py collectstatic` | Collect static files for production deployment. |

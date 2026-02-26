@@ -2,12 +2,12 @@
 
 ## Repository layout
 
-The git root is the top-level `DatasetGate/` directory. Orient yourself
+The git root is the top-level `DatasetGateway/` directory. Orient yourself
 here before doing anything else — do not assume your working directory is
 the repo root.
 
 ```
-DatasetGate/              ← git root
+DatasetGateway/              ← git root
 ├── README.md             ← project overview, quick-start, env vars
 ├── CLAUDE.md
 ├── AGENTS.md             ← this file
@@ -18,12 +18,12 @@ DatasetGate/              ← git root
 │   ├── clio-support.md
 │   ├── implemented-plan.md
 │   └── user-manual.md
-└── datasetgate/          ← Django project (the only Python package)
+└── dsg/          ← Django project (the only Python package)
     ├── pyproject.toml    ← build config, dependencies, pixi config
     ├── pixi.lock
     ├── manage.py
     ├── Dockerfile
-    ├── datasetgate/      ← Django settings package
+    ├── dsg/      ← Django settings package
     ├── core/             ← shared models, middleware
     ├── cave_api/         ← CAVE-compatible auth endpoints
     ├── auth_api/         ← Clio/neuprint auth endpoints
@@ -33,14 +33,14 @@ DatasetGate/              ← git root
 ```
 
 **Important:** All Python code, tests, and the pixi environment live
-under `datasetgate/`. Run `pixi` commands from that directory. The
-top-level `DatasetGate/` contains documentation and repo-level config
+under `dsg/`. Run `pixi` commands from that directory. The
+top-level `DatasetGateway/` contains documentation and repo-level config
 only.
 
 ## Commands
 
 ```bash
-cd datasetgate
+cd dsg
 pixi install                              # create/update environment
 pixi run python manage.py check           # verify Django loads
 pixi run -e dev python -m pytest          # run tests (dev environment)

@@ -22,13 +22,13 @@ Pointing CAVE services at a replacement is a deployment config change — update
 
 ### Token Delivery
 
-Tokens reach CAVE services via three mechanisms (checked in this order by DatasetGate's `TokenAuthentication`):
+Tokens reach CAVE services via three mechanisms (checked in this order by DatasetGateway's `TokenAuthentication`):
 
 1. HTTP cookie: `dsg_token`
 2. Authorization header: `Bearer {token}`
 3. Query parameter: `?dsg_token=...`
 
-> **Note:** The original CAVE `middle_auth_client` uses `middle_auth_token` as the cookie and query param name. DatasetGate unifies to `dsg_token`. CAVE services using `middle_auth_client` with `Bearer` header auth are unaffected; those relying on cookie or query param names need the updated client or config.
+> **Note:** The original CAVE `middle_auth_client` uses `middle_auth_token` as the cookie and query param name. DatasetGateway unifies to `dsg_token`. CAVE services using `middle_auth_client` with `Bearer` header auth are unaffected; those relying on cookie or query param names need the updated client or config.
 
 ---
 

@@ -1,0 +1,36 @@
+{% extends "web/base.html" %}
+{% block title %}Manage Team Leads: {{ dataset.name }} — DatasetGateway{% endblock %}
+{% block content %}
+<h1>Manage Team Leads: {{ dataset.name }}</h1>
+
+<h2>Add Team Lead</h2>
+<form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="add">
+    <input type="email" name="email" placeholder="user@example.org" required>
+    <button type="submit" class="btn btn-sm">Add</button>
+</form>
+
+<h2>Current Team Leads</h2>
+{% if admins %}
+<table>
+    <tr><th>Email</th><th>Name</th><th></th></tr>
+    {% for a in admins %}
+    <tr>
+        <td>{{ a.user.email }}</td>
+        <td>{{ a.user.public_name }}</td>
+        <td>
+            <form method="post" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="remove">
+                <input type="hidden" name="grant_id" value="{{ a.pk }}">
+                <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No team leads assigned yet.</p>
+{% endif %}
+{% endblock %}

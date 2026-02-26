@@ -1,0 +1,81 @@
+{% extends "web/base.html" %}
+{% block title %}Team: {{ group.name }} — DatasetGateway{% endblock %}
+{% block content %}
+<h1>Team: {{ group.name }}</h1>
+
+<h2>Members ({{ members|length }})</h2>
+
+<h3>Add Member</h3>
+<form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="add_member">
+    <input type="email" name="email" placeholder="user@example.org" required>
+    <button type="submit" class="btn btn-sm">Add Member</button>
+</form>
+
+{% if members %}
+<table>
+    <tr><th>Email</th><th>Name</th><th>Group Admin</th><th></th></tr>
+    {% for m in members %}
+    <tr>
+        <td>{{ m.user.email }}</td>
+        <td>{{ m.user.public_name }}</td>
+        <td>{{ m.is_admin|yesno:"Yes,No" }}</td>
+        <td>
+            <form method="post" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="remove_member">
+                <input type="hidden" name="member_id" value="{{ m.pk }}">
+                <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No members in this group.</p>
+{% endif %}
+
+<h2>Grant Dataset Access</h2>
+<form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="grant">
+    <input type="email" name="email" placeholder="user@example.org" required>
+    <select name="dataset" required>
+        <option value="">Select dataset</option>
+        {% for d in managed_datasets %}
+        <option value="{{ d.name }}">{{ d.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="permission" required>
+        {% for p in grantable_permissions %}
+        <option value="{{ p.name }}">{{ p.name }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm">Grant</button>
+</form>
+
+<h2>Group Grants</h2>
+{% if group_grants %}
+<table>
+    <tr><th>User</th><th>Dataset</th><th>Permission</th><th></th></tr>
+    {% for g in group_grants %}
+    <tr>
+        <td>{{ g.user.email }}</td>
+        <td>{{ g.dataset.name }}</td>
+        <td>{{ g.permission.name }}</td>
+        <td>
+            <form method="post" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="revoke">
+                <input type="hidden" name="grant_id" value="{{ g.pk }}">
+                <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No group-scoped grants yet.</p>
+{% endif %}
+{% endblock %}

@@ -1,4 +1,4 @@
-# DatasetGate Implementation Record
+# DatasetGateway Implementation Record
 
 > **Note:** This document was originally written as the build plan before
 > implementation began. It has been updated to reflect what was actually
@@ -7,7 +7,7 @@
 
 ## Context
 
-DatasetGate is a greenfield Django authorization service for neuroscience datasets. It unifies authorization across CAVE, Neuroglancer, WebKnossos, neuprint, and Clio behind a single service. The project currently contains only documentation (Architecture.md, CAVE-auth-endpoints.md). This plan covers two deliverables: (1) updating CAVE-auth-endpoints.md to document SCIM 2.0 endpoints from CAVE's `scim` branch, and (2) implementing the entire Django authorization service.
+DatasetGateway is a greenfield Django authorization service for neuroscience datasets. It unifies authorization across CAVE, Neuroglancer, WebKnossos, neuprint, and Clio behind a single service. The project currently contains only documentation (Architecture.md, CAVE-auth-endpoints.md). This plan covers two deliverables: (1) updating CAVE-auth-endpoints.md to document SCIM 2.0 endpoints from CAVE's `scim` branch, and (2) implementing the entire Django authorization service.
 
 ---
 
@@ -55,10 +55,10 @@ Add a new section documenting the SCIM 2.0 provisioning endpoints derived from t
 ### Project Structure
 
 ```
-datasetgate/                          # Project root
+dsg/                          # Project root
     manage.py
     pyproject.toml
-    datasetgate/                      # Django project package
+    dsg/                      # Django project package
         __init__.py
         settings.py
         urls.py
@@ -77,7 +77,7 @@ datasetgate/                          # Project root
         apps.py, urls.py, views.py
         oauth_views.py                # OAuth flow and token management
         tests/
-    auth_api/                         # DatasetGate authorization API
+    auth_api/                         # DatasetGateway authorization API
         apps.py, urls.py, views.py
         tests/
     ngauth/                           # Neuroglancer ngauth endpoints
@@ -151,7 +151,7 @@ Port of `User.create_cache()` from middle_auth. Must produce identical JSON:
 **Step 1: Update CAVE-auth-endpoints.md with SCIM documentation**
 
 **Step 2: Initialize Django project**
-- Create `manage.py`, `pyproject.toml`, `datasetgate/settings.py`, `wsgi.py`, `asgi.py`
+- Create `manage.py`, `pyproject.toml`, `dsg/settings.py`, `wsgi.py`, `asgi.py`
 - Dependencies: Django, djangorestframework, google-auth, google-auth-oauthlib, google-cloud-storage, gunicorn, scim2-filter-parser, markdown, pytest-django
 - Settings: SQLite, installed apps, DRF config, session/cache config
 
@@ -165,7 +165,7 @@ Port of `User.create_cache()` from middle_auth. Must produce identical JSON:
 - `core/authentication.py`: `TokenAuthentication`
 - `core/cache.py`: `build_permission_cache()` — faithful port of `User.create_cache()`
 - `core/permissions.py`: `IsAdmin`, `IsDatasetAdmin`
-- `datasetgate/middleware.py`: `DatasetContextMiddleware`
+- `dsg/middleware.py`: `DatasetContextMiddleware`
 
 **Step 5: Implement `GET /api/v1/user/cache` (most critical CAVE endpoint)**
 - `cave_api/views.py`: `UserCacheView`
@@ -251,7 +251,7 @@ All views in `cave_api/oauth_views.py`:
 - `scim/serializers.py`: `DatasetSCIMSerializer` (with `serviceTables` management)
 - `scim/views.py`: `DatasetViewSet`
 
-**Step 12: Implement DatasetGate authorization API**
+**Step 12: Implement DatasetGateway authorization API**
 - `auth_api/views.py`:
   - `GET /api/v1/whoami` — user identity + roles
   - `GET /api/v1/datasets` — list accessible datasets
@@ -265,9 +265,9 @@ All views in `cave_api/oauth_views.py`:
 > `urls.py`, Django's first-match-wins resolution meant the CAVE OAuth
 > redirect always won, returning 302 instead of the expected JSON response.
 >
-> Fixed by renaming the DatasetGate endpoint to `POST /api/v1/check-access`.
+> Fixed by renaming the DatasetGateway endpoint to `POST /api/v1/check-access`.
 > The CAVE OAuth path is immovable (existing clients depend on it); the
-> DatasetGate path has no existing consumers yet and is free to change.
+> DatasetGateway path has no existing consumers yet and is free to change.
 
 **Step 13: Implement web UI**
 - `web/views.py`: Dataset browsing, TOS acceptance flow, "My datasets" history
@@ -289,11 +289,11 @@ All views in `cave_api/oauth_views.py`:
 ### URL Routing Summary
 
 ```python
-# datasetgate/urls.py
+# dsg/urls.py
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include('cave_api.urls')),        # CAVE compat
-    path('api/v1/', include('auth_api.urls')),         # DatasetGate API
+    path('api/v1/', include('auth_api.urls')),         # DatasetGateway API
     path('auth/scim/v2/', include('scim.urls')),       # SCIM 2.0
     path('', include('ngauth.urls')),                  # ngauth (/, /token, etc.)
     path('web/', include('web.urls')),                 # Web UI

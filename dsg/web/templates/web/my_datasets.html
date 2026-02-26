@@ -1,0 +1,109 @@
+{% extends "web/base.html" %}
+{% block title %}My Datasets — DatasetGateway{% endblock %}
+{% block content %}
+<h1>My Datasets</h1>
+
+<h2>Your Roles</h2>
+{% if groups %}
+<p>Groups: {% for g in groups %}<strong>{{ g }}</strong>{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+{% else %}
+<p>You are not a member of any groups.</p>
+{% endif %}
+
+<h2>Datasets You Lead</h2>
+{% if admin_datasets %}
+<table>
+    <tr><th>Dataset</th><th></th></tr>
+    {% for da in admin_datasets %}
+    <tr>
+        <td>{{ da.dataset.name }}</td>
+        <td><a href="/web/grants/{{ da.dataset.name }}" class="btn btn-sm">Manage Grants</a></td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>You are not a lead of any datasets.</p>
+{% endif %}
+
+{% if teams_admin %}
+<h2>Teams You Lead</h2>
+<table>
+    <tr><th>Group</th><th></th></tr>
+    {% for t in teams_admin %}
+    <tr>
+        <td>{{ t }}</td>
+        <td><a href="/web/team/{{ t }}/" class="btn btn-sm">Manage Team</a></td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+{% if missing_tos %}
+<h2>Action Required: Accept TOS</h2>
+<table>
+    <tr><th>Dataset</th><th>TOS Document</th><th></th></tr>
+    {% for item in missing_tos %}
+    <tr>
+        <td>{{ item.dataset_name }}</td>
+        <td>{{ item.tos_name }}</td>
+        <td>
+            {% if item.invite_token %}
+                <a href="/web/tos/{{ item.invite_token }}/" class="btn btn-sm">Accept TOS</a>
+            {% else %}
+                <a href="/web/tos/{{ item.tos_id }}/accept" class="btn btn-sm">Accept TOS</a>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% endif %}
+
+<h2>Direct Grants</h2>
+{% if grants %}
+<table>
+    <tr><th>Dataset</th><th>Version</th><th>Permission</th><th>Source</th><th>Granted</th></tr>
+    {% for g in grants %}
+    <tr>
+        <td>{{ g.dataset.name }}</td>
+        <td>{{ g.dataset_version.version|default:"All" }}</td>
+        <td>{{ g.permission.name }}</td>
+        <td>{{ g.get_source_display }}</td>
+        <td>{{ g.created|date:"Y-m-d H:i" }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No direct grants.</p>
+{% endif %}
+
+<h2>Group-Based Permissions</h2>
+{% if group_perms %}
+<table>
+    <tr><th>Dataset</th><th>Permission</th><th>Via Group</th></tr>
+    {% for gp in group_perms %}
+    <tr>
+        <td>{{ gp.dataset.name }}</td>
+        <td>{{ gp.permission.name }}</td>
+        <td>{{ gp.group.name }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No group-based permissions.</p>
+{% endif %}
+
+<h2>TOS Acceptances</h2>
+{% if acceptances %}
+<table>
+    <tr><th>Document</th><th>Accepted</th></tr>
+    {% for a in acceptances %}
+    <tr>
+        <td>{{ a.tos_document.name }}</td>
+        <td>{{ a.accepted_at|date:"Y-m-d H:i" }}</td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No TOS accepted yet.</p>
+{% endif %}
+{% endblock %}

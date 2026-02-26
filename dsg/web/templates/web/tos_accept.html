@@ -1,0 +1,22 @@
+{% extends "web/base.html" %}
+{% block title %}Accept TOS — DatasetGateway{% endblock %}
+{% block content %}
+<h1>{{ tos_doc.name }}</h1>
+
+<div class="card">
+    {{ tos_doc.text|safe }}
+</div>
+
+{% if user %}
+    {% if already_accepted %}
+        <p><strong>You have already accepted this TOS.</strong></p>
+    {% else %}
+        <form method="post">
+            {% csrf_token %}
+            <button type="submit" class="btn">I Accept</button>
+        </form>
+    {% endif %}
+{% else %}
+    <p><a href="/auth/login" class="btn">Login to accept</a></p>
+{% endif %}
+{% endblock %}

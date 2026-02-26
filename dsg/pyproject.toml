@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["dsg*", "core*", "cave_api*", "auth_api*", "ngauth*", "scim*", "web*"]
+
+[project]
+name = "dataset-gateway"
+version = "0.1.0"
+description = "Unified authorization service for neuroscience datasets"
+requires-python = ">=3.11"
+dependencies = [
+    "Django>=5.1,<6.0",
+    "djangorestframework>=3.15,<4.0",
+    "django-allauth[socialaccount]>=65.0",
+    "google-auth>=2.0",
+    "google-auth-oauthlib>=1.0",
+    "google-cloud-storage>=2.0",
+    "gunicorn>=22.0",
+    "scim2-filter-parser>=0.5",
+    "markdown>=3.5",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-django>=4.8",
+]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.dependencies]
+python = "3.12.*"
+
+[tool.pixi.pypi-dependencies]
+dataset-gateway = { path = ".", editable = true }
+
+[tool.pixi.feature.dev.pypi-dependencies]
+dataset-gateway = { path = ".", editable = true, extras = ["dev"] }
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "dsg.settings"
+python_files = ["tests.py", "test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]

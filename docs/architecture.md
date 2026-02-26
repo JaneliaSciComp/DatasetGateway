@@ -2,11 +2,11 @@
 
 ## Overview
 
-DatasetGate provides a unified authorization layer that enforces terms of service and controls access to datasets across multiple services and tools. 
+DatasetGateway provides a unified authorization layer that enforces terms of service and controls access to datasets across multiple services and tools. 
 
 The system thinks of authorization in terms of permissions and grants. A `permission` is an abstract capability that describes what can be done (e.g., `dataset.read`) and lives in code/config. A `grant` is an assignment of permissions to a subject, scoped to an object (e.g., user Alice is granted `dataset.read` on dataset `fish2:v9`) and lives in a database.
 
-DatasetGate provides:
+DatasetGateway provides:
 
 1. **Web app**
    - Google-login gated user experience
@@ -335,13 +335,13 @@ Maps a CAVE service/table pair to a dataset, used by
 
 This system preserves the operational behavior of `tos-ngauth` while
 generalizing it. Dataset data is stored in Google Cloud Storage (GCS)
-buckets. DatasetGate controls who can read that data through two
+buckets. DatasetGateway controls who can read that data through two
 mechanisms that can coexist.
 
 ### Mode 1: Bucket IAM membership ("activate" flow)
 
 When a user accepts the TOS and calls `POST /activate` with a bucket
-name, DatasetGate adds the user's Google email to the bucket's IAM
+name, DatasetGateway adds the user's Google email to the bucket's IAM
 policy with the `roles/storage.objectViewer` role. After IAM propagation
 (which can take minutes), the user can access the bucket directly with
 their own Google credentials.
@@ -352,12 +352,12 @@ their own Google credentials.
 
 ### Mode 2: Downscoped tokens (Neuroglancer flow)
 
-When Neuroglancer calls `POST /gcs_token`, DatasetGate generates a
+When Neuroglancer calls `POST /gcs_token`, DatasetGateway generates a
 short-lived GCS access token that is restricted to a single bucket.
 This uses Google's [Credential Access Boundaries](https://cloud.google.com/iam/docs/downscoping-short-lived-credentials)
 (Security Token Service API):
 
-1. DatasetGate first verifies the user has `objectViewer` access on the
+1. DatasetGateway first verifies the user has `objectViewer` access on the
    bucket via a direct IAM policy check.
 2. It then takes its own service account credential and exchanges it
    with Google's STS endpoint (`sts.googleapis.com/v1/token`) for a new

@@ -1,8 +1,8 @@
-# DatasetGate User Manual
+# DatasetGateway User Manual
 
 ## Roles
 
-DatasetGate uses a hierarchical role model. Each role has a specific
+DatasetGateway uses a hierarchical role model. Each role has a specific
 scope of access and management capability.
 
 | Role | How to assign | Dataset scope | User scope |
@@ -35,25 +35,25 @@ A typical setup uses a global admin for initial configuration (creating
 datasets, groups, permissions), dataset admins (SC) for dataset-level
 management, and team leads for day-to-day user access within their groups.
 
-### How services use DatasetGate
+### How services use DatasetGateway
 
-DatasetGate is the central auth layer for multiple platforms. Each
-platform authenticates users through DatasetGate but in slightly
+DatasetGateway is the central auth layer for multiple platforms. Each
+platform authenticates users through DatasetGateway but in slightly
 different ways:
 
 **CAVE services** — CAVE is a set of microservices for connectomics
 annotation (MaterializationEngine, AnnotationEngine, PyChunkedGraph,
 etc.). Each service has an `AUTH_URL` environment variable pointing at
-DatasetGate. On every authenticated request, the service calls
+DatasetGateway. On every authenticated request, the service calls
 `GET /api/v1/user/cache` with the user's token to validate identity and
-check permissions. DatasetGate is a drop-in replacement for CAVE's
+check permissions. DatasetGateway is a drop-in replacement for CAVE's
 original auth server (`middle_auth`) — no CAVE service code changes are
 needed, only the `AUTH_URL` config.
 
 **Neuroglancer** — Neuroglancer is a web-based 3D viewer for
 neuroscience data stored in Google Cloud Storage (GCS). It uses the
 "ngauth" protocol: when a user opens a protected dataset, Neuroglancer
-shows a login popup pointing at DatasetGate's `/auth/login`. After
+shows a login popup pointing at DatasetGateway's `/auth/login`. After
 Google OAuth, the user gets a `dsg_token` cookie. Neuroglancer then
 calls `POST /token` (server-side, so it can read the cookie) to get a
 short-lived token, and exchanges that for a time-limited GCS read
@@ -61,7 +61,7 @@ credential via `POST /gcs_token`. This lets the browser load data
 directly from cloud storage without exposing long-lived credentials.
 
 **neuPrint, celltyping-light, Clio** — These services validate users
-by calling DatasetGate's `/api/v1/user/cache` with the user's token,
+by calling DatasetGateway's `/api/v1/user/cache` with the user's token,
 the same pattern as CAVE. When deployed on sibling subdomains with
 `AUTH_COOKIE_DOMAIN` configured (e.g., `.janelia.org`), the `dsg_token`
 cookie is shared automatically — users log in once and are authenticated
@@ -91,7 +91,7 @@ accepted.
 ### 1. Install and migrate
 
 ```bash
-cd datasetgate
+cd dsg
 pip install -e ".[dev]"
 python manage.py migrate
 python manage.py seed_permissions
@@ -106,7 +106,7 @@ python manage.py seed_groups
 ### 2. Configure Google OAuth
 
 See the [README](../README.md#google-oauth-setup) for full instructions.
-Either place a `client_credentials.json` file in `datasetgate/secrets/`
+Either place a `client_credentials.json` file in `dsg/secrets/`
 or set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment
 variables.
 
@@ -117,7 +117,7 @@ python manage.py createsuperuser
 ```
 
 This is a built-in Django command. It prompts for an email and password.
-The account is created in DatasetGate's `User` table with `admin=True`
+The account is created in DatasetGateway's `User` table with `admin=True`
 and a usable password. The password is only used to access the Django
 admin panel at `/admin/` — all other login flows use Google OAuth.
 
@@ -129,10 +129,10 @@ python manage.py runserver
 
 The server starts at `http://localhost:8000`.
 
-### 5. Create the first DatasetGate admin
+### 5. Create the first DatasetGateway admin
 
 The first real user must log in via Google OAuth to create their record
-in the DatasetGate `User` table:
+in the DatasetGateway `User` table:
 
 1. Visit `http://localhost:8000` and click "Log in"
 2. Complete the Google OAuth flow
@@ -144,7 +144,7 @@ Then promote them to admin from the command line:
 python manage.py make_admin user@example.com
 ```
 
-This is a custom command. It sets the `admin` field on the DatasetGate
+This is a custom command. It sets the `admin` field on the DatasetGateway
 `User` model. The user must have logged in first — the command will
 error if the email isn't found.
 
@@ -219,8 +219,8 @@ until the user accepts it.
 
 There are two ways to log in, depending on which service you're using:
 
-**From the DatasetGate web UI or Neuroglancer:**
-1. Visit the DatasetGate server or open a Neuroglancer login popup
+**From the DatasetGateway web UI or Neuroglancer:**
+1. Visit the DatasetGateway server or open a Neuroglancer login popup
 2. Click "Log in" → redirects to `/auth/login` → Google OAuth
 3. After authenticating, a `dsg_token` cookie is set
 4. You are redirected back (to the web UI, or Neuroglancer closes the popup)
@@ -231,7 +231,7 @@ There are two ways to log in, depending on which service you're using:
 3. You are redirected back to the app
 
 Both flows do the same thing: authenticate with Google, create a
-DatasetGate API key, and set the `dsg_token` cookie. The cookie is
+DatasetGateway API key, and set the `dsg_token` cookie. The cookie is
 shared across subdomains when `AUTH_COOKIE_DOMAIN` is configured
 (e.g., `.janelia.org`), so you only need to log in once to access
 all services.
@@ -381,28 +381,28 @@ operations not available in the web UI:
 
 ## Service-Specific Notes
 
-DatasetGate integrates with multiple services, each with its own
+DatasetGateway integrates with multiple services, each with its own
 authentication pattern and considerations. This section provides a
 quick summary; see the linked documents for full details.
 
 ### CAVE
 
 CAVE services (MaterializationEngine, AnnotationEngine, PyChunkedGraph,
-etc.) set `AUTH_URL` to DatasetGate's base URL. On every authenticated
+etc.) set `AUTH_URL` to DatasetGateway's base URL. On every authenticated
 request, the service calls `GET /api/v1/user/cache` with the user's
-token. DatasetGate is a drop-in replacement for CAVE's original
+token. DatasetGateway is a drop-in replacement for CAVE's original
 `middle_auth` server -- no CAVE code changes are needed.
 
 ### Clio (clio-store)
 
-clio-store delegates auth to DatasetGate when the `DSG_URL` environment
+clio-store delegates auth to DatasetGateway when the `DSG_URL` environment
 variable is set. A migration command (`import_clio_auth`) imports users,
-roles, and groups from Firestore into DatasetGate.
+roles, and groups from Firestore into DatasetGateway.
 
 Key consideration: clio-store's `public` flag on datasets lives in
-Firestore (not DatasetGate) and grants implicit read access to all
+Firestore (not DatasetGateway) and grants implicit read access to all
 authenticated users. This means dataset access is determined by two
-sources -- DatasetGate permissions AND the Firestore `public` flag.
+sources -- DatasetGateway permissions AND the Firestore `public` flag.
 
 See [Clio integration details](clio-support.md) for permission mapping,
 the `public` flag behavior, migration steps, and configuration.
@@ -410,7 +410,7 @@ the `public` flag behavior, migration steps, and configuration.
 ### Neuroglancer
 
 Neuroglancer uses the ngauth protocol. After Google OAuth login,
-DatasetGate issues short-lived tokens that Neuroglancer exchanges for
+DatasetGateway issues short-lived tokens that Neuroglancer exchanges for
 time-limited GCS read credentials. See the
 [architecture document](architecture.md) for the token flow.
 
@@ -425,7 +425,7 @@ is shared automatically.
 
 ## Management Commands Reference
 
-All commands are run from the `datasetgate/` directory.
+All commands are run from the `dsg/` directory.
 
 | Command | Source | Purpose |
 |---------|--------|---------|
@@ -435,5 +435,5 @@ All commands are run from the `datasetgate/` directory.
 | `python manage.py collectstatic` | Django built-in | Collect static files for production |
 | `python manage.py seed_permissions` | Custom | Create `view`, `edit`, `manage`, and `admin` permission types |
 | `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `team_lead`, `user`) |
-| `python manage.py make_admin EMAIL` | Custom | Promote a user to DatasetGate admin (user must exist) |
+| `python manage.py make_admin EMAIL` | Custom | Promote a user to DatasetGateway admin (user must exist) |
 | `python manage.py import_clio_auth FILE` | Custom | Import clio-store auth data from exported JSON (see [Clio integration](clio-support.md)) |

@@ -1,8 +1,8 @@
-# DatasetGate
+# DatasetGateway
 
 Unified authorization service for neuroscience datasets.
 
-DatasetGate is a single Django service that centralizes dataset access control
+DatasetGateway is a single Django service that centralizes dataset access control
 across multiple platforms:
 
 - **CAVE** — drop-in replacement for middle_auth with compatible API endpoints
@@ -17,7 +17,7 @@ across multiple platforms:
 Prerequisites: [pixi](https://pixi.sh)
 
 ```bash
-cd datasetgate
+cd dsg
 pixi install
 pixi run python manage.py migrate
 pixi run python manage.py seed_permissions
@@ -28,7 +28,7 @@ pixi run python manage.py runserver
 Or use `pixi shell` to drop into the environment and run commands directly:
 
 ```bash
-cd datasetgate
+cd dsg
 pixi shell
 python manage.py migrate
 python manage.py runserver
@@ -48,8 +48,8 @@ all login/authorize links will fail with a `client_id` error.
 3. Download the JSON credentials and drop the file into the project:
 
 ```bash
-mkdir -p datasetgate/secrets
-cp ~/Downloads/client_secret_*.json datasetgate/secrets/client_credentials.json
+mkdir -p dsg/secrets
+cp ~/Downloads/client_secret_*.json dsg/secrets/client_credentials.json
 python manage.py runserver
 ```
 
@@ -76,10 +76,10 @@ API requests are authenticated by checking for the token in this order:
 ### How each platform authenticates
 
 **CAVE services** (MaterializationEngine, AnnotationEngine, etc.) call
-DatasetGate's `/api/v1/user/cache` endpoint on every request to validate
+DatasetGateway's `/api/v1/user/cache` endpoint on every request to validate
 the user's token and retrieve their permissions. This is a drop-in
 replacement for CAVE's original `middle_auth` server — CAVE services
-only need their `AUTH_URL` environment variable pointed at DatasetGate.
+only need their `AUTH_URL` environment variable pointed at DatasetGateway.
 Users log in via `/api/v1/authorize`, which redirects through Google
 OAuth and sets the `dsg_token` cookie.
 
@@ -101,28 +101,28 @@ everywhere.
 ## Running tests
 
 ```bash
-cd datasetgate
+cd dsg
 pixi run -e dev python -m pytest
 ```
 
 ## Docker
 
 ```bash
-docker build -t datasetgate datasetgate/
-docker run -p 8080:8080 datasetgate
+docker build -t dsg dsg/
+docker run -p 8080:8080 dsg
 ```
 
 The container runs migrations automatically on startup.
 
 ## Production deployment
 
-DatasetGate is designed for a single-server Docker deployment behind a
+DatasetGateway is designed for a single-server Docker deployment behind a
 reverse proxy that handles TLS.
 
 1. **Configure environment variables:**
 
    ```bash
-   cp datasetgate/.env.example datasetgate/.env
+   cp dsg/.env.example dsg/.env
    # Edit .env — at minimum set DJANGO_SECRET_KEY, DJANGO_ALLOWED_HOSTS,
    # DJANGO_DEBUG=False, and Google OAuth credentials.
    ```
@@ -130,15 +130,15 @@ reverse proxy that handles TLS.
 2. **Start the service:**
 
    ```bash
-   docker compose -f datasetgate/docker-compose.yml up -d
+   docker compose -f dsg/docker-compose.yml up -d
    ```
 
 3. **Create an admin user and seed data:**
 
    ```bash
-   docker compose -f datasetgate/docker-compose.yml exec datasetgate python manage.py createsuperuser
-   docker compose -f datasetgate/docker-compose.yml exec datasetgate python manage.py seed_permissions
-   docker compose -f datasetgate/docker-compose.yml exec datasetgate python manage.py seed_groups
+   docker compose -f dsg/docker-compose.yml exec dsg python manage.py createsuperuser
+   docker compose -f dsg/docker-compose.yml exec dsg python manage.py seed_permissions
+   docker compose -f dsg/docker-compose.yml exec dsg python manage.py seed_groups
    ```
 
 4. **Put a reverse proxy in front for TLS.** Nginx or Caddy both work.
@@ -146,7 +146,7 @@ reverse proxy that handles TLS.
    `SECURE_SSL_REDIRECT=False` in `.env` so Django doesn't double-redirect.
 
 The SQLite database and static files are stored in Docker volumes
-(`datasetgate-data` and `datasetgate-static`) so they survive container
+(`dsg-data` and `dsg-static`) so they survive container
 restarts. If you need PostgreSQL or Redis, swap the `DATABASES` / `CACHES`
 settings and add services to `docker-compose.yml`.
 

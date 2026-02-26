@@ -1,0 +1,33 @@
+{% extends "web/base.html" %}
+{% block title %}{{ tos_doc.name }} — DatasetGateway{% endblock %}
+{% block content %}
+<h1>{{ tos_doc.name }}</h1>
+
+{% if dataset %}
+<p>
+    <strong>{{ dataset.name }}</strong>
+    {% if dataset.access_mode == "public" %}
+        <span style="background:#d4edda;color:#155724;padding:2px 8px;border-radius:4px;font-size:12px;">Public</span>
+    {% else %}
+        <span style="background:#f8d7da;color:#721c24;padding:2px 8px;border-radius:4px;font-size:12px;">Invite Only</span>
+    {% endif %}
+</p>
+{% endif %}
+
+<div class="card">
+    {{ tos_doc.text|safe }}
+</div>
+
+{% if user %}
+    {% if already_accepted %}
+        <p><strong>You have already accepted this TOS.</strong></p>
+    {% else %}
+        <form method="post">
+            {% csrf_token %}
+            <button type="submit" class="btn">I Accept</button>
+        </form>
+    {% endif %}
+{% else %}
+    <p><a href="/auth/login?next={{ login_next }}" class="btn">Login to accept</a></p>
+{% endif %}
+{% endblock %}
