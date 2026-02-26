@@ -421,6 +421,18 @@ user's token, the same pattern as CAVE. When deployed on sibling
 subdomains with `AUTH_COOKIE_DOMAIN` configured, the `dsg_token` cookie
 is shared automatically.
 
+To import existing neuPrint users from `authorized.json`, use the
+`import_neuprint_auth` management command:
+
+```bash
+python manage.py import_neuprint_auth authorized.json --datasets hemibrain manc
+```
+
+Permission mapping: `"readonly"` → view, `"readwrite"` → edit,
+`"admin"` → global admin. Use `--dry-run` to preview without writing.
+See [`docs/auth-integration.md`](../neuprintHTTP/docs/auth-integration.md)
+in the neuprintHTTP repo for the full integration plan.
+
 ---
 
 ## Management Commands Reference
@@ -437,3 +449,4 @@ All commands are run from the `dsg/` directory.
 | `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `team_lead`, `user`) |
 | `python manage.py make_admin EMAIL` | Custom | Promote a user to DatasetGateway admin (user must exist) |
 | `python manage.py import_clio_auth FILE` | Custom | Import clio-store auth data from exported JSON (see [Clio integration](clio-support.md)) |
+| `python manage.py import_neuprint_auth FILE --datasets DS [DS ...]` | Custom | Import neuPrint authorized.json (see [neuPrint integration](#neuprint)) |
