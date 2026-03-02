@@ -31,7 +31,7 @@ dev = [
 
 [tool.pixi.workspace]
 channels = ["conda-forge"]
-platforms = ["osx-arm64"]
+platforms = ["osx-arm64", "linux-64"]
 
 [tool.pixi.dependencies]
 python = "3.12.*"
@@ -41,6 +41,10 @@ dataset-gateway = { path = ".", editable = true }
 
 [tool.pixi.feature.dev.pypi-dependencies]
 dataset-gateway = { path = ".", editable = true, extras = ["dev"] }
+
+[tool.pixi.tasks.serve]
+cmd = "bash scripts/serve.sh"
+description = "Run the development server (prompts for missing .env config)"
 
 [tool.pixi.environments]
 default = { solve-group = "default" }

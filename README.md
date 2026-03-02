@@ -22,19 +22,13 @@ pixi install
 pixi run python manage.py migrate
 pixi run python manage.py seed_permissions
 pixi run python manage.py seed_groups
-pixi run python manage.py runserver
+pixi run serve
 ```
 
-Or use `pixi shell` to drop into the environment and run commands directly:
+`pixi run serve` will prompt for any missing configuration (origin, port) and
+save the answers to a `.env` file. On subsequent runs it starts immediately.
 
-```bash
-cd dsg
-pixi shell
-python manage.py migrate
-python manage.py runserver
-```
-
-The server starts at http://localhost:8000. The Django admin is at `/admin/`.
+The Django admin is at `/admin/`.
 
 ### Google OAuth setup
 
@@ -159,8 +153,10 @@ settings and add services to `docker-compose.yml`.
 | `DJANGO_ALLOWED_HOSTS` | `*` | Comma-separated list of allowed hostnames. |
 | `DATABASE_PATH` | `db.sqlite3` | Path to SQLite database file. |
 | `SECURE_SSL_REDIRECT` | `True` (prod) | Set to `False` if reverse proxy handles TLS. |
-| `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth 2.0 client ID. |
-| `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret. |
+| `DSG_ORIGIN` | *(empty)* | Public origin for CSRF trusted origins (e.g., `https://dataset-gateway.mydomain.org`). |
+| `DSG_PORT` | `8200` | Port for the development server. |
+| `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth 2.0 client ID (overrides `client_credentials.json`). |
+| `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret (overrides `client_credentials.json`). |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins. |
 | `AUTH_COOKIE_DOMAIN` | *(empty)* | Cookie domain for cross-subdomain auth (e.g., `.example.org`). |
 | `PORT` | `8080` | Port for gunicorn (Docker). |

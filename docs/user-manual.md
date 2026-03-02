@@ -124,10 +124,11 @@ admin panel at `/admin/` — all other login flows use Google OAuth.
 ### 4. Start the server
 
 ```bash
-python manage.py runserver
+pixi run serve
 ```
 
-The server starts at `http://localhost:8000`.
+On first run this prompts for the public origin and port, saving them to
+`.env`. On subsequent runs it starts immediately.
 
 ### 5. Create the first DatasetGateway admin
 
@@ -443,7 +444,7 @@ All commands are run from the `dsg/` directory.
 |---------|--------|---------|
 | `python manage.py migrate` | Django built-in | Create/update database tables |
 | `python manage.py createsuperuser` | Django built-in | Create a Django admin panel login |
-| `python manage.py runserver` | Django built-in | Start the development server |
+| `pixi run serve` | Pixi task | Start the development server (prompts for missing `.env` config) |
 | `python manage.py collectstatic` | Django built-in | Collect static files for production |
 | `python manage.py seed_permissions` | Custom | Create `view`, `edit`, `manage`, and `admin` permission types |
 | `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `team_lead`, `user`) |

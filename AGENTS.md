@@ -23,6 +23,7 @@ DatasetGateway/              ← git root
     ├── pixi.lock
     ├── manage.py
     ├── Dockerfile
+    ├── scripts/          ← shell scripts (serve.sh, etc.)
     ├── dsg/      ← Django settings package
     ├── core/             ← shared models, middleware
     ├── cave_api/         ← CAVE-compatible auth endpoints

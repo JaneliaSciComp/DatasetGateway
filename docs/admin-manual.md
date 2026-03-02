@@ -71,11 +71,12 @@ will skip records that already exist.
 ### 5. Start the server
 
 ```bash
-pixi run python manage.py runserver
+pixi run serve
 ```
 
-The server starts at `http://localhost:8000`. The admin console is at
-`http://localhost:8000/admin/`.
+On first run this prompts for the public origin and port, saving them to
+`.env`. On subsequent runs it starts immediately using the saved config.
+The admin console is at `/admin/`.
 
 ### Full database reset
 
@@ -340,6 +341,8 @@ logins. You generally don't need to touch them.
 | `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative path to OAuth credentials file. |
 | `AUTH_COOKIE_DOMAIN` | (empty) | Set to `.example.org` to share the `dsg_token` cookie across subdomains. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins on ngauth endpoints. |
+| `DSG_ORIGIN` | (empty) | Public origin for CSRF trusted origins (e.g., `https://dataset-gateway.mydomain.org`). |
+| `DSG_PORT` | `8200` | Port for the development server. |
 | `SECURE_SSL_REDIRECT` | `True` (when not DEBUG) | Whether to redirect HTTP to HTTPS. |
 
 ---
@@ -357,5 +360,5 @@ All commands are run from the `dsg/` directory.
 | `python manage.py seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
 | `python manage.py make_admin EMAIL` | Promote a user to DatasetGateway global admin. |
 | `python manage.py import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
-| `python manage.py runserver` | Start the development server. |
+| `pixi run serve` | Start the development server (prompts for missing `.env` config). |
 | `python manage.py collectstatic` | Collect static files for production deployment. |

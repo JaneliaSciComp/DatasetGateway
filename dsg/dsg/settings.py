@@ -199,6 +199,12 @@ PERMISSION_CACHE_TTL = 300  # seconds
 # Auth cookie secure flag — HTTPS-only cookies in production
 AUTH_COOKIE_SECURE = not DEBUG
 
+# Public origin for this instance (e.g., "https://dataset-gateway.mydomain.org").
+# Used to derive CSRF_TRUSTED_ORIGINS automatically.
+DSG_ORIGIN = os.environ.get("DSG_ORIGIN", "")
+
+CSRF_TRUSTED_ORIGINS = [DSG_ORIGIN] if DSG_ORIGIN else []
+
 # Production security settings
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
