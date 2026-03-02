@@ -100,16 +100,13 @@ class TestLogoutClearsCookie(TestCase):
         self.assertIsNotNone(cookie)
         self.assertEqual(cookie["max-age"], 0)
 
-    def test_after_logout_web_views_show_login(self):
+    def test_logout_redirects_to_root(self):
         self.client.cookies[settings.AUTH_COOKIE_NAME] = self.api_key.key
+        resp = self.client.post("/web/logout")
+        self.assertRedirects(resp, "/", fetch_redirect_response=False)
 
-        # Log out
-        self.client.post("/web/logout")
-        # Clear the cookie from the test client (browser would do this
-        # because the response set max-age=0)
-        self.client.cookies.pop(settings.AUTH_COOKIE_NAME, None)
-
-        # The datasets page should show Login, not the user email
+    def test_datasets_requires_login(self):
+        """Unauthenticated users are redirected to login."""
         resp = self.client.get("/web/datasets")
-        self.assertContains(resp, "Login")
-        self.assertNotContains(resp, "alice@example.org")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/auth/login", resp.url)

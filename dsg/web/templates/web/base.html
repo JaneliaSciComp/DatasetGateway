@@ -28,8 +28,8 @@
 <body>
     <nav>
         <strong>DatasetGateway</strong>
-        <a href="/web/datasets">Datasets</a>
         {% if user %}
+            <a href="/web/datasets">Datasets</a>
             <a href="/web/my-datasets">My Datasets</a>
             <span style="float: right; color: #666;">
                 {{ user.email }}
@@ -39,7 +39,9 @@
                 </form>
             </span>
         {% else %}
-            <a href="/auth/login" class="btn btn-sm">Login</a>
+            <span style="float: right;">
+                <a href="/auth/login" class="btn btn-sm">Login with Google</a>
+            </span>
         {% endif %}
     </nav>
 

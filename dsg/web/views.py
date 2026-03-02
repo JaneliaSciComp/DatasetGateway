@@ -80,7 +80,7 @@ class LogoutView(View):
 
     def post(self, request):
         auth_logout(request)
-        response = redirect("/web/datasets")
+        response = redirect("/")
         delete_kwargs = {}
         cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
         if cookie_domain:
@@ -90,10 +90,12 @@ class LogoutView(View):
 
 
 class DatasetsView(View):
-    """GET /web/datasets — Browse datasets."""
+    """GET /web/datasets — Browse datasets (login required)."""
 
     def get(self, request):
         user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login?next=/web/datasets")
         datasets = Dataset.objects.all().order_by("name")
 
         is_sc_or_admin = user and _is_sc_or_admin(user)
