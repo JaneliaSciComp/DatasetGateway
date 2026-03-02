@@ -190,11 +190,26 @@ def main() -> None:
     ssl_redirect = existing_ssl.lower() in ("true", "1", "yes")
 
     # --- Cookie domain ---
-    print("\n-- Optional --")
+    # Derive default from origin: https://auth.janelia.org → .janelia.org
+    existing_cookie = existing.get("AUTH_COOKIE_DOMAIN", "")
+    if existing_cookie:
+        default_cookie = existing_cookie
+    elif parsed.hostname and "." in parsed.hostname:
+        # Strip the first subdomain: auth.janelia.org → .janelia.org
+        parts = parsed.hostname.split(".", 1)
+        default_cookie = f".{parts[1]}" if len(parts) > 1 else ""
+    else:
+        default_cookie = ""
+
+    print("\n-- Cookie Domain --")
+    print("  If other services (neuPrint, CAVE, etc.) run on sibling")
+    print("  subdomains, set this so they can share the login cookie.")
+    print("  Example: .janelia.org lets *.janelia.org share cookies.")
+    print("  Leave blank for local development.\n")
 
     auth_cookie_domain = prompt_optional(
-        "Auth cookie domain for cross-subdomain SSO (e.g., .example.org)",
-        existing.get("AUTH_COOKIE_DOMAIN", ""),
+        "Cookie domain",
+        default_cookie,
     )
 
     # --- Build env dict ---
