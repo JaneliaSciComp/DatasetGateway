@@ -9,34 +9,24 @@ through the Django admin console (`/admin/`). For end-user workflows
 
 ## Initial Setup
 
-### 1. Install dependencies and create the database
+### 1. Install and configure
 
 ```bash
 cd dsg
-pixi install                          # or: pip install -e ".[dev]"
+pixi install
+pixi run setup                        # interactive wizard — generates .env
 pixi run python manage.py migrate     # creates all tables
 pixi run python manage.py seed_permissions   # creates view, edit, manage, admin
 pixi run python manage.py seed_groups        # creates admin, sc, team_lead, user
 ```
 
-### 2. Configure Google OAuth
+The setup wizard prompts for the public origin, port, secret key, allowed
+hosts, and other settings. It also checks for Google OAuth credentials and
+prints step-by-step instructions if they are missing. You can re-run
+`pixi run setup` at any time to update settings — existing values are shown
+as defaults.
 
-Place a `client_credentials.json` file in `dsg/secrets/`, or set
-the `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment variables.
-See the [README](../README.md#google-oauth-setup).
-
-In your Google Cloud Console OAuth client, add the following
-**Authorized redirect URI** for local development:
-
-```
-http://localhost:8000/accounts/google/login/callback/
-```
-
-This matches the Site domain set by the database migration. For
-production, add the production URI as well (e.g.,
-`https://auth.example.org/accounts/google/login/callback/`).
-
-### 3. Create a superuser
+### 2. Create a superuser
 
 ```bash
 pixi run python manage.py createsuperuser
@@ -58,7 +48,7 @@ email already exists. In that case, reset the password:
 pixi run python manage.py changepassword user@example.com
 ```
 
-### 4. (Optional) Import Clio auth data
+### 3. (Optional) Import Clio auth data
 
 ```bash
 pixi run python manage.py import_clio_auth path/to/clio_export_auth.json
@@ -68,14 +58,13 @@ This imports users, datasets, grants, groups, and dataset-admin
 assignments from a Clio export. It is idempotent — running it again
 will skip records that already exist.
 
-### 5. Start the server
+### 4. Start the server
 
 ```bash
 pixi run serve
 ```
 
-On first run this prompts for the public origin and port, saving them to
-`.env`. On subsequent runs it starts immediately using the saved config.
+If `.env` doesn't exist yet, the setup wizard runs automatically.
 The admin console is at `/admin/`.
 
 ### Full database reset
@@ -360,5 +349,7 @@ All commands are run from the `dsg/` directory.
 | `python manage.py seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
 | `python manage.py make_admin EMAIL` | Promote a user to DatasetGateway global admin. |
 | `python manage.py import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
-| `pixi run serve` | Start the development server (prompts for missing `.env` config). |
+| `pixi run setup` | Interactive setup wizard — generates `.env`. |
+| `pixi run serve` | Start the development server (runs setup if `.env` is missing). |
+| `pixi run deploy` | Build and deploy with Docker. |
 | `python manage.py collectstatic` | Collect static files for production deployment. |

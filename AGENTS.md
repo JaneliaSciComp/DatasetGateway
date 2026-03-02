@@ -12,7 +12,8 @@ DatasetGateway/              ← git root
 ├── CLAUDE.md
 ├── AGENTS.md             ← this file
 ├── .gitignore
-├── docs/                 ← architecture, API reference, user manual
+├── docs/                 ← architecture, API reference, manuals
+│   ├── admin-manual.md
 │   ├── architecture.md
 │   ├── cave-auth-endpoints.md
 │   ├── clio-support.md
@@ -23,7 +24,7 @@ DatasetGateway/              ← git root
     ├── pixi.lock
     ├── manage.py
     ├── Dockerfile
-    ├── scripts/          ← shell scripts (serve.sh, etc.)
+    ├── scripts/          ← setup wizard, serve, deploy scripts
     ├── dsg/      ← Django settings package
     ├── core/             ← shared models, middleware
     ├── cave_api/         ← CAVE-compatible auth endpoints

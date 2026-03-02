@@ -88,29 +88,22 @@ accepted.
 
 ## Initial Setup
 
-### 1. Install and migrate
+### 1. Install and configure
 
 ```bash
 cd dsg
-pip install -e ".[dev]"
-python manage.py migrate
-python manage.py seed_permissions
-python manage.py seed_groups
+pixi install
+pixi run setup                        # interactive wizard — generates .env
+pixi run python manage.py migrate
+pixi run python manage.py seed_permissions
+pixi run python manage.py seed_groups
 ```
 
-`migrate` is a built-in Django command that creates the database tables.
-`seed_permissions` and `seed_groups` are custom commands that populate the
-`Permission` table with `view`, `edit`, `manage`, and `admin`, and the
-`Group` table with `admin`, `sc`, `team_lead`, and `user`.
+The setup wizard prompts for settings and checks for Google OAuth
+credentials. See the [README](../README.md#google-oauth-setup) for
+manual OAuth setup if you prefer.
 
-### 2. Configure Google OAuth
-
-See the [README](../README.md#google-oauth-setup) for full instructions.
-Either place a `client_credentials.json` file in `dsg/secrets/`
-or set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` environment
-variables.
-
-### 3. Create a Django superuser
+### 2. Create a Django superuser
 
 ```bash
 python manage.py createsuperuser
@@ -121,16 +114,15 @@ The account is created in DatasetGateway's `User` table with `admin=True`
 and a usable password. The password is only used to access the Django
 admin panel at `/admin/` — all other login flows use Google OAuth.
 
-### 4. Start the server
+### 3. Start the server
 
 ```bash
 pixi run serve
 ```
 
-On first run this prompts for the public origin and port, saving them to
-`.env`. On subsequent runs it starts immediately.
+If `.env` doesn't exist yet, the setup wizard runs automatically.
 
-### 5. Create the first DatasetGateway admin
+### 4. Create the first DatasetGateway admin
 
 The first real user must log in via Google OAuth to create their record
 in the DatasetGateway `User` table:
@@ -444,7 +436,9 @@ All commands are run from the `dsg/` directory.
 |---------|--------|---------|
 | `python manage.py migrate` | Django built-in | Create/update database tables |
 | `python manage.py createsuperuser` | Django built-in | Create a Django admin panel login |
-| `pixi run serve` | Pixi task | Start the development server (prompts for missing `.env` config) |
+| `pixi run setup` | Pixi task | Interactive setup wizard — generates `.env` |
+| `pixi run serve` | Pixi task | Start the development server (runs setup if `.env` is missing) |
+| `pixi run deploy` | Pixi task | Build and deploy with Docker |
 | `python manage.py collectstatic` | Django built-in | Collect static files for production |
 | `python manage.py seed_permissions` | Custom | Create `view`, `edit`, `manage`, and `admin` permission types |
 | `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `team_lead`, `user`) |

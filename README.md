@@ -14,37 +14,61 @@ across multiple platforms:
 
 ## Quick start
 
-Prerequisites: [pixi](https://pixi.sh)
+### Prerequisites
+
+- [pixi](https://pixi.sh)
+- Docker (for production deployment only)
+- A Google OAuth 2.0 client (for login — the setup wizard walks you through it)
+
+### One-time setup
 
 ```bash
 cd dsg
 pixi install
+pixi run setup              # interactive wizard — generates .env
 pixi run python manage.py migrate
 pixi run python manage.py seed_permissions
 pixi run python manage.py seed_groups
+```
+
+### Option A: Local development
+
+```bash
 pixi run serve
 ```
 
-`pixi run serve` will prompt for any missing configuration (origin, port) and
-save the answers to a `.env` file. On subsequent runs it starts immediately.
+Starts the Django dev server. If `.env` doesn't exist yet, the setup wizard
+runs automatically.
+
+### Option B: Docker production
+
+```bash
+pixi run deploy
+```
+
+Builds the Docker image, starts the container, runs migrations and seed
+commands. Put a reverse proxy (nginx/caddy) in front for TLS.
 
 The Django admin is at `/admin/`.
 
 ### Google OAuth setup
 
 Login requires a Google OAuth 2.0 client. Without one the server runs but
-all login/authorize links will fail with a `client_id` error.
+all login/authorize links will fail with a `client_id` error. The setup
+wizard (`pixi run setup`) will walk you through creating one if
+`secrets/client_credentials.json` is missing.
+
+Alternatively, you can set it up manually:
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
    and create an OAuth 2.0 Client ID (type: Web application).
-2. Add `http://localhost:8000/api/v1/oauth2callback` and
-   `http://localhost:8000/accounts/google/login/callback/` as authorized redirect URIs.
-3. Download the JSON credentials and drop the file into the project:
+2. Add `http://localhost:8200/accounts/google/login/callback/` as an
+   authorized redirect URI (and your production URI if known).
+3. Download the JSON credentials and save them:
 
 ```bash
 mkdir -p dsg/secrets
 cp ~/Downloads/client_secret_*.json dsg/secrets/client_credentials.json
-python manage.py runserver
 ```
 
 The `secrets/` directory is gitignored. Alternatively, you can set environment
@@ -99,45 +123,26 @@ cd dsg
 pixi run -e dev python -m pytest
 ```
 
-## Docker
-
-```bash
-docker build -t dsg dsg/
-docker run -p 8080:8080 dsg
-```
-
-The container runs migrations automatically on startup.
-
 ## Production deployment
 
 DatasetGateway is designed for a single-server Docker deployment behind a
 reverse proxy that handles TLS.
 
-1. **Configure environment variables:**
+```bash
+cd dsg
+pixi run setup    # generates .env interactively (set DJANGO_DEBUG=False for production)
+pixi run deploy   # builds Docker image, starts container, runs migrations + seeds
+```
 
-   ```bash
-   cp dsg/.env.example dsg/.env
-   # Edit .env — at minimum set DJANGO_SECRET_KEY, DJANGO_ALLOWED_HOSTS,
-   # DJANGO_DEBUG=False, and Google OAuth credentials.
-   ```
+Then create an admin user:
 
-2. **Start the service:**
+```bash
+docker compose -f dsg/docker-compose.yml exec dsg python manage.py createsuperuser
+```
 
-   ```bash
-   docker compose -f dsg/docker-compose.yml up -d
-   ```
-
-3. **Create an admin user and seed data:**
-
-   ```bash
-   docker compose -f dsg/docker-compose.yml exec dsg python manage.py createsuperuser
-   docker compose -f dsg/docker-compose.yml exec dsg python manage.py seed_permissions
-   docker compose -f dsg/docker-compose.yml exec dsg python manage.py seed_groups
-   ```
-
-4. **Put a reverse proxy in front for TLS.** Nginx or Caddy both work.
-   Point it at `localhost:8080`. If the proxy terminates TLS, set
-   `SECURE_SSL_REDIRECT=False` in `.env` so Django doesn't double-redirect.
+Put a reverse proxy (nginx or Caddy) in front for TLS, pointed at
+`localhost:8080`. The setup wizard defaults `SECURE_SSL_REDIRECT=False`
+since most deployments terminate TLS at the proxy.
 
 The SQLite database and static files are stored in Docker volumes
 (`dsg-data` and `dsg-static`) so they survive container
