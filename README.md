@@ -175,3 +175,5 @@ settings and add services to `docker-compose.yml`.
   reference and SCIM 2.0 provisioning
 - [Implementation record](docs/implemented-plan.md) — what was built,
   with retrospective notes on deviations from the original plan
+- [Admin manual](docs/admin-manual.md) — administration and operational
+  reference
