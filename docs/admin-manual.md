@@ -33,9 +33,8 @@ pixi run make-admin user@example.com
 This creates the user if they don't exist, sets `admin=True`, and
 prompts for a password (needed to log into the Django admin console at
 `/admin/`). If the user already exists (e.g., from an import or OAuth
-login), it promotes them and adds a password — no conflicts or extra
-steps required. Use `--no-password` to skip the password prompt, or
-`--remove` to revoke admin status.
+login), it promotes them and adds a password. Use `--no-password` to skip 
+the password prompt, or `--remove` to revoke admin status.
 
 ### 3. (Optional) Import Clio auth data
 
