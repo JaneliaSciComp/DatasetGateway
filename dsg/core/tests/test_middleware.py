@@ -1,6 +1,7 @@
-"""Tests for the DatasetContextMiddleware."""
+"""Tests for DatasetContextMiddleware and DSGTokenCookieMiddleware."""
 
 import pytest
+from django.conf import settings
 from django.core.cache import cache
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -57,3 +58,50 @@ class TestDatasetContextMiddleware(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), "fish2")
+
+
+@pytest.mark.django_db
+class TestLogoutClearsCookie(TestCase):
+    """Verify that POST /accounts/logout/ clears the dsg_token cookie."""
+
+    def setUp(self):
+        self.user = User.objects.create(email="alice@example.org", name="alice")
+        self.user.set_password("testpass")
+        self.user.save()
+        self.api_key = APIKey.objects.create(user=self.user, key="tok-logout-test")
+
+    def test_logout_clears_dsg_token_cookie(self):
+        # Log in via Django session (simulates allauth login)
+        self.client.login(email="alice@example.org", password="testpass")
+        # Set the dsg_token cookie as the middleware would
+        self.client.cookies[settings.AUTH_COOKIE_NAME] = self.api_key.key
+
+        # Verify user is seen as logged in on the web UI
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "alice@example.org")
+        self.assertContains(resp, "Logout")
+
+        # POST to allauth logout
+        resp = self.client.post("/accounts/logout/")
+        self.assertEqual(resp.status_code, 302)
+
+        # The dsg_token cookie should be cleared (max-age=0 or deleted)
+        cookie = resp.cookies.get(settings.AUTH_COOKIE_NAME)
+        self.assertIsNotNone(cookie, "logout response should touch the dsg_token cookie")
+        self.assertEqual(cookie["max-age"], 0, "dsg_token cookie should be expired")
+
+    def test_after_logout_web_views_show_login(self):
+        # Log in
+        self.client.login(email="alice@example.org", password="testpass")
+        self.client.cookies[settings.AUTH_COOKIE_NAME] = self.api_key.key
+
+        # Log out
+        self.client.post("/accounts/logout/")
+        # Clear the cookie from the test client (browser would do this
+        # because the response set max-age=0)
+        self.client.cookies.pop(settings.AUTH_COOKIE_NAME, None)
+
+        # The datasets page should show Login, not the user email
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "Login")
+        self.assertNotContains(resp, "alice@example.org")

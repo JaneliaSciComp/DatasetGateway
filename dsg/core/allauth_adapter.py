@@ -22,6 +22,11 @@ class AccountAdapter(DefaultAccountAdapter):
         api_key = APIKey.objects.create(user=user, description="allauth login token")
         request.session["dsg_token_value"] = api_key.key
 
+    def logout(self, request):
+        """Flag the request so the middleware clears the dsg_token cookie."""
+        request._dsg_logout = True
+        super().logout(request)
+
     def get_login_redirect_url(self, request):
         """Redirect to the URL stored before OAuth, or the default."""
         return request.session.pop("oauth_next", "/web/datasets")

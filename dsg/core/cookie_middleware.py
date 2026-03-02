@@ -1,7 +1,8 @@
 """Middleware to manage the dsg_token cookie.
 
 Sets the cookie after allauth login (AccountAdapter.login() stashes the
-APIKey value in the session) and clears it on logout.
+APIKey value in the session) and clears it on logout (AccountAdapter.logout()
+sets request._dsg_logout).
 """
 
 from django.conf import settings
@@ -19,9 +20,6 @@ class DSGTokenCookieMiddleware:
         return kwargs
 
     def __call__(self, request):
-        # Track whether user was authenticated before the view runs
-        had_user = hasattr(request, "user") and request.user and request.user.is_authenticated
-
         response = self.get_response(request)
 
         # Set cookie on login
@@ -37,8 +35,8 @@ class DSGTokenCookieMiddleware:
                 **self._cookie_domain_kwargs(),
             )
 
-        # Clear cookie on logout (user was logged in but now isn't)
-        if had_user and not request.user.is_authenticated:
+        # Clear cookie on logout (flagged by AccountAdapter.logout)
+        if getattr(request, "_dsg_logout", False):
             response.delete_cookie(
                 settings.AUTH_COOKIE_NAME,
                 **self._cookie_domain_kwargs(),
