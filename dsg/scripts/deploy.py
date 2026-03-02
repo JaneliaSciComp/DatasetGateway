@@ -112,8 +112,9 @@ def main() -> None:
     3. Update the Site domain in Django admin to match your production URL
 
   Useful commands:
-    docker compose -f dsg/docker-compose.yml logs -f    # view logs
-    docker compose -f dsg/docker-compose.yml down        # stop
+    pixi run stop                                        # stop
+    docker compose -f dsg/docker-compose.yml down        # stop (equivalent)
+    docker compose -f dsg/docker-compose.yml logs -f     # view logs
     docker compose -f dsg/docker-compose.yml up -d       # restart
 """)
 

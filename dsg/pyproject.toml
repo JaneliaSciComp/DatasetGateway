@@ -54,6 +54,10 @@ description = "Run the development server (runs setup if .env is missing)"
 cmd = "python scripts/deploy.py"
 description = "Build and deploy with Docker"
 
+[tool.pixi.tasks.stop]
+cmd = "docker compose -f docker-compose.yml down"
+description = "Stop the Docker deployment"
+
 [tool.pixi.environments]
 default = { solve-group = "default" }
 dev = { features = ["dev"], solve-group = "default" }

@@ -348,4 +348,5 @@ All commands are run from the `dsg/` directory.
 | `pixi run setup` | Interactive setup wizard — generates `.env`. |
 | `pixi run serve` | Start the development server (runs setup if `.env` is missing). |
 | `pixi run deploy` | Build and deploy with Docker. |
+| `pixi run stop` | Stop the Docker deployment. |
 | `python manage.py collectstatic` | Collect static files for production deployment. |
