@@ -54,6 +54,10 @@ description = "Run the development server (runs setup if .env is missing)"
 cmd = "python scripts/deploy.py"
 description = "Build and deploy with Docker"
 
+[tool.pixi.tasks.make-admin]
+cmd = "python manage.py make_admin"
+description = "Create or promote a user to admin (replaces createsuperuser)"
+
 [tool.pixi.tasks.stop]
 cmd = "docker compose -f docker-compose.yml down"
 description = "Stop the Docker deployment"

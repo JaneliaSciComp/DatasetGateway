@@ -24,27 +24,18 @@ prints step-by-step instructions if they are missing. After generating
 and groups. You can re-run `pixi run setup` at any time to update
 settings — existing values are shown as defaults.
 
-### 2. Create a superuser
+### 2. Create an admin user
 
 ```bash
-pixi run python manage.py createsuperuser
+pixi run make-admin user@example.com
 ```
 
-This creates a record in the `core.User` table (the same table all
-DatasetGateway users live in) with `admin=True` and a usable password. The
-password is only used to log into the Django admin console at `/admin/`.
-All other login flows use Google OAuth.
-
-**Caution with `import_clio_auth`:** If you import Clio data _after_
-creating the superuser and the import file contains the same email
-address, `get_or_create` will match the existing record but will not
-touch the password. However, if you run the import _first_ and then
-try `createsuperuser` with the same email, Django will report that the
-email already exists. In that case, reset the password:
-
-```bash
-pixi run python manage.py changepassword user@example.com
-```
+This creates the user if they don't exist, sets `admin=True`, and
+prompts for a password (needed to log into the Django admin console at
+`/admin/`). If the user already exists (e.g., from an import or OAuth
+login), it promotes them and adds a password — no conflicts or extra
+steps required. Use `--no-password` to skip the password prompt, or
+`--remove` to revoke admin status.
 
 ### 3. (Optional) Import Clio auth data
 
@@ -73,9 +64,9 @@ To start completely fresh:
 cd dsg
 rm db.sqlite3
 pixi run setup                        # re-runs migrations and seeds
-pixi run python manage.py createsuperuser
 # optionally re-import Clio data:
 pixi run python manage.py import_clio_auth ../clio_export_auth.json
+pixi run make-admin user@example.com  # create or promote admin (order doesn't matter)
 ```
 
 ---
@@ -339,11 +330,11 @@ All commands are run from the `dsg/` directory.
 | Command | Purpose |
 |---------|---------|
 | `python manage.py migrate` | Create/update database tables. |
-| `python manage.py createsuperuser` | Create a superuser for the admin console. |
-| `python manage.py changepassword EMAIL` | Reset a user's password (for admin console login). |
+| `pixi run make-admin EMAIL` | Create or promote a user to admin (replaces `createsuperuser`). |
+| `python manage.py make_admin EMAIL --remove` | Revoke admin status from a user. |
+| `python manage.py changepassword EMAIL` | Reset a user's admin console password. |
 | `python manage.py seed_permissions` | Create `view`, `edit`, `manage`, and `admin` permission types. |
 | `python manage.py seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
-| `python manage.py make_admin EMAIL` | Promote a user to DatasetGateway global admin. |
 | `python manage.py import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
 | `pixi run setup` | Interactive setup wizard — generates `.env`. |
 | `pixi run serve` | Start the development server (runs setup if `.env` is missing). |

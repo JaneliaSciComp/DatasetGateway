@@ -134,7 +134,7 @@ pixi run deploy   # builds Docker image, starts container, runs migrations + see
 Then create an admin user:
 
 ```bash
-docker compose -f dsg/docker-compose.yml exec dsg python manage.py createsuperuser
+docker compose -f dsg/docker-compose.yml exec dsg python manage.py make_admin user@example.com
 ```
 
 Put a reverse proxy (nginx or Caddy) in front for TLS, pointed at

@@ -104,8 +104,8 @@ def main() -> None:
   Admin:       http://localhost:8080/admin/
 
   Next steps:
-    1. Create a superuser for the Django admin:
-       docker compose -f dsg/docker-compose.yml exec dsg python manage.py createsuperuser
+    1. Create an admin user:
+       docker compose -f dsg/docker-compose.yml exec dsg python manage.py make_admin user@example.com
 
     2. Put a reverse proxy (nginx/caddy) in front for TLS termination
 
