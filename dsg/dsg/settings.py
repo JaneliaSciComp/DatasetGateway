@@ -205,6 +205,11 @@ DSG_ORIGIN = os.environ.get("DSG_ORIGIN", "")
 
 CSRF_TRUSTED_ORIGINS = [DSG_ORIGIN] if DSG_ORIGIN else []
 
+# Trust X-Forwarded-Proto from reverse proxy so Django constructs https://
+# URLs (e.g., allauth OAuth callbacks). Needed in both debug and production
+# when running behind nginx/caddy.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Production security settings
 if not DEBUG:
     SESSION_COOKIE_SECURE = True
@@ -215,4 +220,3 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
