@@ -24,7 +24,11 @@ class AccountAdapter(DefaultAccountAdapter):
 
     def get_login_redirect_url(self, request):
         """Redirect to the URL stored before OAuth, or the default."""
-        return request.session.pop("oauth_next", "/login")
+        return request.session.pop("oauth_next", "/web/datasets")
+
+    def get_logout_redirect_url(self, request):
+        """After logout, go back to the datasets page."""
+        return "/web/datasets"
 
 
 class SocialAccountAdapter(DefaultSocialAccountAdapter):
