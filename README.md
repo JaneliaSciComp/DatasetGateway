@@ -25,10 +25,7 @@ across multiple platforms:
 ```bash
 cd dsg
 pixi install
-pixi run setup              # interactive wizard — generates .env
-pixi run python manage.py migrate
-pixi run python manage.py seed_permissions
-pixi run python manage.py seed_groups
+pixi run setup              # interactive wizard — generates .env, runs migrations
 ```
 
 ### Option A: Local development

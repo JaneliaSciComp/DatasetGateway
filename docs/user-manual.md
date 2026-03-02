@@ -93,15 +93,13 @@ accepted.
 ```bash
 cd dsg
 pixi install
-pixi run setup                        # interactive wizard — generates .env
-pixi run python manage.py migrate
-pixi run python manage.py seed_permissions
-pixi run python manage.py seed_groups
+pixi run setup
 ```
 
-The setup wizard prompts for settings and checks for Google OAuth
-credentials. See the [README](../README.md#google-oauth-setup) for
-manual OAuth setup if you prefer.
+The setup wizard prompts for settings, checks for Google OAuth
+credentials, runs migrations, and seeds the database. See the
+[README](../README.md#google-oauth-setup) for manual OAuth setup
+if you prefer.
 
 ### 2. Create a Django superuser
 

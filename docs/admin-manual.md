@@ -14,17 +14,15 @@ through the Django admin console (`/admin/`). For end-user workflows
 ```bash
 cd dsg
 pixi install
-pixi run setup                        # interactive wizard — generates .env
-pixi run python manage.py migrate     # creates all tables
-pixi run python manage.py seed_permissions   # creates view, edit, manage, admin
-pixi run python manage.py seed_groups        # creates admin, sc, team_lead, user
+pixi run setup
 ```
 
 The setup wizard prompts for the public origin, port, secret key, allowed
 hosts, and other settings. It also checks for Google OAuth credentials and
-prints step-by-step instructions if they are missing. You can re-run
-`pixi run setup` at any time to update settings — existing values are shown
-as defaults.
+prints step-by-step instructions if they are missing. After generating
+`.env`, it runs migrations and seeds the database with default permissions
+and groups. You can re-run `pixi run setup` at any time to update
+settings — existing values are shown as defaults.
 
 ### 2. Create a superuser
 
@@ -74,9 +72,7 @@ To start completely fresh:
 ```bash
 cd dsg
 rm db.sqlite3
-pixi run python manage.py migrate
-pixi run python manage.py seed_permissions
-pixi run python manage.py seed_groups
+pixi run setup                        # re-runs migrations and seeds
 pixi run python manage.py createsuperuser
 # optionally re-import Clio data:
 pixi run python manage.py import_clio_auth ../clio_export_auth.json

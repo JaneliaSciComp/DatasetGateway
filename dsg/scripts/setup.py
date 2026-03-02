@@ -9,6 +9,7 @@ Usage:
 """
 
 import secrets
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -220,6 +221,22 @@ def main() -> None:
 
     # --- Check OAuth credentials ---
     check_oauth_credentials(project_root)
+
+    # --- Database setup ---
+    print("\n" + "=" * 60)
+    print("Database Setup")
+    print("=" * 60)
+
+    manage_py = project_root / "manage.py"
+    for cmd, desc in [
+        (["python", str(manage_py), "migrate", "--noinput"], "Running migrations"),
+        (["python", str(manage_py), "seed_permissions"], "Seeding permissions"),
+        (["python", str(manage_py), "seed_groups"], "Seeding groups"),
+    ]:
+        print(f"\n  {desc}...")
+        result = subprocess.run(cmd, cwd=project_root)
+        if result.returncode != 0:
+            print(f"  Warning: '{' '.join(cmd[-2:])}' exited with code {result.returncode}")
 
     # --- Summary ---
     print("\n" + "=" * 60)

@@ -44,7 +44,7 @@ dataset-gateway = { path = ".", editable = true, extras = ["dev"] }
 
 [tool.pixi.tasks.setup]
 cmd = "python scripts/setup.py"
-description = "Interactive setup wizard — generates .env"
+description = "Interactive setup wizard — generates .env, runs migrations"
 
 [tool.pixi.tasks.serve]
 cmd = "bash scripts/serve.sh"
