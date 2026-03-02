@@ -184,11 +184,10 @@ def main() -> None:
     )
 
     # --- SSL redirect ---
+    # Almost always False — most deployments sit behind nginx/caddy for TLS.
+    # Only set True if Django is directly exposed to the internet with TLS.
     existing_ssl = existing.get("SECURE_SSL_REDIRECT", "False")
-    ssl_redirect = prompt_yes_no(
-        "Enable SECURE_SSL_REDIRECT? (say No if behind a reverse proxy)",
-        default=existing_ssl.lower() in ("true", "1", "yes"),
-    )
+    ssl_redirect = existing_ssl.lower() in ("true", "1", "yes")
 
     # --- Cookie domain ---
     print("\n-- Optional --")
@@ -247,7 +246,6 @@ def main() -> None:
   Port:            {dsg_port}
   Debug:           {debug}
   Allowed hosts:   {allowed_hosts}
-  SSL redirect:    {ssl_redirect}
 
 Next steps:
 
