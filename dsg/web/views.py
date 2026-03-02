@@ -2,12 +2,12 @@
 
 import logging
 
+from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import logout as auth_logout
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views import View
-
-from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +73,20 @@ def _get_web_user(request):
             pass
 
     return None
+
+
+class LogoutView(View):
+    """POST /web/logout — Clear session and dsg_token cookie."""
+
+    def post(self, request):
+        auth_logout(request)
+        response = redirect("/web/datasets")
+        delete_kwargs = {}
+        cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
+        if cookie_domain:
+            delete_kwargs["domain"] = cookie_domain
+        response.delete_cookie(settings.AUTH_COOKIE_NAME, **delete_kwargs)
+        return response
 
 
 class DatasetsView(View):

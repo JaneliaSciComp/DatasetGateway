@@ -33,7 +33,7 @@
             <a href="/web/my-datasets">My Datasets</a>
             <span style="float: right; color: #666;">
                 {{ user.email }}
-                <form action="/accounts/logout/" method="post" class="inline" style="margin-left: 10px;">
+                <form action="/web/logout" method="post" class="inline" style="margin-left: 10px;">
                     {% csrf_token %}
                     <button type="submit" style="background: none; border: none; color: #4285f4; cursor: pointer; font-size: inherit; padding: 0; text-decoration: none;">Logout</button>
                 </form>

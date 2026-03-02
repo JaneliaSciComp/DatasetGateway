@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("logout", views.LogoutView.as_view(), name="web-logout"),
     path("datasets", views.DatasetsView.as_view(), name="web-datasets"),
     path("tos/<int:tos_id>/accept", views.TOSAcceptView.as_view(), name="web-tos-accept"),
     path("tos/<str:invite_token>/", views.TOSLandingView.as_view(), name="web-tos-landing"),
