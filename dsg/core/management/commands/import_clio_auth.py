@@ -13,6 +13,7 @@ import json
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from core.audit import log_audit
 from core.models import (
     Dataset,
     Grant,
@@ -154,6 +155,13 @@ class Command(BaseCommand):
                 grp, _ = Group.objects.get_or_create(name=group_name)
                 UserGroup.objects.get_or_create(user=user_obj, group=grp)
                 self.stdout.write(f"    Group: {group_name}")
+
+        if not dry_run:
+            log_audit(None, "bulk_import", "Command", "import_clio_auth", after_state={
+                "source": options["json_file"],
+                "users": len(users_data),
+                "datasets": len(dataset_objs),
+            })
 
         self.stdout.write(
             self.style.SUCCESS(

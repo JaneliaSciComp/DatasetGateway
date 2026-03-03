@@ -11,6 +11,7 @@ from django.views import View
 
 logger = logging.getLogger(__name__)
 
+from core.audit import log_audit
 from core.models import (
     APIKey,
     Dataset,
@@ -169,11 +170,15 @@ class TeamLeadManageView(View):
                 return redirect("web-team-lead-manage", dataset=dataset)
 
             admin_perm, _ = Permission.objects.get_or_create(name="admin")
-            _, created = Grant.objects.get_or_create(
+            grant, created = Grant.objects.get_or_create(
                 user=target_user, dataset=ds, permission=admin_perm,
                 defaults={"granted_by": user, "source": Grant.SOURCE_MANUAL},
             )
             if created:
+                log_audit(user, "team_lead_added", "Grant", grant.pk, after_state={
+                    "user": target_user.email, "dataset": ds.name,
+                    "permission": "admin", "source": Grant.SOURCE_MANUAL,
+                })
                 messages.success(request, f"Added {email} as team lead")
             else:
                 messages.info(request, f"{email} is already a team lead")
@@ -182,7 +187,16 @@ class TeamLeadManageView(View):
             grant_id = request.POST.get("grant_id")
             admin_perm = Permission.objects.filter(name="admin").first()
             if admin_perm:
-                Grant.objects.filter(pk=grant_id, dataset=ds, permission=admin_perm).delete()
+                grant = Grant.objects.filter(
+                    pk=grant_id, dataset=ds, permission=admin_perm
+                ).select_related("user").first()
+                if grant:
+                    before = {
+                        "user": grant.user.email, "dataset": ds.name,
+                        "permission": "admin",
+                    }
+                    grant.delete()
+                    log_audit(user, "team_lead_removed", "Grant", grant_id, before_state=before)
             messages.success(request, "Removed team lead")
 
         return redirect("web-team-lead-manage", dataset=dataset)
@@ -361,13 +375,20 @@ class GrantManageView(View):
 
             dv = DatasetVersion.objects.get(pk=version_id) if version_id else None
 
-            _, grant_created = Grant.objects.get_or_create(
+            grant, grant_created = Grant.objects.get_or_create(
                 user=target_user,
                 dataset=ds,
                 dataset_version=dv,
                 permission=perm,
                 defaults={"granted_by": user, "source": Grant.SOURCE_MANUAL},
             )
+            if grant_created:
+                log_audit(user, "grant_created", "Grant", grant.pk, after_state={
+                    "user": target_user.email, "dataset": ds.name,
+                    "permission": perm.name,
+                    "version": dv.version if dv else None,
+                    "source": Grant.SOURCE_MANUAL,
+                })
             if user_created:
                 messages.success(request, f"Created user and granted {perm.name} to {email}")
             elif grant_created:
@@ -380,7 +401,16 @@ class GrantManageView(View):
             qs = Grant.objects.filter(pk=grant_id, dataset=ds)
             if not is_admin_user:
                 qs = qs.exclude(permission__name="admin")
-            qs.delete()
+            grant = qs.select_related("user", "permission", "dataset_version").first()
+            if grant:
+                before = {
+                    "user": grant.user.email, "dataset": ds.name,
+                    "permission": grant.permission.name,
+                    "version": grant.dataset_version.version if grant.dataset_version else None,
+                    "source": grant.source,
+                }
+                grant.delete()
+                log_audit(user, "grant_revoked", "Grant", grant_id, before_state=before)
             messages.success(request, "Grant revoked")
 
         return redirect("web-grant-manage", dataset=dataset)
@@ -510,22 +540,31 @@ class TOSLandingView(View):
         # For public datasets, auto-create view grant via self-service
         if dataset and dataset.access_mode == Dataset.ACCESS_PUBLIC:
             view_perm, _ = Permission.objects.get_or_create(name="view")
-            Grant.objects.get_or_create(
+            grant, grant_created = Grant.objects.get_or_create(
                 user=user,
                 dataset=dataset,
                 permission=view_perm,
                 dataset_version=None,
                 defaults={"source": Grant.SOURCE_SELF_SERVICE},
             )
+            if grant_created:
+                log_audit(user, "grant_created", "Grant", grant.pk, after_state={
+                    "user": user.email, "dataset": dataset.name,
+                    "permission": "view", "source": Grant.SOURCE_SELF_SERVICE,
+                })
 
         # Record TOS acceptance
-        _, created = TOSAcceptance.objects.get_or_create(
+        acceptance, created = TOSAcceptance.objects.get_or_create(
             user=user,
             tos_document=tos_doc,
             defaults={"ip_address": request.META.get("REMOTE_ADDR")},
         )
 
         if created:
+            log_audit(user, "tos_accepted", "TOSAcceptance", acceptance.pk, after_state={
+                "user": user.email, "tos_document": tos_doc.name,
+                "dataset": dataset.name if dataset else None,
+            })
             # Provision bucket IAM for all dataset versions
             if dataset:
                 from ngauth.gcs import add_user_to_bucket
@@ -629,18 +668,32 @@ class TeamDashboardView(View):
                 target_user.save()
             UserGroup.objects.get_or_create(user=target_user, group=group)
 
-            _, grant_created = Grant.objects.get_or_create(
+            grant, grant_created = Grant.objects.get_or_create(
                 user=target_user, dataset=ds, permission=perm, group=group,
                 defaults={"granted_by": user, "source": Grant.SOURCE_MANUAL},
             )
             if grant_created:
+                log_audit(user, "grant_created", "Grant", grant.pk, after_state={
+                    "user": target_user.email, "dataset": ds.name,
+                    "permission": perm_name, "group": group.name,
+                    "source": Grant.SOURCE_MANUAL,
+                })
                 messages.success(request, f"Granted {perm_name} on {dataset_name} to {email}")
             else:
                 messages.info(request, f"{email} already has {perm_name} on {dataset_name}")
 
         elif action == "revoke":
             grant_id = request.POST.get("grant_id")
-            Grant.objects.filter(pk=grant_id, group=group).delete()
+            grant = Grant.objects.filter(
+                pk=grant_id, group=group
+            ).select_related("user", "dataset", "permission").first()
+            if grant:
+                before = {
+                    "user": grant.user.email, "dataset": grant.dataset.name,
+                    "permission": grant.permission.name, "group": group.name,
+                }
+                grant.delete()
+                log_audit(user, "grant_revoked", "Grant", grant_id, before_state=before)
             messages.success(request, "Grant revoked")
 
         elif action == "add_member":
@@ -651,8 +704,11 @@ class TeamDashboardView(View):
             if user_created:
                 target_user.set_unusable_password()
                 target_user.save()
-            _, created = UserGroup.objects.get_or_create(user=target_user, group=group)
+            membership, created = UserGroup.objects.get_or_create(user=target_user, group=group)
             if created:
+                log_audit(user, "member_added", "UserGroup", membership.pk, after_state={
+                    "user": target_user.email, "group": group.name,
+                })
                 messages.success(request, f"Added {email} to {group.name}")
             else:
                 messages.info(request, f"{email} is already a member of {group.name}")
@@ -662,8 +718,20 @@ class TeamDashboardView(View):
             try:
                 ug = UserGroup.objects.get(pk=member_id, group=group)
                 target_user = ug.user
-                # Revoke all grants scoped to this group for the user
-                Grant.objects.filter(user=target_user, group=group).delete()
+                # Log cascade-deleted grants before removing them
+                cascade_grants = Grant.objects.filter(
+                    user=target_user, group=group
+                ).select_related("dataset", "permission")
+                for g in cascade_grants:
+                    log_audit(user, "grant_revoked", "Grant", g.pk, before_state={
+                        "user": target_user.email, "dataset": g.dataset.name,
+                        "permission": g.permission.name, "group": group.name,
+                        "reason": "member_removed",
+                    })
+                cascade_grants.delete()
+                log_audit(user, "member_removed", "UserGroup", member_id, before_state={
+                    "user": target_user.email, "group": group.name,
+                })
                 ug.delete()
                 messages.success(request, f"Removed {target_user.email} from {group.name}")
             except UserGroup.DoesNotExist:

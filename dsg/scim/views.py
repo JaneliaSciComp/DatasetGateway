@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.audit import log_audit
 from core.models import Dataset, Group, ServiceTable, User, UserGroup
 
 from .authentication import SCIMAuthentication
@@ -190,6 +191,10 @@ class UserListView(SCIMBaseView):
         user.scim_id = generate_scim_id(user.pk, "User")
         user.save(update_fields=["scim_id"])
 
+        log_audit(request.user, "user_created", "User", user.pk, after_state={
+            "email": user.email, "name": user.name, "admin": user.admin,
+        })
+
         return Response(
             UserSCIMSerializer.to_scim(user),
             status=201,
@@ -217,9 +222,13 @@ class UserDetailView(SCIMBaseView):
             return scim_error(404, detail="User not found")
 
         fields = UserSCIMSerializer.from_scim(request.data)
+        before = {k: getattr(user, k) for k in fields}
         for k, v in fields.items():
             setattr(user, k, v)
         user.save()
+        after = {k: getattr(user, k) for k in fields}
+        log_audit(request.user, "user_updated", "User", user.pk,
+                  before_state=before, after_state=after)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def patch(self, request, scim_id):
@@ -227,6 +236,8 @@ class UserDetailView(SCIMBaseView):
         if not user:
             return scim_error(404, detail="User not found")
 
+        before = {"email": user.email, "name": user.name, "admin": user.admin,
+                  "is_active": user.is_active}
         operations = request.data.get("Operations", [])
         for op in operations:
             op_type = op.get("op", "").lower()
@@ -244,6 +255,11 @@ class UserDetailView(SCIMBaseView):
                     setattr(user, k, v)
 
         user.save()
+        after = {"email": user.email, "name": user.name, "admin": user.admin,
+                 "is_active": user.is_active}
+        if before != after:
+            log_audit(request.user, "user_updated", "User", user.pk,
+                      before_state=before, after_state=after)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def delete(self, request, scim_id):
@@ -251,6 +267,9 @@ class UserDetailView(SCIMBaseView):
         if not user:
             return scim_error(404, detail="User not found")
 
+        log_audit(request.user, "user_deactivated", "User", user.pk, before_state={
+            "email": user.email, "is_active": True,
+        })
         # Deactivate rather than delete (preserves audit trail)
         user.is_active = False
         user.save(update_fields=["is_active"])
@@ -300,22 +319,29 @@ class GroupListView(SCIMBaseView):
         group.scim_id = generate_scim_id(group.pk, "Group")
         group.save(update_fields=["scim_id"])
 
+        log_audit(request.user, "group_created", "Group", group.pk, after_state={
+            "name": group.name,
+        })
+
         # Handle members if provided
-        self._sync_members(group, data.get("members", []))
+        self._sync_members(request.user, group, data.get("members", []))
 
         return Response(
             GroupSCIMSerializer.to_scim(group),
             status=201,
         )
 
-    def _sync_members(self, group, members):
+    def _sync_members(self, actor, group, members):
         """Add members to a group from SCIM member list."""
         for member in members:
             user_scim_id = member.get("value")
             if user_scim_id:
                 try:
                     user = User.objects.get(scim_id=user_scim_id)
-                    UserGroup.objects.get_or_create(user=user, group=group)
+                    _, created = UserGroup.objects.get_or_create(user=user, group=group)
+                    if created:
+                        log_audit(actor, "member_added", "UserGroup", f"{user.pk}:{group.pk}",
+                                  after_state={"user": user.email, "group": group.name})
                 except User.DoesNotExist:
                     pass
 
@@ -341,14 +367,26 @@ class GroupDetailView(SCIMBaseView):
             return scim_error(404, detail="Group not found")
 
         fields = GroupSCIMSerializer.from_scim(request.data)
+        before = {k: getattr(group, k) for k in fields}
         for k, v in fields.items():
             setattr(group, k, v)
         group.save()
+        after = {k: getattr(group, k) for k in fields}
+        if before != after:
+            log_audit(request.user, "group_updated", "Group", group.pk,
+                      before_state=before, after_state=after)
 
         # Replace members
         if "members" in request.data:
+            old_members = set(
+                UserGroup.objects.filter(group=group).values_list("user__email", flat=True)
+            )
             UserGroup.objects.filter(group=group).delete()
-            GroupListView._sync_members(None, group, request.data["members"])
+            for email in old_members:
+                log_audit(request.user, "member_removed", "UserGroup",
+                          f"{email}:{group.pk}",
+                          before_state={"user": email, "group": group.name})
+            GroupListView._sync_members(None, request.user, group, request.data["members"])
 
         return Response(GroupSCIMSerializer.to_scim(group))
 
@@ -368,7 +406,11 @@ class GroupDetailView(SCIMBaseView):
                     user_scim_id = member.get("value") if isinstance(member, dict) else member
                     try:
                         user = User.objects.get(scim_id=user_scim_id)
-                        UserGroup.objects.get_or_create(user=user, group=group)
+                        _, created = UserGroup.objects.get_or_create(user=user, group=group)
+                        if created:
+                            log_audit(request.user, "member_added", "UserGroup",
+                                      f"{user.pk}:{group.pk}",
+                                      after_state={"user": user.email, "group": group.name})
                     except User.DoesNotExist:
                         pass
 
@@ -378,9 +420,14 @@ class GroupDetailView(SCIMBaseView):
                 match = re.search(r'value\s+eq\s+"([^"]+)"', path)
                 if match:
                     user_scim_id = match.group(1)
-                    UserGroup.objects.filter(
+                    ug = UserGroup.objects.filter(
                         group=group, user__scim_id=user_scim_id
-                    ).delete()
+                    ).select_related("user").first()
+                    if ug:
+                        log_audit(request.user, "member_removed", "UserGroup",
+                                  f"{ug.user.pk}:{group.pk}",
+                                  before_state={"user": ug.user.email, "group": group.name})
+                        ug.delete()
 
             elif op_type == "replace":
                 if isinstance(value, dict):
@@ -399,6 +446,12 @@ class GroupDetailView(SCIMBaseView):
         group = self._get_group(scim_id)
         if not group:
             return scim_error(404, detail="Group not found")
+        members = list(
+            UserGroup.objects.filter(group=group).values_list("user__email", flat=True)
+        )
+        log_audit(request.user, "group_deleted", "Group", group.pk, before_state={
+            "name": group.name, "members": members,
+        })
         group.delete()
         return Response(status=204)
 
@@ -449,6 +502,10 @@ class DatasetListView(SCIMBaseView):
 
         # Handle serviceTables if provided
         self._sync_service_tables(dataset, data.get("serviceTables", []))
+
+        log_audit(request.user, "dataset_created", "Dataset", dataset.pk, after_state={
+            "name": dataset.name,
+        })
 
         return Response(
             DatasetSCIMSerializer.to_scim(dataset),
@@ -523,5 +580,8 @@ class DatasetDetailView(SCIMBaseView):
         dataset = self._get_dataset(scim_id)
         if not dataset:
             return scim_error(404, detail="Dataset not found")
+        log_audit(request.user, "dataset_deleted", "Dataset", dataset.pk, before_state={
+            "name": dataset.name,
+        })
         dataset.delete()
         return Response(status=204)

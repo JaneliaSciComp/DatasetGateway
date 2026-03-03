@@ -18,6 +18,7 @@ from collections import defaultdict
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from core.audit import log_audit
 from core.models import (
     Dataset,
     Grant,
@@ -63,7 +64,7 @@ class Command(BaseCommand):
             self._dry_run(auth_map, dataset_names)
             return
 
-        self._import(auth_map, dataset_names)
+        self._import(auth_map, dataset_names, options["json_file"])
 
     def _dry_run(self, auth_map, dataset_names):
         """Preview what would happen without touching the database."""
@@ -95,7 +96,7 @@ class Command(BaseCommand):
         )
 
     @transaction.atomic
-    def _import(self, auth_map, dataset_names):
+    def _import(self, auth_map, dataset_names, json_file):
         # Ensure permissions exist
         view_perm, _ = Permission.objects.get_or_create(name="view")
         edit_perm, _ = Permission.objects.get_or_create(name="edit")
@@ -194,6 +195,15 @@ class Command(BaseCommand):
             )
 
         total_users = len(auth_map) - len(skipped)
+
+        log_audit(None, "bulk_import", "Command", "import_neuprint_auth", after_state={
+            "source": json_file,
+            "users": total_users,
+            "datasets": dataset_names,
+            "admins_added": len(admin_added),
+            "skipped": len(skipped),
+        })
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"\nImported {total_users} users across "
