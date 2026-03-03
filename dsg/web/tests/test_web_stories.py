@@ -450,6 +450,94 @@ class TestGlobalAdmin(_WebTestBase):
 
 
 # ──────────────────────────────────────────────────────────────
+# Manage-user grant page tests
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestManageUserGrantPage(_WebTestBase):
+    """User with manage permission can access /web/grants/<dataset>."""
+
+    def test_manage_user_can_view_grants_page(self):
+        self._login(self.team_lead_a_key)
+        resp = self.client.get(f"/web/grants/{self.dataset.name}")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_manage_user_can_grant_view_permission(self):
+        self._login(self.team_lead_a_key)
+        resp = self.client.post(f"/web/grants/{self.dataset.name}", {
+            "action": "grant",
+            "email": "newuser@example.org",
+            "permission": self.view_perm.pk,
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Grant.objects.filter(
+            user__email="newuser@example.org", dataset=self.dataset,
+            permission=self.view_perm,
+        ).exists())
+
+    def test_manage_user_can_grant_manage_permission(self):
+        self._login(self.team_lead_a_key)
+        resp = self.client.post(f"/web/grants/{self.dataset.name}", {
+            "action": "grant",
+            "email": "newuser@example.org",
+            "permission": self.manage_perm.pk,
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(Grant.objects.filter(
+            user__email="newuser@example.org", dataset=self.dataset,
+            permission=self.manage_perm,
+        ).exists())
+
+    def test_manage_user_cannot_grant_admin_permission(self):
+        self._login(self.team_lead_a_key)
+        resp = self.client.post(f"/web/grants/{self.dataset.name}", {
+            "action": "grant",
+            "email": "newuser@example.org",
+            "permission": self.admin_perm.pk,
+        }, follow=True)
+        self.assertContains(resp, "You cannot grant admin permission")
+        self.assertFalse(Grant.objects.filter(
+            user__email="newuser@example.org", dataset=self.dataset,
+            permission=self.admin_perm,
+        ).exists())
+
+    def test_manage_user_can_revoke_non_admin_grant(self):
+        g = Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm, group=self.group_a,
+        )
+        self._login(self.team_lead_a_key)
+        self.client.post(f"/web/grants/{self.dataset.name}", {
+            "action": "revoke", "grant_id": g.pk,
+        })
+        self.assertFalse(Grant.objects.filter(pk=g.pk).exists())
+
+    def test_manage_user_cannot_revoke_admin_grant(self):
+        admin_grant = Grant.objects.get(
+            user=self.sc_user, dataset=self.dataset, permission=self.admin_perm,
+        )
+        self._login(self.team_lead_a_key)
+        self.client.post(f"/web/grants/{self.dataset.name}", {
+            "action": "revoke", "grant_id": admin_grant.pk,
+        })
+        self.assertTrue(Grant.objects.filter(pk=admin_grant.pk).exists())
+
+    def test_manage_user_does_not_see_admin_in_dropdown(self):
+        self._login(self.team_lead_a_key)
+        resp = self.client.get(f"/web/grants/{self.dataset.name}")
+        self.assertContains(resp, "view")
+        self.assertContains(resp, "manage")
+        # admin should not appear as an option in the permission dropdown
+        self.assertNotContains(resp, '<option value="%s">admin</option>' % self.admin_perm.pk)
+
+    def test_regular_user_denied_grants_page(self):
+        self._login(self.regular_key)
+        resp = self.client.get(f"/web/grants/{self.dataset.name}")
+        self.assertContains(resp, "Access Denied")
+
+
+# ──────────────────────────────────────────────────────────────
 # Team lead promotion tests (SC manages team leads)
 # ──────────────────────────────────────────────────────────────
 
@@ -769,6 +857,10 @@ class TestTOSLandingGeneral(_WebTestBase):
         )
         self.dataset.tos = tos
         self.dataset.save()
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm,
+        )
         self._login(self.regular_key)
         resp = self.client.get("/web/datasets")
         self.assertContains(resp, "/web/tos/link-tok/")

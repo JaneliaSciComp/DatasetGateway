@@ -45,12 +45,14 @@
         <td>{{ g.granted_by.email|default:"-" }}</td>
         <td>{{ g.get_source_display }}</td>
         <td>
+            {% if is_admin_user or g.permission.name != "admin" %}
             <form method="post" class="inline">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="revoke">
                 <input type="hidden" name="grant_id" value="{{ g.pk }}">
                 <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
             </form>
+            {% endif %}
         </td>
     </tr>
     {% endfor %}

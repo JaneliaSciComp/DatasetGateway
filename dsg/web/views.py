@@ -96,14 +96,21 @@ class DatasetsView(View):
         user = _get_web_user(request)
         if not user:
             return redirect("/auth/login?next=/web/datasets")
-        datasets = Dataset.objects.all().order_by("name")
 
         is_sc_or_admin = user and _is_sc_or_admin(user)
+
+        if user.admin:
+            datasets = Dataset.objects.all().order_by("name")
+        else:
+            granted_ids = Grant.objects.filter(user=user).values_list(
+                "dataset_id", flat=True
+            )
+            datasets = Dataset.objects.filter(pk__in=granted_ids).order_by("name")
 
         dataset_list = []
         for d in datasets:
             versions = DatasetVersion.objects.filter(dataset=d)
-            can_manage = user and _can_manage_dataset(user, d)
+            can_manage = _can_manage_dataset(user, d)
             dataset_list.append({
                 "dataset": d,
                 "versions": versions,
@@ -272,24 +279,16 @@ class MyDatasetsView(View):
 
 
 class GrantManageView(View):
-    """GET/POST /web/grants/<slug:dataset> — Dataset members page (SC/admin view).
+    """GET/POST /web/grants/<slug:dataset> — Dataset members page.
 
-    Requires admin grant on dataset or global admin. Team leads with only
-    manage permission are redirected to their team dashboard.
+    Requires admin or manage grant on dataset, or global admin.
+    Users with manage (but not admin) can grant/revoke up to manage level.
     """
 
     def _check_access(self, user, ds):
         """Return None if allowed, or a redirect response."""
-        if _has_dataset_admin(user, ds):
-            return None
-        # Team leads with manage-only → redirect to team dashboard
         if _can_manage_dataset(user, ds):
-            # Find their group admin membership to redirect
-            team_group = UserGroup.objects.filter(
-                user=user, is_admin=True
-            ).select_related("group").first()
-            if team_group:
-                return redirect("web-team-dashboard", group_name=team_group.group.name)
+            return None
         return render(None, "web/access_denied.html", {"user": user})
 
     def get(self, request, dataset):
@@ -301,9 +300,6 @@ class GrantManageView(View):
 
         err = self._check_access(user, ds)
         if err:
-            # Need request context for rendering
-            if hasattr(err, 'status_code') and err.status_code == 302:
-                return err
             return render(request, "web/access_denied.html", {"user": user})
 
         grants = Grant.objects.filter(dataset=ds).select_related(
@@ -315,7 +311,10 @@ class GrantManageView(View):
             g.group.name for g in grants if g.group_id
         ))
 
+        is_admin_user = _has_dataset_admin(user, ds)
         permissions = Permission.objects.all()
+        if not is_admin_user:
+            permissions = permissions.exclude(name="admin")
         versions = DatasetVersion.objects.filter(dataset=ds)
 
         return render(request, "web/grant_manage.html", {
@@ -325,6 +324,7 @@ class GrantManageView(View):
             "permissions": permissions,
             "versions": versions,
             "group_names": group_names,
+            "is_admin_user": is_admin_user,
         })
 
     def post(self, request, dataset):
@@ -334,15 +334,22 @@ class GrantManageView(View):
 
         ds = get_object_or_404(Dataset, name=dataset)
 
-        if not _has_dataset_admin(user, ds):
+        if not _can_manage_dataset(user, ds):
             return render(request, "web/access_denied.html", {"user": user})
 
+        is_admin_user = _has_dataset_admin(user, ds)
         action = request.POST.get("action")
 
         if action == "grant":
             email = request.POST.get("email", "").strip()
             perm_id = request.POST.get("permission")
             version_id = request.POST.get("version") or None
+
+            perm = get_object_or_404(Permission, pk=perm_id)
+
+            if perm.name == "admin" and not is_admin_user:
+                messages.error(request, "You cannot grant admin permission")
+                return redirect("web-grant-manage", dataset=dataset)
 
             target_user, user_created = User.objects.get_or_create(
                 email=email,
@@ -352,7 +359,6 @@ class GrantManageView(View):
                 target_user.set_unusable_password()
                 target_user.save()
 
-            perm = get_object_or_404(Permission, pk=perm_id)
             dv = DatasetVersion.objects.get(pk=version_id) if version_id else None
 
             _, grant_created = Grant.objects.get_or_create(
@@ -371,7 +377,10 @@ class GrantManageView(View):
 
         elif action == "revoke":
             grant_id = request.POST.get("grant_id")
-            Grant.objects.filter(pk=grant_id, dataset=ds).delete()
+            qs = Grant.objects.filter(pk=grant_id, dataset=ds)
+            if not is_admin_user:
+                qs = qs.exclude(permission__name="admin")
+            qs.delete()
             messages.success(request, "Grant revoked")
 
         return redirect("web-grant-manage", dataset=dataset)
