@@ -236,8 +236,8 @@ class UserDetailView(SCIMBaseView):
         if not user:
             return scim_error(404, detail="User not found")
 
-        before = {"email": user.email, "name": user.name, "admin": user.admin,
-                  "is_active": user.is_active}
+        before = {"email": user.email, "name": user.name, "display_name": user.display_name,
+                  "admin": user.admin, "is_active": user.is_active}
         operations = request.data.get("Operations", [])
         for op in operations:
             op_type = op.get("op", "").lower()
@@ -255,8 +255,8 @@ class UserDetailView(SCIMBaseView):
                     setattr(user, k, v)
 
         user.save()
-        after = {"email": user.email, "name": user.name, "admin": user.admin,
-                 "is_active": user.is_active}
+        after = {"email": user.email, "name": user.name, "display_name": user.display_name,
+                 "admin": user.admin, "is_active": user.is_active}
         if before != after:
             log_audit(request.user, "user_updated", "User", user.pk,
                       before_state=before, after_state=after)
