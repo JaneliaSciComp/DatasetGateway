@@ -110,6 +110,12 @@ class TOSDocumentAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "dataset", "dataset_version", "effective_date", "retired_date")
     list_filter = ("effective_date",)
 
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if obj.dataset_id and obj.dataset.tos_id != obj.pk:
+            obj.dataset.tos = obj
+            obj.dataset.save(update_fields=["tos"])
+
 
 @admin.register(TOSAcceptance)
 class TOSAcceptanceAdmin(admin.ModelAdmin):

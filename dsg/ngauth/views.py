@@ -63,10 +63,8 @@ class IndexView(View):
 
     def get(self, request):
         user_email = _get_user_from_cookie(request)
-        tos_documents = TOSDocument.objects.filter(retired_date__isnull=True)
         return render(request, "ngauth/index.html", {
             "user_email": user_email,
-            "tos_documents": tos_documents,
         })
 
 
