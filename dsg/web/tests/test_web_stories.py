@@ -531,6 +531,17 @@ class TestManageUserGrantPage(_WebTestBase):
         # admin should not appear as an option in the permission dropdown
         self.assertNotContains(resp, '<option value="%s">admin</option>' % self.admin_perm.pk)
 
+    def test_user_cannot_revoke_own_grant(self):
+        self._login(self.group_admin_a_key)
+        own_grant = Grant.objects.get(
+            user=self.group_admin_a, dataset=self.dataset, permission=self.manage_perm,
+        )
+        resp = self.client.post(f"/web/grants/{self.dataset.name}", {
+            "action": "revoke", "grant_id": own_grant.pk,
+        }, follow=True)
+        self.assertTrue(Grant.objects.filter(pk=own_grant.pk).exists())
+        self.assertContains(resp, "You cannot revoke your own grants")
+
     def test_regular_user_denied_grants_page(self):
         self._login(self.regular_key)
         resp = self.client.get(f"/web/grants/{self.dataset.name}")

@@ -420,7 +420,9 @@ class GrantManageView(View):
             if not is_admin_user:
                 qs = qs.exclude(permission__name="admin")
             grant = qs.select_related("user", "permission", "dataset_version").first()
-            if grant:
+            if grant and grant.user == user:
+                messages.error(request, "You cannot revoke your own grants")
+            elif grant:
                 before = {
                     "user": grant.user.email, "dataset": ds.name,
                     "permission": grant.permission.name,
@@ -429,7 +431,7 @@ class GrantManageView(View):
                 }
                 grant.delete()
                 log_audit(user, "grant_revoked", "Grant", grant_id, before_state=before)
-            messages.success(request, "Grant revoked")
+                messages.success(request, "Grant revoked")
 
         return redirect("web-grant-manage", dataset=dataset)
 
