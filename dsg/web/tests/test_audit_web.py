@@ -42,14 +42,14 @@ class _AuditWebBase(TestCase):
         self.sc_group = Group.objects.create(name="sc")
         UserGroup.objects.create(user=self.sc_user, group=self.sc_group)
 
-        self.team_lead = User.objects.create(email="lead@example.org", name="Lead")
-        self.lead_key = APIKey.objects.create(user=self.team_lead, key="tok-lead")
+        self.group_admin = User.objects.create(email="lead@example.org", name="Lead")
+        self.group_admin_key = APIKey.objects.create(user=self.group_admin, key="tok-lead")
 
         self.regular = User.objects.create(email="regular@example.org", name="Regular")
         self.regular_key = APIKey.objects.create(user=self.regular, key="tok-regular")
 
         self.group = Group.objects.create(name="lab")
-        UserGroup.objects.create(user=self.team_lead, group=self.group, is_admin=True)
+        UserGroup.objects.create(user=self.group_admin, group=self.group, is_admin=True)
         UserGroup.objects.create(user=self.regular, group=self.group)
 
         self.dataset = Dataset.objects.create(name="ds")
@@ -60,9 +60,9 @@ class _AuditWebBase(TestCase):
             permission=self.admin_perm, source=Grant.SOURCE_MANUAL,
         )
 
-        # Team lead has manage on dataset (scoped to group)
+        # Group admin has manage on dataset (scoped to group)
         Grant.objects.create(
-            user=self.team_lead, dataset=self.dataset,
+            user=self.group_admin, dataset=self.dataset,
             permission=self.manage_perm, group=self.group,
             source=Grant.SOURCE_MANUAL,
         )
@@ -137,49 +137,49 @@ class TestGrantManageAudit(_AuditWebBase):
 
 
 # ──────────────────────────────────────────────────────────────
-# TeamLeadManageView audit tests
+# DatasetAdminManageView audit tests
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestTeamLeadManageAudit(_AuditWebBase):
-    def test_add_team_lead_audit(self):
+class TestDatasetAdminManageAudit(_AuditWebBase):
+    def test_add_dataset_admin_audit(self):
         new_lead = User.objects.create(email="newlead@example.org", name="New Lead")
         self._login(self.sc_key)
-        self.client.post(f"/web/team-leads/{self.dataset.name}", {
+        self.client.post(f"/web/dataset-admins/{self.dataset.name}", {
             "action": "add",
             "email": "newlead@example.org",
         })
-        entry = AuditLog.objects.get(action="team_lead_added")
+        entry = AuditLog.objects.get(action="dataset_admin_added")
         assert entry.actor == self.sc_user
         assert entry.after_state["user"] == "newlead@example.org"
         assert entry.after_state["permission"] == "admin"
 
-    def test_remove_team_lead_audit(self):
+    def test_remove_dataset_admin_audit(self):
         admin_grant = Grant.objects.get(
             user=self.sc_user, dataset=self.dataset, permission=self.admin_perm,
         )
         self._login(self.admin_key)
-        self.client.post(f"/web/team-leads/{self.dataset.name}", {
+        self.client.post(f"/web/dataset-admins/{self.dataset.name}", {
             "action": "remove",
             "grant_id": admin_grant.pk,
         })
-        entry = AuditLog.objects.get(action="team_lead_removed")
+        entry = AuditLog.objects.get(action="dataset_admin_removed")
         assert entry.actor == self.admin_user
         assert entry.before_state["user"] == "sc@example.org"
         assert entry.before_state["permission"] == "admin"
 
 
 # ──────────────────────────────────────────────────────────────
-# TeamDashboardView audit tests
+# GroupDashboardView audit tests
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestTeamDashboardAudit(_AuditWebBase):
-    def test_team_grant_audit(self):
-        self._login(self.lead_key)
-        self.client.post(f"/web/team/{self.group.name}/", {
+class TestGroupDashboardAudit(_AuditWebBase):
+    def test_group_grant_audit(self):
+        self._login(self.group_admin_key)
+        self.client.post(f"/web/group/{self.group.name}/", {
             "action": "grant",
             "email": "regular@example.org",
             "dataset": "ds",
@@ -189,13 +189,13 @@ class TestTeamDashboardAudit(_AuditWebBase):
         assert entry.after_state["group"] == "lab"
         assert entry.after_state["user"] == "regular@example.org"
 
-    def test_team_revoke_audit(self):
+    def test_group_revoke_audit(self):
         grant = Grant.objects.create(
             user=self.regular, dataset=self.dataset,
             permission=self.view_perm, group=self.group,
         )
-        self._login(self.lead_key)
-        self.client.post(f"/web/team/{self.group.name}/", {
+        self._login(self.group_admin_key)
+        self.client.post(f"/web/group/{self.group.name}/", {
             "action": "revoke",
             "grant_id": grant.pk,
         })
@@ -204,8 +204,8 @@ class TestTeamDashboardAudit(_AuditWebBase):
 
     def test_add_member_audit(self):
         new_user = User.objects.create(email="new@example.org")
-        self._login(self.lead_key)
-        self.client.post(f"/web/team/{self.group.name}/", {
+        self._login(self.group_admin_key)
+        self.client.post(f"/web/group/{self.group.name}/", {
             "action": "add_member",
             "email": "new@example.org",
         })
@@ -220,8 +220,8 @@ class TestTeamDashboardAudit(_AuditWebBase):
             permission=self.view_perm, group=self.group,
         )
         ug = UserGroup.objects.get(user=self.regular, group=self.group)
-        self._login(self.lead_key)
-        self.client.post(f"/web/team/{self.group.name}/", {
+        self._login(self.group_admin_key)
+        self.client.post(f"/web/group/{self.group.name}/", {
             "action": "remove_member",
             "member_id": ug.pk,
         })

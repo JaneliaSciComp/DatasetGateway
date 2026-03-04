@@ -213,7 +213,7 @@ class Grant(models.Model):
     SOURCE_MANUAL = "manual"
     SOURCE_SELF_SERVICE = "self_service"
     SOURCE_CHOICES = [
-        (SOURCE_MANUAL, "Added by admin or team lead"),
+        (SOURCE_MANUAL, "Added by admin"),
         (SOURCE_SELF_SERVICE, "Self-service TOS acceptance"),
     ]
 

@@ -1,9 +1,9 @@
 {% extends "web/base.html" %}
-{% block title %}Manage Team Leads: {{ dataset.name }} — DatasetGateway{% endblock %}
+{% block title %}Manage Dataset Admins: {{ dataset.name }} — DatasetGateway{% endblock %}
 {% block content %}
-<h1>Manage Team Leads: {{ dataset.name }}</h1>
+<h1>Manage Dataset Admins: {{ dataset.name }}</h1>
 
-<h2>Add Team Lead</h2>
+<h2>Add Dataset Admin</h2>
 <form method="post">
     {% csrf_token %}
     <input type="hidden" name="action" value="add">
@@ -11,7 +11,7 @@
     <button type="submit" class="btn btn-sm">Add</button>
 </form>
 
-<h2>Current Team Leads</h2>
+<h2>Current Dataset Admins</h2>
 {% if admins %}
 <table>
     <tr><th>Email</th><th>Name</th><th></th></tr>
@@ -31,6 +31,6 @@
     {% endfor %}
 </table>
 {% else %}
-<p>No team leads assigned yet.</p>
+<p>No dataset admins assigned yet.</p>
 {% endif %}
 {% endblock %}

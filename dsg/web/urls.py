@@ -7,9 +7,9 @@ urlpatterns = [
     path("datasets", views.DatasetsView.as_view(), name="web-datasets"),
     path("tos/<int:tos_id>/accept", views.TOSAcceptView.as_view(), name="web-tos-accept"),
     path("tos/<str:invite_token>/", views.TOSLandingView.as_view(), name="web-tos-landing"),
-    path("my-datasets", views.MyDatasetsView.as_view(), name="web-my-datasets"),
+    path("my-account", views.MyAccountView.as_view(), name="web-my-account"),
     path("grants/<slug:dataset>", views.GrantManageView.as_view(), name="web-grant-manage"),
-    path("team-leads/<slug:dataset>", views.TeamLeadManageView.as_view(), name="web-team-lead-manage"),
+    path("dataset-admins/<slug:dataset>", views.DatasetAdminManageView.as_view(), name="web-dataset-admin-manage"),
     path("public-roots/<slug:dataset>", views.PublicRootManageView.as_view(), name="web-public-roots"),
-    path("team/<slug:group_name>/", views.TeamDashboardView.as_view(), name="web-team-dashboard"),
+    path("group/<slug:group_name>/", views.GroupDashboardView.as_view(), name="web-group-dashboard"),
 ]

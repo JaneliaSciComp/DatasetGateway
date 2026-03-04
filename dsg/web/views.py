@@ -125,8 +125,8 @@ class DatasetsView(View):
         })
 
 
-class TeamLeadManageView(View):
-    """GET/POST /web/team-leads/<slug:dataset> — SC promotes team leads."""
+class DatasetAdminManageView(View):
+    """GET/POST /web/dataset-admins/<slug:dataset> — SC promotes dataset admins."""
 
     def get(self, request, dataset):
         user = _get_web_user(request)
@@ -143,7 +143,7 @@ class TeamLeadManageView(View):
             dataset=ds, permission=admin_perm
         ).select_related("user").order_by("user__email") if admin_perm else Grant.objects.none()
 
-        return render(request, "web/team_lead_manage.html", {
+        return render(request, "web/dataset_admin_manage.html", {
             "user": user,
             "dataset": ds,
             "admins": admins,
@@ -167,7 +167,7 @@ class TeamLeadManageView(View):
                 target_user = User.objects.get(email=email)
             except User.DoesNotExist:
                 messages.error(request, f"User not found: {email}")
-                return redirect("web-team-lead-manage", dataset=dataset)
+                return redirect("web-dataset-admin-manage", dataset=dataset)
 
             admin_perm, _ = Permission.objects.get_or_create(name="admin")
             grant, created = Grant.objects.get_or_create(
@@ -175,13 +175,13 @@ class TeamLeadManageView(View):
                 defaults={"granted_by": user, "source": Grant.SOURCE_MANUAL},
             )
             if created:
-                log_audit(user, "team_lead_added", "Grant", grant.pk, after_state={
+                log_audit(user, "dataset_admin_added", "Grant", grant.pk, after_state={
                     "user": target_user.email, "dataset": ds.name,
                     "permission": "admin", "source": Grant.SOURCE_MANUAL,
                 })
-                messages.success(request, f"Added {email} as team lead")
+                messages.success(request, f"Added {email} as dataset admin")
             else:
-                messages.info(request, f"{email} is already a team lead")
+                messages.info(request, f"{email} is already a dataset admin")
 
         elif action == "remove":
             grant_id = request.POST.get("grant_id")
@@ -196,10 +196,10 @@ class TeamLeadManageView(View):
                         "permission": "admin",
                     }
                     grant.delete()
-                    log_audit(user, "team_lead_removed", "Grant", grant_id, before_state=before)
-            messages.success(request, "Removed team lead")
+                    log_audit(user, "dataset_admin_removed", "Grant", grant_id, before_state=before)
+            messages.success(request, "Removed dataset admin")
 
-        return redirect("web-team-lead-manage", dataset=dataset)
+        return redirect("web-dataset-admin-manage", dataset=dataset)
 
 
 class TOSAcceptView(View):
@@ -235,8 +235,8 @@ class TOSAcceptView(View):
         return redirect("web-datasets")
 
 
-class MyDatasetsView(View):
-    """GET /web/my-datasets — Comprehensive user dashboard."""
+class MyAccountView(View):
+    """GET /web/my-account — Comprehensive user account dashboard."""
 
     def get(self, request):
         user = _get_web_user(request)
@@ -249,12 +249,7 @@ class MyDatasetsView(View):
 
         # Groups
         groups = perm_cache["groups"]
-        teams_admin = perm_cache["groups_admin"]
-
-        # Datasets this user leads (has admin grant on)
-        admin_datasets = Grant.objects.filter(
-            user=user, permission__name="admin"
-        ).select_related("dataset")
+        groups_admin = perm_cache["groups_admin"]
 
         # Missing TOS — enrich with invite_token for link generation
         missing_tos = perm_cache["missing_tos"]
@@ -275,20 +270,43 @@ class MyDatasetsView(View):
             group__user_groups__user=user
         ).select_related("group", "dataset", "permission").order_by("dataset__name")
 
+        # Unified dataset access: merge grants + group_perms into per-dataset rows
+        level_map = {"view": 1, "edit": 2, "manage": 3, "admin": 4}
+        level_names = {1: "view", 2: "edit", 3: "manage", 4: "admin"}
+        ds_info = {}
+        for g in grants:
+            name = g.dataset.name
+            ds_info.setdefault(name, {"level": 0, "sources": set()})
+            ds_info[name]["level"] = max(ds_info[name]["level"], level_map.get(g.permission.name, 0))
+            ds_info[name]["sources"].add("Direct")
+        for gp in group_perms:
+            name = gp.dataset.name
+            ds_info.setdefault(name, {"level": 0, "sources": set()})
+            ds_info[name]["level"] = max(ds_info[name]["level"], level_map.get(gp.permission.name, 0))
+            ds_info[name]["sources"].add(f"Group: {gp.group.name}")
+        dataset_access = sorted([
+            {"dataset_name": n, "role": level_names.get(i["level"], "view"),
+             "sources": ", ".join(sorted(i["sources"]))}
+            for n, i in ds_info.items()
+        ], key=lambda x: x["dataset_name"])
+
         # TOS acceptances
         acceptances = TOSAcceptance.objects.filter(user=user).select_related(
             "tos_document"
         ).order_by("-accepted_at")
 
-        return render(request, "web/my_datasets.html", {
+        is_admin = user.admin
+        is_sc = UserGroup.objects.filter(user=user, group__name="sc").exists()
+
+        return render(request, "web/my_account.html", {
             "user": user,
             "groups": groups,
-            "teams_admin": teams_admin,
-            "admin_datasets": admin_datasets,
+            "groups_admin": groups_admin,
+            "dataset_access": dataset_access,
             "missing_tos": missing_tos,
-            "grants": grants,
-            "group_perms": group_perms,
             "acceptances": acceptances,
+            "is_admin": is_admin,
+            "is_sc": is_sc,
         })
 
 
@@ -582,11 +600,11 @@ class TOSLandingView(View):
         else:
             messages.info(request, f"You have already accepted: {tos_doc.name}")
 
-        return redirect("web-my-datasets")
+        return redirect("web-my-account")
 
 
-class TeamDashboardView(View):
-    """GET/POST /web/team/<slug:group_name>/ — Team lead manages group members and grants."""
+class GroupDashboardView(View):
+    """GET/POST /web/group/<slug:group_name>/ — Group admin manages group members and grants."""
 
     def _get_group_and_check_admin(self, request, group_name):
         """Return (user, group) or redirect/access-denied response."""
@@ -605,7 +623,7 @@ class TeamDashboardView(View):
 
         members = UserGroup.objects.filter(group=group).select_related("user").order_by("user__email")
 
-        # Datasets the team lead can manage (has manage or admin grant)
+        # Datasets the group admin can manage (has manage or admin grant)
         managed_dataset_ids = Grant.objects.filter(
             user=user, permission__name__in=["admin", "manage"]
         ).values_list("dataset_id", flat=True)
@@ -619,7 +637,7 @@ class TeamDashboardView(View):
         # Available permissions for granting (view, edit, manage — not admin)
         grantable_permissions = Permission.objects.filter(name__in=["view", "edit", "manage"])
 
-        return render(request, "web/team_dashboard.html", {
+        return render(request, "web/group_dashboard.html", {
             "user": user,
             "group": group,
             "members": members,
@@ -642,12 +660,12 @@ class TeamDashboardView(View):
 
             ds = get_object_or_404(Dataset, name=dataset_name)
 
-            # Verify team lead has manage on this dataset
+            # Verify group admin has manage on this dataset
             if not _can_manage_dataset(user, ds):
                 messages.error(request, "You do not have manage permission on this dataset")
-                return redirect("web-team-dashboard", group_name=group_name)
+                return redirect("web-group-dashboard", group_name=group_name)
 
-            # Validate permission level: team lead can grant up to their own level
+            # Validate permission level: group admin can grant up to their own level
             perm = get_object_or_404(Permission, name=perm_name)
             level_map = {"view": 1, "edit": 2, "manage": 3, "admin": 4}
             user_level = 0
@@ -657,7 +675,7 @@ class TeamDashboardView(View):
                 user_level = 4
             if level_map.get(perm_name, 0) > user_level:
                 messages.error(request, "Cannot grant a permission level higher than your own")
-                return redirect("web-team-dashboard", group_name=group_name)
+                return redirect("web-group-dashboard", group_name=group_name)
 
             # Auto-add to group if not a member
             target_user, user_created = User.objects.get_or_create(
@@ -737,4 +755,4 @@ class TeamDashboardView(View):
             except UserGroup.DoesNotExist:
                 messages.error(request, "Member not found")
 
-        return redirect("web-team-dashboard", group_name=group_name)
+        return redirect("web-group-dashboard", group_name=group_name)

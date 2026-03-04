@@ -9,7 +9,7 @@
     {% if item.dataset.description %}<p>{{ item.dataset.description }}</p>{% endif %}
 
     {% if item.dataset.tos %}
-        <p>Requires TOS: <a href="/web/tos/{{ item.dataset.tos.invite_token }}/">{{ item.dataset.tos.name }}</a></p>
+        <p>TOS invite link: <a href="/web/tos/{{ item.dataset.tos.invite_token }}/">{{ request.get_host }}/web/tos/{{ item.dataset.tos.invite_token }}/</a></p>
     {% endif %}
 
     {% if item.versions %}
@@ -30,7 +30,7 @@
         <a href="/web/public-roots/{{ item.dataset.name }}" class="btn btn-sm">Public Roots</a>
     {% endif %}
     {% if is_sc_or_admin %}
-        <a href="/web/team-leads/{{ item.dataset.name }}" class="btn btn-sm">Manage Team Leads</a>
+        <a href="/web/dataset-admins/{{ item.dataset.name }}" class="btn btn-sm">Manage Dataset Admins</a>
     {% endif %}
 </div>
 {% empty %}

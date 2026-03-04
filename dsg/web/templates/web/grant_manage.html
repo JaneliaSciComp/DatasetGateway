@@ -3,6 +3,10 @@
 {% block content %}
 <h1>Dataset Members: {{ dataset.name }}</h1>
 
+{% if dataset.tos %}
+<p>TOS invite link: <a href="/web/tos/{{ dataset.tos.invite_token }}/">{{ request.get_host }}/web/tos/{{ dataset.tos.invite_token }}/</a></p>
+{% endif %}
+
 <h2>Add Grant</h2>
 <form method="post">
     {% csrf_token %}

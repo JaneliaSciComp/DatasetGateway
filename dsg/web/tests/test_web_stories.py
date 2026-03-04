@@ -44,11 +44,11 @@ class _WebTestBase(TestCase):
         self.sc_user = User.objects.create(email="sc@example.org", name="SC Member")
         self.sc_key = APIKey.objects.create(user=self.sc_user, key="tok-sc")
 
-        self.team_lead_a = User.objects.create(email="lead-a@example.org", name="Team Lead A")
-        self.team_lead_a_key = APIKey.objects.create(user=self.team_lead_a, key="tok-lead-a")
+        self.group_admin_a = User.objects.create(email="lead-a@example.org", name="Group Admin A")
+        self.group_admin_a_key = APIKey.objects.create(user=self.group_admin_a, key="tok-lead-a")
 
-        self.team_lead_b = User.objects.create(email="lead-b@example.org", name="Team Lead B")
-        self.team_lead_b_key = APIKey.objects.create(user=self.team_lead_b, key="tok-lead-b")
+        self.group_admin_b = User.objects.create(email="lead-b@example.org", name="Group Admin B")
+        self.group_admin_b_key = APIKey.objects.create(user=self.group_admin_b, key="tok-lead-b")
 
         self.regular_user = User.objects.create(email="regular@example.org", name="Regular")
         self.regular_key = APIKey.objects.create(user=self.regular_user, key="tok-regular")
@@ -58,11 +58,11 @@ class _WebTestBase(TestCase):
         UserGroup.objects.create(user=self.sc_user, group=self.sc_group)
 
         self.group_a = Group.objects.create(name="alpha-lab")
-        UserGroup.objects.create(user=self.team_lead_a, group=self.group_a, is_admin=True)
+        UserGroup.objects.create(user=self.group_admin_a, group=self.group_a, is_admin=True)
         UserGroup.objects.create(user=self.regular_user, group=self.group_a)
 
         self.group_b = Group.objects.create(name="beta-lab")
-        UserGroup.objects.create(user=self.team_lead_b, group=self.group_b, is_admin=True)
+        UserGroup.objects.create(user=self.group_admin_b, group=self.group_b, is_admin=True)
 
         # Dataset
         self.dataset = Dataset.objects.create(name="test-dataset")
@@ -73,9 +73,9 @@ class _WebTestBase(TestCase):
             permission=self.admin_perm, source=Grant.SOURCE_MANUAL,
         )
 
-        # Team lead A has manage grant on dataset (scoped to group_a)
+        # Group admin A has manage grant on dataset (scoped to group_a)
         Grant.objects.create(
-            user=self.team_lead_a, dataset=self.dataset,
+            user=self.group_admin_a, dataset=self.dataset,
             permission=self.manage_perm, group=self.group_a,
             source=Grant.SOURCE_MANUAL,
         )
@@ -106,7 +106,7 @@ class TestPermissionHierarchy(_WebTestBase):
         self.assertIn("view", perms)
 
     def test_manage_grant_expands_to_manage_edit_view(self):
-        perm_cache = self._get_cache(self.team_lead_a)
+        perm_cache = self._get_cache(self.group_admin_a)
         perms = perm_cache["permissions_v2"]["test-dataset"]
         self.assertIn("manage", perms)
         self.assertIn("edit", perms)
@@ -130,9 +130,9 @@ class TestPermissionHierarchy(_WebTestBase):
         self.assertEqual(perms, ["view"])
 
     def test_read_only_manage_keeps_manage_view_loses_edit(self):
-        self.team_lead_a.read_only = True
-        self.team_lead_a.save()
-        perm_cache = self._get_cache(self.team_lead_a)
+        self.group_admin_a.read_only = True
+        self.group_admin_a.save()
+        perm_cache = self._get_cache(self.group_admin_a)
         perms = perm_cache["permissions_v2"]["test-dataset"]
         self.assertIn("manage", perms)
         self.assertIn("view", perms)
@@ -144,7 +144,7 @@ class TestPermissionHierarchy(_WebTestBase):
         self.assertEqual(level, 4)  # admin = 4
 
     def test_manage_numeric_level(self):
-        perm_cache = self._get_cache(self.team_lead_a)
+        perm_cache = self._get_cache(self.group_admin_a)
         level = perm_cache["permissions"]["test-dataset"]
         self.assertEqual(level, 3)  # manage = 3
 
@@ -204,28 +204,28 @@ class TestGrantGroupScoping(_WebTestBase):
 
 
 # ──────────────────────────────────────────────────────────────
-# Team lead management tests
+# Group dashboard tests
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestTeamLeadManagement(_WebTestBase):
-    """Team lead manages group members and grants via team dashboard."""
+class TestGroupDashboard(_WebTestBase):
+    """Group admin manages group members and grants via group dashboard."""
 
-    def test_team_lead_can_view_dashboard(self):
-        self._login(self.team_lead_a_key)
-        resp = self.client.get(f"/web/team/{self.group_a.name}/")
+    def test_group_admin_can_view_dashboard(self):
+        self._login(self.group_admin_a_key)
+        resp = self.client.get(f"/web/group/{self.group_a.name}/")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "alpha-lab")
 
-    def test_team_lead_sees_group_members(self):
-        self._login(self.team_lead_a_key)
-        resp = self.client.get(f"/web/team/{self.group_a.name}/")
+    def test_group_admin_sees_group_members(self):
+        self._login(self.group_admin_a_key)
+        resp = self.client.get(f"/web/group/{self.group_a.name}/")
         self.assertContains(resp, "regular@example.org")
 
-    def test_team_lead_can_grant_view_to_member(self):
-        self._login(self.team_lead_a_key)
-        resp = self.client.post(f"/web/team/{self.group_a.name}/", {
+    def test_group_admin_can_grant_view_to_member(self):
+        self._login(self.group_admin_a_key)
+        resp = self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "grant",
             "email": "regular@example.org",
             "dataset": "test-dataset",
@@ -237,9 +237,9 @@ class TestTeamLeadManagement(_WebTestBase):
             permission=self.view_perm, group=self.group_a,
         ).exists())
 
-    def test_team_lead_can_grant_edit_to_member(self):
-        self._login(self.team_lead_a_key)
-        self.client.post(f"/web/team/{self.group_a.name}/", {
+    def test_group_admin_can_grant_edit_to_member(self):
+        self._login(self.group_admin_a_key)
+        self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "grant",
             "email": "regular@example.org",
             "dataset": "test-dataset",
@@ -250,9 +250,9 @@ class TestTeamLeadManagement(_WebTestBase):
             permission=self.edit_perm, group=self.group_a,
         ).exists())
 
-    def test_team_lead_can_grant_manage_sub_lead(self):
-        self._login(self.team_lead_a_key)
-        self.client.post(f"/web/team/{self.group_a.name}/", {
+    def test_group_admin_can_grant_manage_sub_lead(self):
+        self._login(self.group_admin_a_key)
+        self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "grant",
             "email": "regular@example.org",
             "dataset": "test-dataset",
@@ -263,9 +263,9 @@ class TestTeamLeadManagement(_WebTestBase):
             permission=self.manage_perm, group=self.group_a,
         ).exists())
 
-    def test_team_lead_cannot_grant_admin(self):
-        self._login(self.team_lead_a_key)
-        resp = self.client.post(f"/web/team/{self.group_a.name}/", {
+    def test_group_admin_cannot_grant_admin(self):
+        self._login(self.group_admin_a_key)
+        resp = self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "grant",
             "email": "regular@example.org",
             "dataset": "test-dataset",
@@ -277,15 +277,15 @@ class TestTeamLeadManagement(_WebTestBase):
             permission=self.admin_perm,
         ).exists())
 
-    def test_team_lead_cannot_see_other_groups_dashboard(self):
-        self._login(self.team_lead_a_key)
-        resp = self.client.get(f"/web/team/{self.group_b.name}/")
+    def test_group_admin_cannot_see_other_groups_dashboard(self):
+        self._login(self.group_admin_a_key)
+        resp = self.client.get(f"/web/group/{self.group_b.name}/")
         self.assertContains(resp, "Access Denied")
 
-    def test_team_lead_cannot_manage_unmanaged_dataset(self):
+    def test_group_admin_cannot_manage_unmanaged_dataset(self):
         other_ds = Dataset.objects.create(name="other-dataset")
-        self._login(self.team_lead_a_key)
-        resp = self.client.post(f"/web/team/{self.group_a.name}/", {
+        self._login(self.group_admin_a_key)
+        resp = self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "grant",
             "email": "regular@example.org",
             "dataset": "other-dataset",
@@ -293,10 +293,10 @@ class TestTeamLeadManagement(_WebTestBase):
         }, follow=True)
         self.assertContains(resp, "You do not have manage permission")
 
-    def test_team_lead_can_add_member(self):
-        self._login(self.team_lead_a_key)
+    def test_group_admin_can_add_member(self):
+        self._login(self.group_admin_a_key)
         new_user = User.objects.create(email="newmember@example.org")
-        resp = self.client.post(f"/web/team/{self.group_a.name}/", {
+        resp = self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "add_member",
             "email": "newmember@example.org",
         })
@@ -305,9 +305,9 @@ class TestTeamLeadManagement(_WebTestBase):
             user=new_user, group=self.group_a
         ).exists())
 
-    def test_team_lead_can_add_new_email_creates_user(self):
-        self._login(self.team_lead_a_key)
-        self.client.post(f"/web/team/{self.group_a.name}/", {
+    def test_group_admin_can_add_new_email_creates_user(self):
+        self._login(self.group_admin_a_key)
+        self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "add_member",
             "email": "brand-new@example.org",
         })
@@ -317,15 +317,15 @@ class TestTeamLeadManagement(_WebTestBase):
             user=new_user, group=self.group_a
         ).exists())
 
-    def test_team_lead_can_remove_member_cascades_grants(self):
+    def test_group_admin_can_remove_member_cascades_grants(self):
         # Give regular_user a group-scoped grant
         Grant.objects.create(
             user=self.regular_user, dataset=self.dataset,
             permission=self.view_perm, group=self.group_a,
         )
         ug = UserGroup.objects.get(user=self.regular_user, group=self.group_a)
-        self._login(self.team_lead_a_key)
-        self.client.post(f"/web/team/{self.group_a.name}/", {
+        self._login(self.group_admin_a_key)
+        self.client.post(f"/web/group/{self.group_a.name}/", {
             "action": "remove_member",
             "member_id": ug.pk,
         })
@@ -338,9 +338,9 @@ class TestTeamLeadManagement(_WebTestBase):
             user=self.regular_user, group=self.group_a
         ).exists())
 
-    def test_regular_user_denied_team_dashboard(self):
+    def test_regular_user_denied_group_dashboard(self):
         self._login(self.regular_key)
-        resp = self.client.get(f"/web/team/{self.group_a.name}/")
+        resp = self.client.get(f"/web/group/{self.group_a.name}/")
         self.assertContains(resp, "Access Denied")
 
 
@@ -359,7 +359,7 @@ class TestSCDatasetAdmin(_WebTestBase):
             permission=self.view_perm, group=self.group_a,
         )
         Grant.objects.create(
-            user=self.team_lead_b, dataset=self.dataset,
+            user=self.group_admin_b, dataset=self.dataset,
             permission=self.view_perm, group=self.group_b,
         )
         self._login(self.sc_key)
@@ -394,7 +394,7 @@ class TestSCDatasetAdmin(_WebTestBase):
         })
         self.assertFalse(Grant.objects.filter(pk=g.pk).exists())
 
-    def test_sc_can_assign_team_leads(self):
+    def test_sc_can_assign_dataset_admins(self):
         self._login(self.sc_key)
         resp = self.client.post(f"/web/grants/{self.dataset.name}", {
             "action": "grant",
@@ -403,7 +403,7 @@ class TestSCDatasetAdmin(_WebTestBase):
         })
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(Grant.objects.filter(
-            user=self.team_lead_b, dataset=self.dataset,
+            user=self.group_admin_b, dataset=self.dataset,
             permission=self.manage_perm,
         ).exists())
 
@@ -437,9 +437,9 @@ class TestGlobalAdmin(_WebTestBase):
         resp = self.client.get(f"/web/grants/{self.dataset.name}")
         self.assertEqual(resp.status_code, 200)
 
-    def test_global_admin_can_access_any_team_dashboard(self):
+    def test_global_admin_can_access_any_group_dashboard(self):
         self._login(self.global_admin_key)
-        resp = self.client.get(f"/web/team/{self.group_a.name}/")
+        resp = self.client.get(f"/web/group/{self.group_a.name}/")
         self.assertEqual(resp.status_code, 200)
 
     def test_global_admin_can_access_unassigned_dataset(self):
@@ -459,12 +459,12 @@ class TestManageUserGrantPage(_WebTestBase):
     """User with manage permission can access /web/grants/<dataset>."""
 
     def test_manage_user_can_view_grants_page(self):
-        self._login(self.team_lead_a_key)
+        self._login(self.group_admin_a_key)
         resp = self.client.get(f"/web/grants/{self.dataset.name}")
         self.assertEqual(resp.status_code, 200)
 
     def test_manage_user_can_grant_view_permission(self):
-        self._login(self.team_lead_a_key)
+        self._login(self.group_admin_a_key)
         resp = self.client.post(f"/web/grants/{self.dataset.name}", {
             "action": "grant",
             "email": "newuser@example.org",
@@ -477,7 +477,7 @@ class TestManageUserGrantPage(_WebTestBase):
         ).exists())
 
     def test_manage_user_can_grant_manage_permission(self):
-        self._login(self.team_lead_a_key)
+        self._login(self.group_admin_a_key)
         resp = self.client.post(f"/web/grants/{self.dataset.name}", {
             "action": "grant",
             "email": "newuser@example.org",
@@ -490,7 +490,7 @@ class TestManageUserGrantPage(_WebTestBase):
         ).exists())
 
     def test_manage_user_cannot_grant_admin_permission(self):
-        self._login(self.team_lead_a_key)
+        self._login(self.group_admin_a_key)
         resp = self.client.post(f"/web/grants/{self.dataset.name}", {
             "action": "grant",
             "email": "newuser@example.org",
@@ -507,7 +507,7 @@ class TestManageUserGrantPage(_WebTestBase):
             user=self.regular_user, dataset=self.dataset,
             permission=self.view_perm, group=self.group_a,
         )
-        self._login(self.team_lead_a_key)
+        self._login(self.group_admin_a_key)
         self.client.post(f"/web/grants/{self.dataset.name}", {
             "action": "revoke", "grant_id": g.pk,
         })
@@ -517,14 +517,14 @@ class TestManageUserGrantPage(_WebTestBase):
         admin_grant = Grant.objects.get(
             user=self.sc_user, dataset=self.dataset, permission=self.admin_perm,
         )
-        self._login(self.team_lead_a_key)
+        self._login(self.group_admin_a_key)
         self.client.post(f"/web/grants/{self.dataset.name}", {
             "action": "revoke", "grant_id": admin_grant.pk,
         })
         self.assertTrue(Grant.objects.filter(pk=admin_grant.pk).exists())
 
     def test_manage_user_does_not_see_admin_in_dropdown(self):
-        self._login(self.team_lead_a_key)
+        self._login(self.group_admin_a_key)
         resp = self.client.get(f"/web/grants/{self.dataset.name}")
         self.assertContains(resp, "view")
         self.assertContains(resp, "manage")
@@ -538,18 +538,18 @@ class TestManageUserGrantPage(_WebTestBase):
 
 
 # ──────────────────────────────────────────────────────────────
-# Team lead promotion tests (SC manages team leads)
+# Dataset admin promotion tests (SC manages dataset admins)
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestTeamLeadPromotion(_WebTestBase):
-    """SC/admin can add/remove team leads via the Manage Team Leads page."""
+class TestDatasetAdminPromotion(_WebTestBase):
+    """SC/admin can add/remove dataset admins via the Manage Dataset Admins page."""
 
-    def test_sc_can_add_team_lead(self):
+    def test_sc_can_add_dataset_admin(self):
         new_user = User.objects.create(email="newlead@example.org", name="New Lead")
         self._login(self.sc_key)
-        resp = self.client.post(f"/web/team-leads/{self.dataset.name}", {
+        resp = self.client.post(f"/web/dataset-admins/{self.dataset.name}", {
             "action": "add", "email": "newlead@example.org",
         })
         self.assertEqual(resp.status_code, 302)
@@ -557,57 +557,57 @@ class TestTeamLeadPromotion(_WebTestBase):
             user=new_user, dataset=self.dataset, permission__name="admin"
         ).exists())
 
-    def test_sc_can_remove_team_lead(self):
+    def test_sc_can_remove_dataset_admin(self):
         grant = Grant.objects.get(
             user=self.sc_user, dataset=self.dataset, permission=self.admin_perm,
         )
         self._login(self.global_admin_key)  # Global admin can also do this
-        self.client.post(f"/web/team-leads/{self.dataset.name}", {
+        self.client.post(f"/web/dataset-admins/{self.dataset.name}", {
             "action": "remove", "grant_id": grant.pk,
         })
         self.assertFalse(Grant.objects.filter(pk=grant.pk).exists())
 
-    def test_team_lead_manage_only_cannot_access(self):
-        """Team lead with only manage (not SC) cannot manage team leads."""
-        self._login(self.team_lead_a_key)
-        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
+    def test_dataset_admin_manage_only_cannot_access(self):
+        """User with only manage (not SC) cannot manage dataset admins."""
+        self._login(self.group_admin_a_key)
+        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
         self.assertContains(resp, "Access Denied")
 
     def test_regular_user_denied(self):
         self._login(self.regular_key)
-        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
+        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
         self.assertContains(resp, "Access Denied")
 
-    def test_datasets_page_shows_manage_team_leads_for_sc(self):
+    def test_datasets_page_shows_manage_dataset_admins_for_sc(self):
         self._login(self.sc_key)
         resp = self.client.get("/web/datasets")
-        self.assertContains(resp, "Manage Team Leads")
+        self.assertContains(resp, "Manage Dataset Admins")
 
-    def test_datasets_page_hides_manage_team_leads_for_regular(self):
+    def test_datasets_page_hides_manage_dataset_admins_for_regular(self):
         self._login(self.regular_key)
         resp = self.client.get("/web/datasets")
-        self.assertNotContains(resp, "Manage Team Leads")
+        self.assertNotContains(resp, "Manage Dataset Admins")
 
     def test_unauthenticated_redirects(self):
-        resp = self.client.get(f"/web/team-leads/{self.dataset.name}")
+        resp = self.client.get(f"/web/dataset-admins/{self.dataset.name}")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/auth/login", resp.url)
 
 
 # ──────────────────────────────────────────────────────────────
-# My Datasets dashboard tests
+# My Account dashboard tests
 # ──────────────────────────────────────────────────────────────
 
 
 @pytest.mark.django_db
-class TestMyDatasetsDashboard(_WebTestBase):
+class TestMyAccountDashboard(_WebTestBase):
     def test_shows_direct_grants(self):
         Grant.objects.create(
             user=self.regular_user, dataset=self.dataset,
             permission=self.view_perm, source=Grant.SOURCE_MANUAL,
         )
         self._login(self.regular_key)
-        resp = self.client.get("/web/my-datasets")
+        resp = self.client.get("/web/my-account")
         self.assertContains(resp, "test-dataset")
         self.assertContains(resp, "view")
 
@@ -616,26 +616,25 @@ class TestMyDatasetsDashboard(_WebTestBase):
             group=self.group_a, dataset=self.dataset, permission=self.view_perm,
         )
         self._login(self.regular_key)
-        resp = self.client.get("/web/my-datasets")
+        resp = self.client.get("/web/my-account")
         self.assertContains(resp, "alpha-lab")
-        self.assertContains(resp, "Group-Based Permissions")
 
-    def test_shows_datasets_you_lead(self):
+    def test_shows_datasets(self):
         self._login(self.sc_key)
-        resp = self.client.get("/web/my-datasets")
-        self.assertContains(resp, "Datasets You Lead")
+        resp = self.client.get("/web/my-account")
+        self.assertContains(resp, "Datasets")
         self.assertContains(resp, "test-dataset")
 
-    def test_shows_teams_you_lead(self):
-        self._login(self.team_lead_a_key)
-        resp = self.client.get("/web/my-datasets")
-        self.assertContains(resp, "Teams You Lead")
+    def test_shows_groups_you_administer(self):
+        self._login(self.group_admin_a_key)
+        resp = self.client.get("/web/my-account")
+        self.assertContains(resp, "Groups You Administer")
         self.assertContains(resp, "alpha-lab")
-        self.assertContains(resp, "Manage Team")
+        self.assertContains(resp, "Manage Group")
 
     def test_shows_groups(self):
         self._login(self.sc_key)
-        resp = self.client.get("/web/my-datasets")
+        resp = self.client.get("/web/my-account")
         self.assertContains(resp, "sc")
 
     def test_shows_missing_tos_with_invite_token(self):
@@ -650,12 +649,12 @@ class TestMyDatasetsDashboard(_WebTestBase):
             permission=self.view_perm,
         )
         self._login(self.regular_key)
-        resp = self.client.get("/web/my-datasets")
+        resp = self.client.get("/web/my-account")
         self.assertContains(resp, "Action Required")
         self.assertContains(resp, "test-invite-token-abc")
 
     def test_unauthenticated_redirects(self):
-        resp = self.client.get("/web/my-datasets")
+        resp = self.client.get("/web/my-account")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/auth/login", resp.url)
 
@@ -718,15 +717,15 @@ class TestTOSLandingClosed(_WebTestBase):
         )
 
     def test_user_without_grant_is_denied(self):
-        self._login(self.team_lead_b_key)
+        self._login(self.group_admin_b_key)
         resp = self.client.get("/web/tos/closed-tok-123/")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Access Restricted")
 
-    def test_denied_page_mentions_team_lead(self):
-        self._login(self.team_lead_b_key)
+    def test_denied_page_mentions_dataset_administrator(self):
+        self._login(self.group_admin_b_key)
         resp = self.client.get("/web/tos/closed-tok-123/")
-        self.assertContains(resp, "team lead")
+        self.assertContains(resp, "dataset administrator")
 
     def test_unauthenticated_sees_login_link(self):
         resp = self.client.get("/web/tos/closed-tok-123/")
