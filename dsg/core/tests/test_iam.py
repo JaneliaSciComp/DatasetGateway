@@ -7,6 +7,7 @@ from django.test import TestCase
 
 from core.models import (
     Dataset,
+    DatasetBucket,
     DatasetVersion,
     Grant,
     Group,
@@ -99,14 +100,18 @@ class TestSyncUserDatasetIAM(TestCase):
         self.view_perm, _ = Permission.objects.get_or_create(name="view")
         self.user = User.objects.create(email="user@example.org", name="User")
         self.dataset = Dataset.objects.create(name="ds1")
+        self.bucket_a = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        self.bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
         self.dv1 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+            dataset=self.dataset, version="v1",
         )
+        self.dv1.buckets.add(self.bucket_a)
         self.dv2 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v2", gcs_bucket="bucket-b",
+            dataset=self.dataset, version="v2",
         )
+        self.dv2.buckets.add(self.bucket_b)
         DatasetVersion.objects.create(
-            dataset=self.dataset, version="v3", gcs_bucket="",
+            dataset=self.dataset, version="v3",
         )
 
     @patch("ngauth.gcs.add_user_to_bucket")
@@ -190,8 +195,9 @@ class TestSyncGroupDatasetsForUser(TestCase):
         self.user = User.objects.create(email="user@example.org", name="User")
         self.group = Group.objects.create(name="lab")
         self.dataset = Dataset.objects.create(name="ds1")
+        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+            dataset=self.dataset, version="v1",
         )
         GroupDatasetPermission.objects.create(
             group=self.group, dataset=self.dataset, permission=self.view_perm,

@@ -96,7 +96,7 @@ class TestGrantManageAudit(_AuditWebBase):
 
     def test_grant_with_version_records_version(self):
         dv = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1", gcs_bucket="",
+            dataset=self.dataset, version="v1",
         )
         self._login(self.sc_key)
         self.client.post(f"/web/grants/{self.dataset.name}", {

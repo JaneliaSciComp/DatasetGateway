@@ -88,13 +88,13 @@ class DatasetVersionsView(APIView):
         except Dataset.DoesNotExist:
             return Response({"error": "Dataset not found"}, status=404)
 
-        versions = DatasetVersion.objects.filter(dataset=dataset)
+        versions = DatasetVersion.objects.filter(dataset=dataset).prefetch_related("buckets")
 
         return Response([
             {
                 "id": v.pk,
                 "version": v.version,
-                "gcs_bucket": v.gcs_bucket,
+                "buckets": [b.name for b in v.buckets.all()],
                 "is_public": v.is_public,
             }
             for v in versions

@@ -8,6 +8,7 @@ from django.test import TestCase
 from core.models import (
     APIKey,
     Dataset,
+    DatasetBucket,
     DatasetVersion,
     Grant,
     Group,
@@ -813,14 +814,18 @@ class TestTOSLandingBucketIAM(_WebTestBase):
         )
         self.dataset.tos = self.tos
         self.dataset.save()
+        self.bucket_a = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        self.bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
         self.dv1 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+            dataset=self.dataset, version="v1",
         )
+        self.dv1.buckets.add(self.bucket_a)
         self.dv2 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v2", gcs_bucket="bucket-b",
+            dataset=self.dataset, version="v2",
         )
+        self.dv2.buckets.add(self.bucket_b)
         self.dv_empty = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v3", gcs_bucket="",
+            dataset=self.dataset, version="v3",
         )
 
     def test_bucket_iam_called_per_version(self):
@@ -856,8 +861,9 @@ class TestGrantIAMSync(_WebTestBase):
 
     def setUp(self):
         super().setUp()
+        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+            dataset=self.dataset, version="v1",
         )
 
     def test_grant_create_triggers_iam_sync(self):
@@ -897,8 +903,9 @@ class TestGroupMembershipIAMSync(_WebTestBase):
 
     def setUp(self):
         super().setUp()
+        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+            dataset=self.dataset, version="v1",
         )
         GroupDatasetPermission.objects.create(
             group=self.group_a, dataset=self.dataset, permission=self.view_perm,

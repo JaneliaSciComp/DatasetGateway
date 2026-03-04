@@ -170,12 +170,26 @@ class Dataset(models.Model):
         return self.name
 
 
+class DatasetBucket(models.Model):
+    """A GCS bucket associated with a dataset."""
+
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="buckets")
+    name = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = "dataset_bucket"
+        unique_together = [("dataset", "name")]
+
+    def __str__(self):
+        return self.name
+
+
 class DatasetVersion(models.Model):
-    """A versioned release of a dataset, mapped to a GCS bucket."""
+    """A versioned release of a dataset."""
 
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="versions")
     version = models.CharField(max_length=255)
-    gcs_bucket = models.CharField(max_length=255, blank=True, default="")
+    buckets = models.ManyToManyField("DatasetBucket", blank=True, related_name="versions")
     prefix = models.CharField(max_length=512, blank=True, default="")
     is_public = models.BooleanField(default=False)
 

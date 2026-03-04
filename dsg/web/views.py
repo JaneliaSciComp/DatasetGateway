@@ -110,7 +110,7 @@ class DatasetsView(View):
 
         dataset_list = []
         for d in datasets:
-            versions = DatasetVersion.objects.filter(dataset=d)
+            versions = DatasetVersion.objects.filter(dataset=d).prefetch_related("buckets")
             can_manage = _can_manage_dataset(user, d)
             has_service_tables = ServiceTable.objects.filter(dataset=d).exists()
             dataset_list.append({

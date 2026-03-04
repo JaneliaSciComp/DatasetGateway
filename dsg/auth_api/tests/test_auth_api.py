@@ -8,6 +8,7 @@ from rest_framework.test import APIClient
 from core.models import (
     APIKey,
     Dataset,
+    DatasetBucket,
     DatasetVersion,
     Grant,
     Group,
@@ -103,12 +104,16 @@ class TestDatasetVersionsView(TestCase):
         self.user = User.objects.create(email="alice@example.org", name="alice")
         self.api_key = APIKey.objects.create(user=self.user, key="tok-ver")
         self.ds = Dataset.objects.create(name="fish2")
-        DatasetVersion.objects.create(
-            dataset=self.ds, version="v1", gcs_bucket="gs://fish2-v1", is_public=True
+        self.bucket_v1 = DatasetBucket.objects.create(dataset=self.ds, name="gs://fish2-v1")
+        self.bucket_v2 = DatasetBucket.objects.create(dataset=self.ds, name="gs://fish2-v2")
+        dv1 = DatasetVersion.objects.create(
+            dataset=self.ds, version="v1", is_public=True
         )
-        DatasetVersion.objects.create(
-            dataset=self.ds, version="v2", gcs_bucket="gs://fish2-v2", is_public=False
+        dv1.buckets.add(self.bucket_v1)
+        dv2 = DatasetVersion.objects.create(
+            dataset=self.ds, version="v2", is_public=False
         )
+        dv2.buckets.add(self.bucket_v2)
 
     def _auth(self):
         return {"HTTP_AUTHORIZATION": f"Bearer {self.api_key.key}"}
@@ -269,7 +274,7 @@ class TestAuthorizeDecisionView(TestCase):
     def test_version_specific_grant(self):
         ds2 = Dataset.objects.create(name="versioned")
         dv = DatasetVersion.objects.create(
-            dataset=ds2, version="v1", gcs_bucket="gs://x"
+            dataset=ds2, version="v1",
         )
         Grant.objects.create(
             user=self.user, dataset=ds2, dataset_version=dv, permission=self.perm

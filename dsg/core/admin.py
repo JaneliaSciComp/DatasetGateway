@@ -9,6 +9,7 @@ from .models import (
     APIKey,
     AuditLog,
     Dataset,
+    DatasetBucket,
     DatasetVersion,
     Grant,
     Group,
@@ -99,6 +100,11 @@ class ServiceTableInline(admin.TabularInline):
     extra = 0
 
 
+class DatasetBucketInline(admin.TabularInline):
+    model = DatasetBucket
+    extra = 0
+
+
 class DatasetVersionInline(admin.TabularInline):
     model = DatasetVersion
     extra = 0
@@ -109,14 +115,21 @@ class DatasetModelAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "tos", "access_mode")
     list_filter = ("access_mode",)
     search_fields = ("name",)
-    inlines = [DatasetVersionInline, ServiceTableInline]
+    inlines = [DatasetBucketInline, DatasetVersionInline, ServiceTableInline]
+
+
+@admin.register(DatasetBucket)
+class DatasetBucketAdmin(admin.ModelAdmin):
+    list_display = ("id", "dataset", "name")
+    search_fields = ("dataset__name", "name")
 
 
 @admin.register(DatasetVersion)
 class DatasetVersionAdmin(admin.ModelAdmin):
-    list_display = ("id", "dataset", "version", "gcs_bucket", "is_public")
+    list_display = ("id", "dataset", "version", "is_public")
     list_filter = ("is_public",)
     search_fields = ("dataset__name", "version")
+    filter_horizontal = ("buckets",)
 
 
 @admin.register(GroupDatasetPermission)

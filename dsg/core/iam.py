@@ -93,11 +93,9 @@ def _user_has_effective_access(user, dataset):
 
 
 def _get_dataset_buckets(dataset):
-    """Return list of non-empty gcs_bucket values from dataset versions."""
-    from core.models import DatasetVersion
+    """Return list of bucket names for a dataset."""
+    from core.models import DatasetBucket
 
     return list(
-        DatasetVersion.objects.filter(dataset=dataset)
-        .exclude(gcs_bucket="")
-        .values_list("gcs_bucket", flat=True)
+        DatasetBucket.objects.filter(dataset=dataset).values_list("name", flat=True)
     )
