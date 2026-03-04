@@ -21,6 +21,7 @@ class AccountAdapter(DefaultAccountAdapter):
         super().login(request, user)
         api_key = APIKey.objects.create(user=user, description="allauth login token")
         request.session["dsg_token_value"] = api_key.key
+        request.session["user_email"] = user.email
 
     def logout(self, request):
         """Flag the request so the middleware clears the dsg_token cookie."""

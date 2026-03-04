@@ -110,3 +110,47 @@ class TestLogoutClearsCookie(TestCase):
         resp = self.client.get("/web/datasets")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/auth/login", resp.url)
+
+
+@pytest.mark.django_db
+class TestSessionFallbackAuth(TestCase):
+    """Verify that session-based user_email works as a fallback when
+    the dsg_token cookie is missing (prevents login loops)."""
+
+    def setUp(self):
+        self.user = User.objects.create(email="alice@example.org", name="alice")
+
+    def test_session_email_authenticates_without_cookie(self):
+        """User with user_email in session but no dsg_token cookie can
+        access protected pages — this is the login-loop fix."""
+        session = self.client.session
+        session["user_email"] = self.user.email
+        session.save()
+
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "alice@example.org")
+
+    def test_missing_cookie_and_missing_session_redirects(self):
+        """Without both cookie and session email, user is redirected."""
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/auth/login", resp.url)
+
+    def test_adapter_login_sets_session_email(self):
+        """AccountAdapter.login() sets user_email in the session."""
+        from core.allauth_adapter import AccountAdapter
+        from django.test import RequestFactory
+
+        factory = RequestFactory()
+        request = factory.get("/")
+        # Give the request a real session
+        from django.contrib.sessions.backends.db import SessionStore
+        request.session = SessionStore()
+
+        adapter = AccountAdapter()
+        adapter.login(request, self.user)
+
+        self.assertEqual(request.session.get("user_email"), self.user.email)
+        # Also sets dsg_token_value for the cookie middleware
+        self.assertIsNotNone(request.session.get("dsg_token_value"))
