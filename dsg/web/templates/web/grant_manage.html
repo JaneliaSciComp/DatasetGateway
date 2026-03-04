@@ -49,7 +49,7 @@
         <td>{{ g.granted_by.email|default:"-" }}</td>
         <td>{{ g.get_source_display }}</td>
         <td>
-            {% if is_admin_user or g.permission.name != "admin" %}
+            {% if g.user.email != user.email and is_admin_user or g.user.email != user.email and g.permission.name != "admin" %}
             <form method="post" class="inline">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="revoke">
