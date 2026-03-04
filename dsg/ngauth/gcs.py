@@ -118,3 +118,34 @@ def add_user_to_bucket(bucket_name, user_email):
     except Exception as e:
         logger.error(f"Failed to add user to bucket IAM: {e}", extra={"email": user_email, "bucket": bucket_name})
         return False
+
+
+def remove_user_from_bucket(bucket_name, user_email):
+    """Remove a user from a bucket's IAM policy objectViewer role."""
+    try:
+        from google.cloud import storage
+
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        policy = bucket.get_iam_policy(requested_policy_version=3)
+
+        member = f"user:{user_email}"
+        new_bindings = []
+        for binding in policy.bindings:
+            if binding["role"] == OBJECT_VIEWER_ROLE:
+                members = binding.get("members", set())
+                members.discard(member)
+                if members:
+                    binding["members"] = members
+                    new_bindings.append(binding)
+                # Drop empty binding
+            else:
+                new_bindings.append(binding)
+        policy.bindings = new_bindings
+        bucket.set_iam_policy(policy)
+
+        logger.info("Removed user from bucket IAM", extra={"email": user_email, "bucket": bucket_name})
+        return True
+    except Exception as e:
+        logger.error(f"Failed to remove user from bucket IAM: {e}", extra={"email": user_email, "bucket": bucket_name})
+        return False

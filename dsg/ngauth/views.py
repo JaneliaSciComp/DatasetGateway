@@ -137,9 +137,10 @@ class ActivateView(View):
         bucket = body.get("bucket") or request.POST.get("bucket")
 
         # Accept TOS if provided
+        tos_doc = None
         if tos_id:
             try:
-                tos_doc = TOSDocument.objects.get(pk=tos_id)
+                tos_doc = TOSDocument.objects.select_related("dataset").get(pk=tos_id)
                 TOSAcceptance.objects.get_or_create(
                     user=user,
                     tos_document=tos_doc,
@@ -148,8 +149,12 @@ class ActivateView(View):
             except TOSDocument.DoesNotExist:
                 return JsonResponse({"error": "TOS document not found"}, status=404)
 
-        # Add user to bucket IAM if bucket specified
-        if bucket:
+        # Sync IAM for dataset-scoped TOS
+        if tos_doc and tos_doc.dataset:
+            from core.iam import sync_user_dataset_iam
+            sync_user_dataset_iam(user, tos_doc.dataset)
+        elif bucket:
+            # Legacy fallback: add user to specific bucket
             success = gcs.add_user_to_bucket(bucket, user_email)
             if not success:
                 return JsonResponse(

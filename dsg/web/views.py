@@ -181,6 +181,8 @@ class DatasetAdminManageView(View):
                     "user": target_user.email, "dataset": ds.name,
                     "permission": "admin", "source": Grant.SOURCE_MANUAL,
                 })
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(target_user, ds)
                 messages.success(request, f"Added {email} as dataset admin")
             else:
                 messages.info(request, f"{email} is already a dataset admin")
@@ -193,12 +195,15 @@ class DatasetAdminManageView(View):
                     pk=grant_id, dataset=ds, permission=admin_perm
                 ).select_related("user").first()
                 if grant:
+                    removed_user = grant.user
                     before = {
                         "user": grant.user.email, "dataset": ds.name,
                         "permission": "admin",
                     }
                     grant.delete()
                     log_audit(user, "dataset_admin_removed", "Grant", grant_id, before_state=before)
+                    from core.iam import sync_user_dataset_iam
+                    sync_user_dataset_iam(removed_user, ds)
             messages.success(request, "Removed dataset admin")
 
         return redirect("web-dataset-admin-manage", dataset=dataset)
@@ -409,6 +414,8 @@ class GrantManageView(View):
                     "version": dv.version if dv else None,
                     "source": Grant.SOURCE_MANUAL,
                 })
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(target_user, ds)
             if user_created:
                 messages.success(request, f"Created user and granted {perm.name} to {email}")
             elif grant_created:
@@ -425,6 +432,7 @@ class GrantManageView(View):
             if grant and grant.user == user:
                 messages.error(request, "You cannot revoke your own grants")
             elif grant:
+                revoked_user = grant.user
                 before = {
                     "user": grant.user.email, "dataset": ds.name,
                     "permission": grant.permission.name,
@@ -433,6 +441,8 @@ class GrantManageView(View):
                 }
                 grant.delete()
                 log_audit(user, "grant_revoked", "Grant", grant_id, before_state=before)
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(revoked_user, ds)
                 messages.success(request, "Grant revoked")
 
         return redirect("web-grant-manage", dataset=dataset)
@@ -640,16 +650,8 @@ class TOSLandingView(View):
             })
             # Provision bucket IAM for all dataset versions
             if dataset:
-                from ngauth.gcs import add_user_to_bucket
-
-                for dv in DatasetVersion.objects.filter(dataset=dataset).exclude(gcs_bucket=""):
-                    try:
-                        add_user_to_bucket(dv.gcs_bucket, user.email)
-                    except Exception:
-                        logger.exception(
-                            "Failed to provision bucket IAM",
-                            extra={"bucket": dv.gcs_bucket, "email": user.email},
-                        )
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(user, dataset)
 
             messages.success(request, f"Accepted: {tos_doc.name}")
         else:
@@ -751,6 +753,8 @@ class GroupDashboardView(View):
                     "permission": perm_name, "group": group.name,
                     "source": Grant.SOURCE_MANUAL,
                 })
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(target_user, ds)
                 messages.success(request, f"Granted {perm_name} on {dataset_name} to {email}")
             else:
                 messages.info(request, f"{email} already has {perm_name} on {dataset_name}")
@@ -761,12 +765,16 @@ class GroupDashboardView(View):
                 pk=grant_id, group=group
             ).select_related("user", "dataset", "permission").first()
             if grant:
+                revoked_user = grant.user
+                revoked_dataset = grant.dataset
                 before = {
                     "user": grant.user.email, "dataset": grant.dataset.name,
                     "permission": grant.permission.name, "group": group.name,
                 }
                 grant.delete()
                 log_audit(user, "grant_revoked", "Grant", grant_id, before_state=before)
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(revoked_user, revoked_dataset)
             messages.success(request, "Grant revoked")
 
         elif action == "add_member":
@@ -782,6 +790,8 @@ class GroupDashboardView(View):
                 log_audit(user, "member_added", "UserGroup", membership.pk, after_state={
                     "user": target_user.email, "group": group.name,
                 })
+                from core.iam import sync_group_datasets_for_user
+                sync_group_datasets_for_user(target_user, group)
                 messages.success(request, f"Added {email} to {group.name}")
             else:
                 messages.info(request, f"{email} is already a member of {group.name}")
@@ -806,6 +816,8 @@ class GroupDashboardView(View):
                     "user": target_user.email, "group": group.name,
                 })
                 ug.delete()
+                from core.iam import sync_group_datasets_for_user
+                sync_group_datasets_for_user(target_user, group)
                 messages.success(request, f"Removed {target_user.email} from {group.name}")
             except UserGroup.DoesNotExist:
                 messages.error(request, "Member not found")

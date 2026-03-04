@@ -801,7 +801,7 @@ class TestTOSLandingPublic(_WebTestBase):
 
 @pytest.mark.django_db
 class TestTOSLandingBucketIAM(_WebTestBase):
-    """Bucket IAM provisioning on TOS acceptance."""
+    """Bucket IAM provisioning on TOS acceptance via sync_user_dataset_iam."""
 
     def setUp(self):
         super().setUp()
@@ -827,7 +827,8 @@ class TestTOSLandingBucketIAM(_WebTestBase):
         from unittest.mock import patch
 
         self._login(self.regular_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add:
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
+             patch("ngauth.gcs.remove_user_from_bucket"):
             mock_add.return_value = True
             self.client.post("/web/tos/bucket-tok-789/")
 
@@ -840,12 +841,96 @@ class TestTOSLandingBucketIAM(_WebTestBase):
         from unittest.mock import patch
 
         self._login(self.regular_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add:
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
+             patch("ngauth.gcs.remove_user_from_bucket"):
             mock_add.return_value = True
             self.client.post("/web/tos/bucket-tok-789/")
 
         called_buckets = [c.args[0] for c in mock_add.call_args_list]
         self.assertNotIn("", called_buckets)
+
+
+@pytest.mark.django_db
+class TestGrantIAMSync(_WebTestBase):
+    """Grant create/revoke triggers IAM sync."""
+
+    def setUp(self):
+        super().setUp()
+        DatasetVersion.objects.create(
+            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+        )
+
+    def test_grant_create_triggers_iam_sync(self):
+        from unittest.mock import patch
+
+        self._login(self.sc_key)
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            mock_add.return_value = True
+            self.client.post(f"/web/grants/{self.dataset.name}", {
+                "action": "grant",
+                "email": "regular@example.org",
+                "permission": self.view_perm.pk,
+            })
+        mock_add.assert_called_with("bucket-a", "regular@example.org")
+
+    def test_grant_revoke_triggers_iam_sync(self):
+        from unittest.mock import patch
+
+        g = Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm,
+        )
+        self._login(self.sc_key)
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket") as mock_remove:
+            mock_remove.return_value = True
+            self.client.post(f"/web/grants/{self.dataset.name}", {
+                "action": "revoke", "grant_id": g.pk,
+            })
+        mock_remove.assert_called_with("bucket-a", "regular@example.org")
+
+
+@pytest.mark.django_db
+class TestGroupMembershipIAMSync(_WebTestBase):
+    """Group membership changes trigger IAM sync for group dataset permissions."""
+
+    def setUp(self):
+        super().setUp()
+        DatasetVersion.objects.create(
+            dataset=self.dataset, version="v1", gcs_bucket="bucket-a",
+        )
+        GroupDatasetPermission.objects.create(
+            group=self.group_a, dataset=self.dataset, permission=self.view_perm,
+        )
+
+    def test_add_member_triggers_iam_sync(self):
+        from unittest.mock import patch
+
+        new_user = User.objects.create(email="new@example.org")
+        self._login(self.group_admin_a_key)
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            mock_add.return_value = True
+            self.client.post(f"/web/group/{self.group_a.name}/", {
+                "action": "add_member",
+                "email": "new@example.org",
+            })
+        mock_add.assert_called_with("bucket-a", "new@example.org")
+
+    def test_remove_member_triggers_iam_sync(self):
+        from unittest.mock import patch
+
+        ug = UserGroup.objects.get(user=self.regular_user, group=self.group_a)
+        self._login(self.group_admin_a_key)
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket") as mock_remove:
+            mock_remove.return_value = True
+            self.client.post(f"/web/group/{self.group_a.name}/", {
+                "action": "remove_member",
+                "member_id": ug.pk,
+            })
+        mock_remove.assert_called_with("bucket-a", "regular@example.org")
 
 
 @pytest.mark.django_db
