@@ -13,6 +13,8 @@ from core.models import (
     Group,
     GroupDatasetPermission,
     Permission,
+    PublicRoot,
+    ServiceTable,
     TOSAcceptance,
     TOSDocument,
     User,
@@ -884,3 +886,98 @@ class TestTOSLandingGeneral(_WebTestBase):
         resp = self.client.get("/web/datasets")
         self.assertContains(resp, "/web/tos/link-tok/")
         self.assertNotContains(resp, f"/web/tos/{tos.pk}/accept")
+
+
+# ──────────────────────────────────────────────────────────────
+# Service Table Management
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestServiceTableManagement(_WebTestBase):
+    """Service table CRUD on the public-roots page."""
+
+    def _login(self, api_key):
+        self.client.cookies[settings.AUTH_COOKIE_NAME] = api_key.key
+
+    def test_admin_can_add_service_table(self):
+        self._login(self.sc_key)
+        resp = self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "add_service_table",
+            "service_name": "pychunkedgraph",
+            "table_name": "fly_v31",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(ServiceTable.objects.filter(
+            service_name="pychunkedgraph", table_name="fly_v31", dataset=self.dataset,
+        ).exists())
+
+    def test_admin_can_remove_service_table(self):
+        st = ServiceTable.objects.create(
+            service_name="pcg", table_name="tbl", dataset=self.dataset,
+        )
+        PublicRoot.objects.create(service_table=st, root_id=42)
+        self._login(self.sc_key)
+        resp = self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "remove_service_table",
+            "service_table_id": st.pk,
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(ServiceTable.objects.filter(pk=st.pk).exists())
+        self.assertFalse(PublicRoot.objects.filter(service_table=st).exists())
+
+    def test_manage_user_cannot_add_service_table(self):
+        self._login(self.group_admin_a_key)
+        self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "add_service_table",
+            "service_name": "pcg",
+            "table_name": "tbl",
+        })
+        self.assertFalse(ServiceTable.objects.filter(
+            service_name="pcg", table_name="tbl",
+        ).exists())
+
+    def test_manage_user_cannot_remove_service_table(self):
+        st = ServiceTable.objects.create(
+            service_name="pcg", table_name="tbl", dataset=self.dataset,
+        )
+        self._login(self.group_admin_a_key)
+        self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "remove_service_table",
+            "service_table_id": st.pk,
+        })
+        self.assertTrue(ServiceTable.objects.filter(pk=st.pk).exists())
+
+    def test_add_root_form_hidden_when_no_service_tables(self):
+        self._login(self.sc_key)
+        resp = self.client.get(f"/web/public-roots/{self.dataset.name}")
+        self.assertNotContains(resp, "Add Public Root")
+
+    def test_add_root_form_shown_when_service_tables_exist(self):
+        ServiceTable.objects.create(
+            service_name="pcg", table_name="tbl", dataset=self.dataset,
+        )
+        self._login(self.sc_key)
+        resp = self.client.get(f"/web/public-roots/{self.dataset.name}")
+        self.assertContains(resp, "Add Public Root")
+
+    def test_duplicate_service_table_shows_error(self):
+        ServiceTable.objects.create(
+            service_name="pcg", table_name="tbl", dataset=self.dataset,
+        )
+        self._login(self.sc_key)
+        resp = self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "add_service_table",
+            "service_name": "pcg",
+            "table_name": "tbl",
+        }, follow=True)
+        self.assertContains(resp, "already exists")
+
+    def test_datasets_page_shows_service_tables_button(self):
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.manage_perm,
+        )
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "Service Tables & Roots")

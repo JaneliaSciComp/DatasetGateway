@@ -112,10 +112,12 @@ class DatasetsView(View):
         for d in datasets:
             versions = DatasetVersion.objects.filter(dataset=d)
             can_manage = _can_manage_dataset(user, d)
+            has_service_tables = ServiceTable.objects.filter(dataset=d).exists()
             dataset_list.append({
                 "dataset": d,
                 "versions": versions,
                 "can_manage": can_manage,
+                "has_service_tables": has_service_tables,
             })
 
         return render(request, "web/datasets.html", {
@@ -437,7 +439,7 @@ class GrantManageView(View):
 
 
 class PublicRootManageView(View):
-    """GET/POST /web/public-roots/<slug:dataset> — Public root management."""
+    """GET/POST /web/public-roots/<slug:dataset> — Service table + public root management."""
 
     def get(self, request, dataset):
         user = _get_web_user(request)
@@ -450,11 +452,13 @@ class PublicRootManageView(View):
             return render(request, "web/access_denied.html", {"user": user})
 
         service_tables = ServiceTable.objects.filter(dataset=ds).prefetch_related("public_roots")
+        is_admin_user = _has_dataset_admin(user, ds)
 
         return render(request, "web/public_roots.html", {
             "user": user,
             "dataset": ds,
             "service_tables": service_tables,
+            "is_admin_user": is_admin_user,
         })
 
     def post(self, request, dataset):
@@ -467,24 +471,73 @@ class PublicRootManageView(View):
         if not _can_manage_dataset(user, ds):
             return render(request, "web/access_denied.html", {"user": user})
 
+        is_admin_user = _has_dataset_admin(user, ds)
         action = request.POST.get("action")
 
-        if action == "add":
+        if action == "add_service_table":
+            if not is_admin_user:
+                messages.error(request, "Only dataset administrators can manage service tables")
+                return redirect("web-public-roots", dataset=dataset)
+            service_name = request.POST.get("service_name", "").strip()
+            table_name = request.POST.get("table_name", "").strip()
+            if not service_name or not table_name:
+                messages.error(request, "Service name and table name are required")
+            else:
+                st, created = ServiceTable.objects.get_or_create(
+                    service_name=service_name, table_name=table_name,
+                    defaults={"dataset": ds},
+                )
+                if created:
+                    log_audit(user, "service_table_added", "ServiceTable", st.pk, after_state={
+                        "service_name": service_name, "table_name": table_name, "dataset": ds.name,
+                    })
+                    messages.success(request, f"Added service table {service_name}/{table_name}")
+                else:
+                    messages.error(request, f"Service table {service_name}/{table_name} already exists")
+
+        elif action == "remove_service_table":
+            if not is_admin_user:
+                messages.error(request, "Only dataset administrators can manage service tables")
+                return redirect("web-public-roots", dataset=dataset)
+            st_id = request.POST.get("service_table_id")
+            st = ServiceTable.objects.filter(pk=st_id, dataset=ds).first()
+            if st:
+                before = {
+                    "service_name": st.service_name, "table_name": st.table_name,
+                    "dataset": ds.name,
+                }
+                st.delete()
+                log_audit(user, "service_table_removed", "ServiceTable", st_id, before_state=before)
+                messages.success(request, f"Removed service table {before['service_name']}/{before['table_name']}")
+
+        elif action == "add":
             table_id = request.POST.get("service_table")
             root_id_str = request.POST.get("root_id", "").strip()
             try:
                 root_id = int(root_id_str)
                 st = ServiceTable.objects.get(pk=table_id, dataset=ds)
-                PublicRoot.objects.get_or_create(service_table=st, root_id=root_id)
+                pr, created = PublicRoot.objects.get_or_create(service_table=st, root_id=root_id)
+                if created:
+                    log_audit(user, "public_root_added", "PublicRoot", pr.pk, after_state={
+                        "service_table": f"{st.service_name}/{st.table_name}",
+                        "root_id": root_id, "dataset": ds.name,
+                    })
                 messages.success(request, f"Added public root {root_id}")
             except (ValueError, ServiceTable.DoesNotExist):
                 messages.error(request, "Invalid service table or root ID")
 
         elif action == "remove":
             pr_id = request.POST.get("public_root_id")
-            PublicRoot.objects.filter(
+            pr = PublicRoot.objects.filter(
                 pk=pr_id, service_table__dataset=ds
-            ).delete()
+            ).select_related("service_table").first()
+            if pr:
+                before = {
+                    "service_table": f"{pr.service_table.service_name}/{pr.service_table.table_name}",
+                    "root_id": pr.root_id, "dataset": ds.name,
+                }
+                pr.delete()
+                log_audit(user, "public_root_removed", "PublicRoot", pr_id, before_state=before)
             messages.success(request, "Removed public root")
 
         return redirect("web-public-roots", dataset=dataset)

@@ -14,6 +14,8 @@ from core.models import (
     Group,
     GroupDatasetPermission,
     Permission,
+    PublicRoot,
+    ServiceTable,
     TOSAcceptance,
     TOSDocument,
     User,
@@ -274,3 +276,67 @@ class TestTOSLandingAudit(_AuditWebBase):
         self.client.post("/web/tos/tos-tok/")
         assert AuditLog.objects.filter(action="tos_accepted").count() == 1
         assert AuditLog.objects.filter(action="grant_created").count() == 1
+
+
+# ──────────────────────────────────────────────────────────────
+# Service Table & Public Root audit tests
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestServiceTableAudit(_AuditWebBase):
+    def test_add_service_table_audit(self):
+        self._login(self.sc_key)
+        self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "add_service_table",
+            "service_name": "pcg",
+            "table_name": "tbl",
+        })
+        entry = AuditLog.objects.get(action="service_table_added")
+        assert entry.actor == self.sc_user
+        assert entry.after_state["service_name"] == "pcg"
+        assert entry.after_state["table_name"] == "tbl"
+        assert entry.after_state["dataset"] == "ds"
+
+    def test_remove_service_table_audit(self):
+        st = ServiceTable.objects.create(
+            service_name="pcg", table_name="tbl", dataset=self.dataset,
+        )
+        self._login(self.sc_key)
+        self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "remove_service_table",
+            "service_table_id": st.pk,
+        })
+        entry = AuditLog.objects.get(action="service_table_removed")
+        assert entry.actor == self.sc_user
+        assert entry.before_state["service_name"] == "pcg"
+        assert entry.before_state["table_name"] == "tbl"
+
+    def test_add_public_root_audit(self):
+        st = ServiceTable.objects.create(
+            service_name="pcg", table_name="tbl", dataset=self.dataset,
+        )
+        self._login(self.sc_key)
+        self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "add",
+            "service_table": st.pk,
+            "root_id": "999",
+        })
+        entry = AuditLog.objects.get(action="public_root_added")
+        assert entry.actor == self.sc_user
+        assert entry.after_state["root_id"] == 999
+        assert entry.after_state["dataset"] == "ds"
+
+    def test_remove_public_root_audit(self):
+        st = ServiceTable.objects.create(
+            service_name="pcg", table_name="tbl", dataset=self.dataset,
+        )
+        pr = PublicRoot.objects.create(service_table=st, root_id=42)
+        self._login(self.sc_key)
+        self.client.post(f"/web/public-roots/{self.dataset.name}", {
+            "action": "remove",
+            "public_root_id": pr.pk,
+        })
+        entry = AuditLog.objects.get(action="public_root_removed")
+        assert entry.actor == self.sc_user
+        assert entry.before_state["root_id"] == 42

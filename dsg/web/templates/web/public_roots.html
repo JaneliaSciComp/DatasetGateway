@@ -1,8 +1,48 @@
 {% extends "web/base.html" %}
-{% block title %}Public Roots: {{ dataset.name }} — DatasetGateway{% endblock %}
+{% block title %}Service Tables & Public Roots: {{ dataset.name }} — DatasetGateway{% endblock %}
 {% block content %}
-<h1>Public Roots: {{ dataset.name }}</h1>
+<h1>Service Tables & Public Roots: {{ dataset.name }}</h1>
 
+<h2>Service Tables</h2>
+{% if is_admin_user %}
+<form method="post">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="add_service_table">
+    <input type="text" name="service_name" placeholder="Service name" required>
+    <input type="text" name="table_name" placeholder="Table name" required>
+    <button type="submit" class="btn btn-sm">Add Service Table</button>
+</form>
+{% endif %}
+
+{% if service_tables %}
+<table>
+    <tr><th>Service</th><th>Table</th>{% if is_admin_user %}<th></th>{% endif %}</tr>
+    {% for st in service_tables %}
+    <tr>
+        <td>{{ st.service_name }}</td>
+        <td>{{ st.table_name }}</td>
+        {% if is_admin_user %}
+        <td>
+            <form method="post" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="remove_service_table">
+                <input type="hidden" name="service_table_id" value="{{ st.pk }}">
+                <button type="submit" class="btn btn-danger btn-sm">Remove</button>
+            </form>
+        </td>
+        {% endif %}
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+    {% if is_admin_user %}
+    <p>No service tables configured. Use the form above to add one.</p>
+    {% else %}
+    <p>No service tables configured. A dataset administrator can add them.</p>
+    {% endif %}
+{% endif %}
+
+{% if service_tables %}
 <h2>Add Public Root</h2>
 <form method="post">
     {% csrf_token %}
@@ -39,4 +79,5 @@
 <p>No public roots.</p>
 {% endif %}
 {% endfor %}
+{% endif %}
 {% endblock %}
