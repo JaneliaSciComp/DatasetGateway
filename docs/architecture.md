@@ -247,12 +247,18 @@ in the current codebase.
 - scim_id, external_id (SCIM 2.0 identifiers)
 - owner/creator user or group *(not yet implemented)*
 
+**DatasetBucket**
+- id
+- dataset (FK to Dataset)
+- name (string, GCS bucket name)
+- unique constraint on (dataset, name)
+
 **DatasetVersion**
 - id
 - dataset (FK to Dataset)
 - version (string, e.g., "v1", "2026-01")
 - description *(not yet implemented)*
-- gcs_bucket (string)
+- buckets (M2M to DatasetBucket)
 - prefix (string, optional path within bucket)
 - is_public (boolean)
 - unique constraint on (dataset, version)
@@ -376,9 +382,11 @@ automatically.
 
 ### Dataset mapping
 
-Each dataset version maps to a GCS bucket (and optionally a path
-prefix). This mapping determines which bucket a user gets access to
-when they are granted permission on a dataset version.
+GCS buckets are associated with a dataset via the DatasetBucket model.
+Each dataset version can link to multiple buckets (M2M), and multiple
+versions can share the same bucket. This mapping determines which
+buckets a user gets access to when they are granted permission on a
+dataset.
 
 ---
 

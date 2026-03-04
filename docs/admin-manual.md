@@ -162,9 +162,10 @@ Each row is a dataset. Key fields:
 
 **Inline sections on the Dataset detail page:**
 
-- **Dataset versions** — the versioned releases. Each version maps to a
-  GCS bucket. The `gcs_bucket` field is used for IAM provisioning and
-  Neuroglancer token issuance.
+- **Dataset buckets** — the GCS buckets associated with this dataset.
+  Used for IAM provisioning and Neuroglancer token issuance.
+- **Dataset versions** — the versioned releases. Each version can be
+  linked to one or more dataset buckets via the Buckets M2M field.
 - **Grants** — users with `admin` permission on this dataset can manage
   all grants via the web UI. Team leads (users with `manage` permission)
   can manage grants within their group via the team dashboard.
@@ -180,7 +181,7 @@ datasets.
 | Field | Meaning |
 |-------|---------|
 | **Version** | Version string (e.g., `v1`, `2026-01`). |
-| **Gcs bucket** | The Google Cloud Storage bucket holding this version's data. Used for IAM provisioning and Neuroglancer GCS token generation. |
+| **Buckets** | The GCS buckets linked to this version (selected from the dataset's bucket list). |
 | **Prefix** | Optional path prefix within the bucket. |
 | **Is public** | Whether this version's data is publicly readable (no auth needed). |
 

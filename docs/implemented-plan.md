@@ -110,7 +110,8 @@ Port from CAVE's SQLAlchemy models + Architecture.md extensions:
 - **UserGroup** — M:M through (`user`, `group`, `is_admin`)
 - **Permission** — `name` (view, edit)
 - **Dataset** — `name` (slug), `description`, `tos` (FK), `scim_id`, `external_id`
-- **DatasetVersion** — `dataset` (FK), `version`, `gcs_bucket`, `prefix`, `is_public`
+- **DatasetBucket** — `dataset` (FK), `name` (GCS bucket name), unique on (dataset, name)
+- **DatasetVersion** — `dataset` (FK), `version`, `buckets` (M2M to DatasetBucket), `prefix`, `is_public`
 - **DatasetAdmin** — `user` (FK), `dataset` (FK)
 - **GroupDatasetPermission** — `group`, `dataset`, `permission`
 - **Grant** — `user`, `dataset`, `dataset_version` (nullable=all versions), `permission`, `granted_by`

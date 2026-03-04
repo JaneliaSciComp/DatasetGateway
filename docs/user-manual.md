@@ -170,16 +170,18 @@ If the dataset requires users to accept terms before accessing data:
      responses and URL paths. Use lowercase, no spaces.
    - **Description** — optional human-readable description
    - **Tos** — select the TOS document if one is required
-3. On the same page, add **Dataset versions** inline:
+3. On the same page, add **Dataset buckets** inline:
+   - **Name** — the GCS bucket name for this dataset's data
+4. Add **Dataset versions** inline:
    - **Version** — version string (e.g., `v1`, `2026-01`)
-   - **Gcs bucket** — the GCS bucket for this version's data
+   - **Buckets** — select which of the dataset's buckets this version uses
    - **Prefix** — optional path prefix within the bucket
    - **Is public** — whether this version is publicly accessible
-4. Optionally add **Dataset admins** inline — users who can manage grants
+5. Optionally add **Dataset admins** inline — users who can manage grants
    for this dataset via the web UI
-5. Optionally add **Service tables** inline — maps CAVE service/table
+6. Optionally add **Service tables** inline — maps CAVE service/table
    names to this dataset (needed for CAVE API compatibility)
-6. Save
+7. Save
 
 ### 4. Set up group access
 
