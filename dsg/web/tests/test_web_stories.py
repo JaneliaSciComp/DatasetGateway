@@ -650,7 +650,7 @@ class TestMyAccountDashboard(_WebTestBase):
     def test_shows_groups_you_administer(self):
         self._login(self.group_admin_a_key)
         resp = self.client.get("/web/my-account")
-        self.assertContains(resp, "Groups You Administer")
+        self.assertContains(resp, "My Groups")
         self.assertContains(resp, "alpha-lab")
         self.assertContains(resp, "Manage Group")
 

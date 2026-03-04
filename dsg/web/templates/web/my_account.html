@@ -26,14 +26,14 @@
 <p>No dataset access.</p>
 {% endif %}
 
-{% if groups_admin %}
-<h2>Groups You Administer</h2>
+{% if groups %}
+<h2>My Groups</h2>
 <table>
     <tr><th>Group</th><th></th></tr>
-    {% for t in groups_admin %}
+    {% for g in groups %}
     <tr>
-        <td>{{ t }}</td>
-        <td><a href="/web/group/{{ t }}/" class="btn btn-sm">Manage Group</a></td>
+        <td>{{ g }}</td>
+        <td>{% if g in groups_admin %}<a href="/web/group/{{ g }}/" class="btn btn-sm">Manage Group</a>{% endif %}</td>
     </tr>
     {% endfor %}
 </table>
