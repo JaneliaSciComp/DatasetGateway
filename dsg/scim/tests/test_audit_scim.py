@@ -106,9 +106,9 @@ class TestSCIMUserAudit(TestCase):
         self.client.delete(
             f"/auth/scim/v2/Users/{user.scim_id}", **self._auth(),
         )
-        entry = AuditLog.objects.get(action="user_deactivated")
+        entry = AuditLog.objects.get(action="user_deleted")
         assert entry.before_state["email"] == "del@example.org"
-        assert entry.before_state["is_active"] is True
+        assert entry.before_state["name"] == "del"
 
 
 @pytest.mark.django_db

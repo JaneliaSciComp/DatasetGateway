@@ -19,7 +19,7 @@ def log_audit(actor, action, target_type, target_id, *, before_state=None, after
     actor : User | None
         The user who performed the action.
     action : str
-        Short verb, e.g. ``"grant_created"``, ``"user_deactivated"``.
+        Short verb, e.g. ``"grant_created"``, ``"user_deleted"``.
     target_type : str
         Model name, e.g. ``"Grant"``, ``"User"``, ``"Group"``.
     target_id : str | int

@@ -27,6 +27,7 @@ class TestSCIMDiscovery(TestCase):
         data = resp.json()
         self.assertTrue(data["filter"]["supported"])
         self.assertTrue(data["patch"]["supported"])
+        self.assertTrue(data["etag"]["supported"])
 
     def test_resource_types(self):
         resp = self.client.get("/auth/scim/v2/ResourceTypes", **self._auth())
@@ -38,6 +39,31 @@ class TestSCIMDiscovery(TestCase):
         resp = self.client.get("/auth/scim/v2/Schemas", **self._auth())
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(len(resp.json()), 4)  # User, Extension, Group, Dataset
+
+    def test_etag_in_meta(self):
+        from scim.utils import generate_scim_id
+
+        # User meta should have version
+        user = User.objects.create(email="etag@example.org", name="etag")
+        user.scim_id = generate_scim_id(user.pk, "User")
+        user.save(update_fields=["scim_id"])
+        resp = self.client.get(f"/auth/scim/v2/Users/{user.scim_id}", **self._auth())
+        self.assertIn("version", resp.json()["meta"])
+        self.assertTrue(resp.json()["meta"]["version"].startswith('W/"'))
+
+        # Group meta should have version
+        group = Group.objects.create(name="etag-grp")
+        group.scim_id = generate_scim_id(group.pk, "Group")
+        group.save(update_fields=["scim_id"])
+        resp = self.client.get(f"/auth/scim/v2/Groups/{group.scim_id}", **self._auth())
+        self.assertIn("version", resp.json()["meta"])
+
+        # Dataset meta should have version
+        ds = Dataset.objects.create(name="etag-ds")
+        ds.scim_id = generate_scim_id(ds.pk, "Dataset")
+        ds.save(update_fields=["scim_id"])
+        resp = self.client.get(f"/auth/scim/v2/Datasets/{ds.scim_id}", **self._auth())
+        self.assertIn("version", resp.json()["meta"])
 
 
 @pytest.mark.django_db
@@ -153,7 +179,64 @@ class TestSCIMUserCRUD(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["displayName"], "Patched")
 
-    def test_delete_user_deactivates(self):
+    def test_patch_add_group(self):
+        user = User.objects.create(email="grpmem@example.org", name="grpmem")
+        from scim.utils import generate_scim_id
+        user.scim_id = generate_scim_id(user.pk, "User")
+        user.save(update_fields=["scim_id"])
+
+        group = Group.objects.create(name="scientists")
+        group.scim_id = generate_scim_id(group.pk, "Group")
+        group.save(update_fields=["scim_id"])
+
+        resp = self.client.patch(
+            f"/auth/scim/v2/Users/{user.scim_id}",
+            {
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {
+                        "op": "add",
+                        "path": "groups",
+                        "value": [{"value": group.scim_id}],
+                    }
+                ],
+            },
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(UserGroup.objects.filter(user=user, group=group).exists())
+
+    def test_patch_remove_group(self):
+        user = User.objects.create(email="rmgrp@example.org", name="rmgrp")
+        from scim.utils import generate_scim_id
+        user.scim_id = generate_scim_id(user.pk, "User")
+        user.save(update_fields=["scim_id"])
+
+        group = Group.objects.create(name="toremove")
+        group.scim_id = generate_scim_id(group.pk, "Group")
+        group.save(update_fields=["scim_id"])
+
+        UserGroup.objects.create(user=user, group=group)
+
+        resp = self.client.patch(
+            f"/auth/scim/v2/Users/{user.scim_id}",
+            {
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {
+                        "op": "remove",
+                        "path": f'groups[value eq "{group.scim_id}"]',
+                    }
+                ],
+            },
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(UserGroup.objects.filter(user=user, group=group).exists())
+
+    def test_delete_user(self):
         user = User.objects.create(email="del@example.org", name="del")
         from scim.utils import generate_scim_id
         user.scim_id = generate_scim_id(user.pk, "User")
@@ -163,10 +246,7 @@ class TestSCIMUserCRUD(TestCase):
             f"/auth/scim/v2/Users/{user.scim_id}", **self._auth()
         )
         self.assertEqual(resp.status_code, 204)
-
-        # User should be deactivated, not deleted
-        user.refresh_from_db()
-        self.assertFalse(user.is_active)
+        self.assertFalse(User.objects.filter(pk=user.pk).exists())
 
     def test_get_nonexistent_user(self):
         resp = self.client.get(
@@ -312,6 +392,67 @@ class TestSCIMDatasetCRUD(TestCase):
         resp = self.client.get("/auth/scim/v2/Datasets", **self._auth())
         self.assertEqual(resp.status_code, 200)
         self.assertGreaterEqual(resp.json()["totalResults"], 2)
+
+    def test_patch_add_service_table(self):
+        ds = Dataset.objects.create(name="patch-st")
+        from scim.utils import generate_scim_id
+        ds.scim_id = generate_scim_id(ds.pk, "Dataset")
+        ds.save(update_fields=["scim_id"])
+
+        resp = self.client.patch(
+            f"/auth/scim/v2/Datasets/{ds.scim_id}",
+            {
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {
+                        "op": "add",
+                        "path": "serviceTables",
+                        "value": [
+                            {"serviceName": "annotation", "tableName": "patch_tbl"},
+                        ],
+                    }
+                ],
+            },
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(
+            ServiceTable.objects.filter(
+                dataset=ds, service_name="annotation", table_name="patch_tbl"
+            ).exists()
+        )
+
+    def test_patch_remove_service_table(self):
+        ds = Dataset.objects.create(name="rm-st")
+        from scim.utils import generate_scim_id
+        ds.scim_id = generate_scim_id(ds.pk, "Dataset")
+        ds.save(update_fields=["scim_id"])
+
+        ServiceTable.objects.create(
+            dataset=ds, service_name="pychunkedgraph", table_name="rm_tbl"
+        )
+
+        resp = self.client.patch(
+            f"/auth/scim/v2/Datasets/{ds.scim_id}",
+            {
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {
+                        "op": "remove",
+                        "path": 'serviceTables[serviceName eq "pychunkedgraph"]',
+                    }
+                ],
+            },
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(
+            ServiceTable.objects.filter(
+                dataset=ds, service_name="pychunkedgraph"
+            ).exists()
+        )
 
     def test_delete_dataset(self):
         ds = Dataset.objects.create(name="to-delete")

@@ -51,7 +51,7 @@ class ServiceProviderConfigView(SCIMBaseView):
             "filter": {"supported": True, "maxResults": 1000},
             "changePassword": {"supported": False},
             "sort": {"supported": False},
-            "etag": {"supported": False},
+            "etag": {"supported": True},
             "authenticationSchemes": [
                 {
                     "type": "oauthbearertoken",
@@ -244,7 +244,34 @@ class UserDetailView(SCIMBaseView):
             path = op.get("path", "")
             value = op.get("value")
 
-            if op_type == "replace":
+            if op_type == "add" and path == "groups":
+                for item in (value if isinstance(value, list) else [value]):
+                    group_scim_id = item.get("value") if isinstance(item, dict) else item
+                    try:
+                        group = Group.objects.get(scim_id=group_scim_id)
+                        _, created = UserGroup.objects.get_or_create(user=user, group=group)
+                        if created:
+                            log_audit(request.user, "member_added", "UserGroup",
+                                      f"{user.pk}:{group.pk}",
+                                      after_state={"user": user.email, "group": group.name})
+                    except Group.DoesNotExist:
+                        pass
+
+            elif op_type == "remove" and path.startswith("groups"):
+                import re
+                match = re.search(r'value\s+eq\s+"([^"]+)"', path)
+                if match:
+                    group_scim_id = match.group(1)
+                    ug = UserGroup.objects.filter(
+                        user=user, group__scim_id=group_scim_id
+                    ).select_related("group").first()
+                    if ug:
+                        log_audit(request.user, "member_removed", "UserGroup",
+                                  f"{user.pk}:{ug.group.pk}",
+                                  before_state={"user": user.email, "group": ug.group.name})
+                        ug.delete()
+
+            elif op_type == "replace":
                 if isinstance(value, dict):
                     fields = UserSCIMSerializer.from_scim(value)
                 elif path:
@@ -267,12 +294,10 @@ class UserDetailView(SCIMBaseView):
         if not user:
             return scim_error(404, detail="User not found")
 
-        log_audit(request.user, "user_deactivated", "User", user.pk, before_state={
-            "email": user.email, "is_active": True,
+        log_audit(request.user, "user_deleted", "User", user.pk, before_state={
+            "email": user.email, "name": user.name, "admin": user.admin,
         })
-        # Deactivate rather than delete (preserves audit trail)
-        user.is_active = False
-        user.save(update_fields=["is_active"])
+        user.delete()
         return Response(status=204)
 
 
@@ -566,10 +591,40 @@ class DatasetDetailView(SCIMBaseView):
         operations = request.data.get("Operations", [])
         for op in operations:
             op_type = op.get("op", "").lower()
+            path = op.get("path", "")
             value = op.get("value")
 
-            if op_type == "replace" and isinstance(value, dict):
-                fields = DatasetSCIMSerializer.from_scim(value)
+            if op_type == "add" and path == "serviceTables":
+                for st_data in (value if isinstance(value, list) else [value]):
+                    service_name = st_data.get("serviceName", "")
+                    table_name = st_data.get("tableName", "")
+                    if service_name and table_name:
+                        ServiceTable.objects.update_or_create(
+                            service_name=service_name,
+                            table_name=table_name,
+                            defaults={"dataset": dataset},
+                        )
+
+            elif op_type == "remove" and path.startswith("serviceTables"):
+                import re
+                # serviceTables[serviceName eq "x"]
+                sn_match = re.search(r'serviceName\s+eq\s+"([^"]+)"', path)
+                tn_match = re.search(r'tableName\s+eq\s+"([^"]+)"', path)
+                filters = {"dataset": dataset}
+                if sn_match:
+                    filters["service_name"] = sn_match.group(1)
+                if tn_match:
+                    filters["table_name"] = tn_match.group(1)
+                if len(filters) > 1:  # must have at least one filter beyond dataset
+                    ServiceTable.objects.filter(**filters).delete()
+
+            elif op_type == "replace":
+                if isinstance(value, dict):
+                    fields = DatasetSCIMSerializer.from_scim(value)
+                elif path:
+                    fields = DatasetSCIMSerializer.from_scim({path: value})
+                else:
+                    fields = {}
                 for k, v in fields.items():
                     setattr(dataset, k, v)
 

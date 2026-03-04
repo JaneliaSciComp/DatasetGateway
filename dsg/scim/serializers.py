@@ -56,6 +56,7 @@ class UserSCIMSerializer:
                 "resourceType": "User",
                 "created": format_datetime(user.created),
                 "lastModified": format_datetime(user.updated),
+                "version": f'W/"{format_datetime(user.updated)}"',
                 "location": f"{base_url}/v2/Users/{scim_id}" if base_url else "",
             },
         }
@@ -111,6 +112,7 @@ class GroupSCIMSerializer:
             "displayName": group.name,
             "meta": {
                 "resourceType": "Group",
+                "version": f'W/"{scim_id}"',
                 "location": f"{base_url}/v2/Groups/{scim_id}" if base_url else "",
             },
         }
@@ -165,6 +167,7 @@ class DatasetSCIMSerializer:
             "serviceTables": service_tables,
             "meta": {
                 "resourceType": "Dataset",
+                "version": f'W/"{scim_id}"',
                 "location": f"{base_url}/v2/Datasets/{scim_id}" if base_url else "",
             },
         }
