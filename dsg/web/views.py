@@ -254,9 +254,13 @@ class MyAccountView(View):
 
         perm_cache = build_permission_cache(user)
 
-        # Groups
-        groups = perm_cache["groups"]
-        groups_admin = perm_cache["groups_admin"]
+        # Groups — global admins can manage any group
+        if user.admin:
+            groups = list(Group.objects.values_list("name", flat=True).order_by("name"))
+            groups_admin = groups
+        else:
+            groups = perm_cache["groups"]
+            groups_admin = perm_cache["groups_admin"]
 
         # Missing TOS — enrich with invite_token for link generation
         missing_tos = perm_cache["missing_tos"]

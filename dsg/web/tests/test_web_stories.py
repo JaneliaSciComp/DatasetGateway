@@ -660,6 +660,18 @@ class TestMyAccountDashboard(_WebTestBase):
         resp = self.client.get("/web/my-account")
         self.assertContains(resp, "sc")
 
+    def test_global_admin_sees_all_groups_with_manage_links(self):
+        self._login(self.global_admin_key)
+        resp = self.client.get("/web/my-account")
+        # Global admin should see all groups, even those they're not a member of
+        self.assertContains(resp, "alpha-lab")
+        self.assertContains(resp, "beta-lab")
+        self.assertContains(resp, "sc")
+        # And should have Manage Group links for all of them
+        self.assertContains(resp, '/web/group/alpha-lab/')
+        self.assertContains(resp, '/web/group/beta-lab/')
+        self.assertContains(resp, '/web/group/sc/')
+
     def test_shows_missing_tos_with_invite_token(self):
         tos = TOSDocument.objects.create(
             name="Test TOS", text="Terms here", dataset=self.dataset,
