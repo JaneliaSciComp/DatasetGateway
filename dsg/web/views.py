@@ -54,6 +54,13 @@ def _can_manage_dataset(user, dataset):
     ).exists()
 
 
+def _is_group_admin(user, group):
+    """Check if user is admin of a group, or is global admin."""
+    if user.admin:
+        return True
+    return UserGroup.objects.filter(user=user, group=group, is_admin=True).exists()
+
+
 def _get_web_user(request):
     """Get user from session or dsg_token cookie."""
     # 1. Session email
@@ -673,7 +680,7 @@ class GroupDashboardView(View):
         if not user:
             return None, None, redirect("/auth/login")
         group = get_object_or_404(Group, name=group_name)
-        if not (user.admin or UserGroup.objects.filter(user=user, group=group, is_admin=True).exists()):
+        if not _is_group_admin(user, group):
             return user, group, render(request, "web/access_denied.html", {"user": user})
         return user, group, None
 
@@ -684,11 +691,14 @@ class GroupDashboardView(View):
 
         members = UserGroup.objects.filter(group=group).select_related("user").order_by("user__email")
 
-        # Datasets the group admin can manage (has manage or admin grant)
-        managed_dataset_ids = Grant.objects.filter(
-            user=user, permission__name__in=["admin", "manage"]
-        ).values_list("dataset_id", flat=True)
-        managed_datasets = Dataset.objects.filter(pk__in=managed_dataset_ids).order_by("name")
+        # Datasets the group admin can manage
+        if user.admin:
+            managed_datasets = Dataset.objects.all().order_by("name")
+        else:
+            managed_dataset_ids = Grant.objects.filter(
+                user=user, permission__name__in=["admin", "manage"]
+            ).values_list("dataset_id", flat=True)
+            managed_datasets = Dataset.objects.filter(pk__in=managed_dataset_ids).order_by("name")
 
         # Grants scoped to this group on managed datasets
         group_grants = Grant.objects.filter(

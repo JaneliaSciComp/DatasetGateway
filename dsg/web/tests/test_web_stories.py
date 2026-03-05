@@ -445,6 +445,25 @@ class TestGlobalAdmin(_WebTestBase):
         resp = self.client.get(f"/web/group/{self.group_a.name}/")
         self.assertEqual(resp.status_code, 200)
 
+    def test_global_admin_sees_all_datasets_in_group_dashboard(self):
+        self._login(self.global_admin_key)
+        resp = self.client.get(f"/web/group/{self.group_a.name}/")
+        # Global admin should see all datasets in the grant dropdown
+        self.assertContains(resp, self.dataset.name)
+
+    def test_global_admin_can_grant_via_group_dashboard(self):
+        self._login(self.global_admin_key)
+        resp = self.client.post(f"/web/group/{self.group_a.name}/", {
+            "action": "grant",
+            "email": "regular@example.org",
+            "dataset": self.dataset.name,
+            "permission": "view",
+        }, follow=True)
+        self.assertTrue(Grant.objects.filter(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm, group=self.group_a,
+        ).exists())
+
     def test_global_admin_can_access_unassigned_dataset(self):
         other_ds = Dataset.objects.create(name="other-dataset")
         self._login(self.global_admin_key)
