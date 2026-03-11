@@ -116,6 +116,13 @@ class DatasetsView(View):
             )
             datasets = Dataset.objects.filter(pk__in=granted_ids).order_by("name")
 
+        # TOS IDs the current user has already accepted
+        accepted_tos_ids = set(
+            TOSAcceptance.objects.filter(user=user).values_list(
+                "tos_document_id", flat=True
+            )
+        )
+
         dataset_list = []
         for d in datasets:
             versions = DatasetVersion.objects.filter(dataset=d).prefetch_related("buckets")
@@ -127,6 +134,9 @@ class DatasetsView(View):
                 .select_related("service")
                 .order_by("service__name", "name")
             )
+            # Annotate each TOS doc with acceptance status
+            for tos in tos_docs:
+                tos.accepted = tos.pk in accepted_tos_ids
             dataset_list.append({
                 "dataset": d,
                 "versions": versions,

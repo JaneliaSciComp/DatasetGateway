@@ -10,12 +10,20 @@
 
     {% for tos in item.tos_docs %}
         <p>
+            {% if tos.accepted %}
+                <span title="Accepted" style="color:#34a853;">&#x2713;</span>
+            {% else %}
+                <span title="Acceptance needed" style="color:#d93025;font-size:1.2em;">&#x26A0;&#xFE0F;</span>
+            {% endif %}
             {% if tos.service %}
                 TOS ({{ tos.service.display_name|default:tos.service.name }}):
             {% else %}
                 TOS:
             {% endif %}
             <a href="/web/tos/{{ tos.invite_token }}/">{{ tos.name }}</a>
+            {% if not tos.accepted %}
+                <span style="color:#d93025;font-size:12px;font-weight:bold;margin-left:5px;">— acceptance needed</span>
+            {% endif %}
             <span style="color:#999;font-size:12px;margin-left:5px;">{{ request.get_host }}/web/tos/{{ tos.invite_token }}/</span>
         </p>
     {% endfor %}
