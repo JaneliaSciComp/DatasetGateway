@@ -19,11 +19,12 @@ class UserCacheView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        service = request.query_params.get("service")
         cache = getattr(request, "permission_cache", None)
-        if cache is None:
+        if cache is None or service:
             from core.cache import build_permission_cache
 
-            cache = build_permission_cache(request.user)
+            cache = build_permission_cache(request.user, service=service)
         return Response(cache)
 
 

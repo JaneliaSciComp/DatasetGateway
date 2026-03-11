@@ -12,6 +12,7 @@ from core.models import (
     Group,
     GroupDatasetPermission,
     Permission,
+    Service,
     TOSAcceptance,
     TOSDocument,
     User,
@@ -128,3 +129,86 @@ class TestUserCacheView(TestCase):
         resp = self.client.get(f"/api/v1/user/cache?dsg_token={self.api_key.key}")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["email"], "alice@example.org")
+
+    def test_service_tos_filtering(self):
+        """Service-specific TOS blocks permissions_v2 when not accepted."""
+        view_perm = Permission.objects.create(name="view")
+        dataset = Dataset.objects.create(name="fish2")
+        group = Group.objects.create(name="fish-team")
+        UserGroup.objects.create(user=self.user, group=group)
+        GroupDatasetPermission.objects.create(group=group, dataset=dataset, permission=view_perm)
+
+        svc = Service.objects.create(name="celltyping", display_name="Cell Typing")
+        TOSDocument.objects.create(
+            name="Celltyping TOS", text="Service terms.", dataset=dataset, service=svc,
+        )
+
+        # Without ?service, fish2 should appear (no general dataset TOS)
+        resp = self.client.get("/api/v1/user/cache", **self._auth_header())
+        data = resp.json()
+        self.assertIn("fish2", data["permissions_v2"])
+        self.assertEqual(data["missing_tos"], [])
+
+        # With ?service=celltyping, fish2 should be blocked
+        cache.clear()
+        resp = self.client.get("/api/v1/user/cache?service=celltyping", **self._auth_header())
+        data = resp.json()
+        self.assertNotIn("fish2", data["permissions_v2"])
+        self.assertTrue(any(
+            m["dataset_name"] == "fish2" and m.get("service") == "celltyping"
+            for m in data["missing_tos"]
+        ))
+
+    def test_service_tos_accepted_then_visible(self):
+        """After accepting service-specific TOS, dataset appears in permissions_v2."""
+        view_perm = Permission.objects.create(name="view")
+        dataset = Dataset.objects.create(name="fish2")
+        group = Group.objects.create(name="fish-team")
+        UserGroup.objects.create(user=self.user, group=group)
+        GroupDatasetPermission.objects.create(group=group, dataset=dataset, permission=view_perm)
+
+        svc = Service.objects.create(name="celltyping", display_name="Cell Typing")
+        tos = TOSDocument.objects.create(
+            name="Celltyping TOS", text="Service terms.", dataset=dataset, service=svc,
+        )
+        TOSAcceptance.objects.create(user=self.user, tos_document=tos)
+
+        cache.clear()
+        resp = self.client.get("/api/v1/user/cache?service=celltyping", **self._auth_header())
+        data = resp.json()
+        self.assertIn("fish2", data["permissions_v2"])
+        self.assertFalse(any(
+            m.get("service") == "celltyping" for m in data["missing_tos"]
+        ))
+
+    def test_both_general_and_service_tos(self):
+        """Both general and service TOS must be accepted for access."""
+        view_perm = Permission.objects.create(name="view")
+        general_tos = TOSDocument.objects.create(name="General TOS", text="General terms.")
+        dataset = Dataset.objects.create(name="fish2", tos=general_tos)
+        Grant.objects.create(user=self.user, dataset=dataset, permission=view_perm)
+
+        svc = Service.objects.create(name="celltyping")
+        svc_tos = TOSDocument.objects.create(
+            name="CT TOS", text="CT terms.", dataset=dataset, service=svc,
+        )
+
+        # Neither accepted → blocked
+        cache.clear()
+        resp = self.client.get("/api/v1/user/cache?service=celltyping", **self._auth_header())
+        data = resp.json()
+        self.assertNotIn("fish2", data["permissions_v2"])
+
+        # Accept only general TOS → still blocked by service TOS
+        TOSAcceptance.objects.create(user=self.user, tos_document=general_tos)
+        cache.clear()
+        resp = self.client.get("/api/v1/user/cache?service=celltyping", **self._auth_header())
+        data = resp.json()
+        self.assertNotIn("fish2", data["permissions_v2"])
+
+        # Accept service TOS too → now visible
+        TOSAcceptance.objects.create(user=self.user, tos_document=svc_tos)
+        cache.clear()
+        resp = self.client.get("/api/v1/user/cache?service=celltyping", **self._auth_header())
+        data = resp.json()
+        self.assertIn("fish2", data["permissions_v2"])

@@ -14,6 +14,7 @@ from core.models import (
     Group,
     GroupDatasetPermission,
     Permission,
+    Service,
     TOSAcceptance,
     TOSDocument,
     User,
@@ -284,6 +285,62 @@ class TestAuthorizeDecisionView(TestCase):
         resp = self.client.post(
             "/api/v1/check-access",
             {"dataset": "versioned", "version": "v1", "permission": "view"},
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["allowed"])
+
+    def test_service_tos_required(self):
+        """Service-specific TOS blocks access via check-access."""
+        svc = Service.objects.create(name="celltyping")
+        svc_tos = TOSDocument.objects.create(
+            name="CT TOS", text="CT terms.", dataset=self.ds, service=svc,
+        )
+        cache.clear()
+
+        resp = self.client.post(
+            "/api/v1/check-access",
+            {"dataset": "fish2", "permission": "view", "service": "celltyping"},
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertFalse(data["allowed"])
+        self.assertEqual(data["reason"], "tos_required")
+        self.assertEqual(data["tos_id"], svc_tos.pk)
+        self.assertEqual(data["service"], "celltyping")
+
+    def test_service_tos_accepted(self):
+        """After accepting service TOS, check-access allows."""
+        svc = Service.objects.create(name="celltyping")
+        svc_tos = TOSDocument.objects.create(
+            name="CT TOS", text="CT terms.", dataset=self.ds, service=svc,
+        )
+        TOSAcceptance.objects.create(user=self.user, tos_document=svc_tos)
+        cache.clear()
+
+        resp = self.client.post(
+            "/api/v1/check-access",
+            {"dataset": "fish2", "permission": "view", "service": "celltyping"},
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["allowed"])
+
+    def test_service_tos_without_service_param_ignored(self):
+        """Without service param, service-specific TOS is not checked."""
+        svc = Service.objects.create(name="celltyping")
+        TOSDocument.objects.create(
+            name="CT TOS", text="CT terms.", dataset=self.ds, service=svc,
+        )
+        cache.clear()
+
+        resp = self.client.post(
+            "/api/v1/check-access",
+            {"dataset": "fish2", "permission": "view"},
             format="json",
             **self._auth(),
         )

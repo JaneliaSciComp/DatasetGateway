@@ -4,10 +4,18 @@ Produces the exact JSON structure that middle_auth_client expects.
 """
 
 from django.db.models import Q
+from django.utils import timezone
 
 
-def build_permission_cache(user):
+def build_permission_cache(user, service=None):
     """Build the permission cache dict for a user.
+
+    Parameters
+    ----------
+    user : User
+    service : str or None
+        If given, the service slug (e.g. "celltyping"). Service-specific TOS
+        requirements are enforced in addition to general dataset TOS.
 
     Returns a dict matching CAVE's create_cache() output exactly:
     {
@@ -17,7 +25,7 @@ def build_permission_cache(user):
         "datasets_admin"
     }
     """
-    permissions = _get_permissions(user, ignore_tos=False)
+    permissions = _get_permissions(user, ignore_tos=False, service=service)
     permissions_ignore_tos = _get_permissions(user, ignore_tos=True)
 
     def permission_to_level(p):
@@ -47,7 +55,7 @@ def build_permission_cache(user):
         "permissions_v2_ignore_tos": {
             entry["name"]: entry["permissions"] for entry in permissions_ignore_tos
         },
-        "missing_tos": _datasets_missing_tos(user),
+        "missing_tos": _datasets_missing_tos(user, service=service),
         "datasets_admin": _get_datasets_adminning(user),
     }
 
@@ -85,14 +93,17 @@ def _get_datasets_adminning(user):
     )
 
 
-def _get_permissions(user, ignore_tos=False):
+def _get_permissions(user, ignore_tos=False, service=None):
     """Port of User._get_permissions().
 
     Returns list of dicts: [{"id": ..., "name": ..., "permissions": [...]}, ...]
     Merges both group-based permissions (GroupDatasetPermission) and
     direct user grants (Grant).
+
+    When *service* is given and *ignore_tos* is False, datasets that have an
+    active service-specific TOS the user hasn't accepted are also excluded.
     """
-    from .models import Grant, GroupDatasetPermission, TOSAcceptance
+    from .models import Grant, GroupDatasetPermission, TOSAcceptance, TOSDocument
 
     tos_user_id = user.parent_id if user.is_service_account else user.pk
 
@@ -108,11 +119,14 @@ def _get_permissions(user, ignore_tos=False):
         .select_related("dataset", "permission")
     )
 
+    accepted_tos_ids = None
     if not ignore_tos:
         # Include rows where dataset has no TOS, or user has accepted the TOS
-        accepted_tos_ids = TOSAcceptance.objects.filter(
-            user_id=tos_user_id
-        ).values_list("tos_document_id", flat=True)
+        accepted_tos_ids = set(
+            TOSAcceptance.objects.filter(
+                user_id=tos_user_id
+            ).values_list("tos_document_id", flat=True)
+        )
 
         tos_filter = Q(dataset__tos__isnull=True) | Q(dataset__tos_id__in=accepted_tos_ids)
         group_qs = group_qs.filter(tos_filter)
@@ -140,6 +154,24 @@ def _get_permissions(user, ignore_tos=False):
             }
         temp[did]["permissions"].add(grant.permission.name)
 
+    # Service-specific TOS: additionally exclude datasets with unaccepted
+    # active TOS documents scoped to the requested service.
+    if service and not ignore_tos and temp:
+        now = timezone.now()
+        service_tos_dataset_ids = set(
+            TOSDocument.objects.filter(
+                service__name=service,
+                dataset_id__in=temp.keys(),
+                effective_date__lte=now,
+            )
+            .filter(Q(retired_date__isnull=True) | Q(retired_date__gt=now))
+            .exclude(pk__in=accepted_tos_ids)
+            .values_list("dataset_id", flat=True)
+        )
+        if service_tos_dataset_ids:
+            temp = {did: entry for did, entry in temp.items()
+                    if did not in service_tos_dataset_ids}
+
     # Expand permission hierarchy: each level implies all levels below
     hierarchy = {"admin": {"manage", "edit", "view"}, "manage": {"edit", "view"}, "edit": {"view"}}
     for entry in temp.values():
@@ -154,13 +186,16 @@ def _get_permissions(user, ignore_tos=False):
     return list(temp.values())
 
 
-def _datasets_missing_tos(user):
+def _datasets_missing_tos(user, service=None):
     """Port of User.datasets_missing_tos().
 
     Returns list of dicts for datasets where user has permissions (via
     groups or direct grants) but hasn't accepted the required TOS.
+
+    When *service* is given, also includes service-specific TOS documents
+    the user hasn't accepted.
     """
-    from .models import Grant, GroupDatasetPermission, TOSAcceptance
+    from .models import Grant, GroupDatasetPermission, TOSAcceptance, TOSDocument
 
     tos_user_id = user.parent_id if user.is_service_account else user.pk
 
@@ -193,7 +228,7 @@ def _datasets_missing_tos(user):
         )
     )
 
-    return [
+    result = [
         {
             "dataset_id": dataset_id,
             "dataset_name": dataset_name,
@@ -203,3 +238,36 @@ def _datasets_missing_tos(user):
         for dataset_id, dataset_name, tos_id, tos_name in datasets_with_tos
         if tos_id not in accepted_tos_ids
     ]
+
+    # Service-specific TOS: find active service TOS docs the user hasn't accepted
+    if service:
+        now = timezone.now()
+        # Datasets the user has any permission on (ignoring TOS)
+        user_dataset_ids = set(
+            GroupDatasetPermission.objects.filter(
+                group__user_groups__user=user,
+            ).values_list("dataset_id", flat=True)
+        ) | set(
+            Grant.objects.filter(user=user).values_list("dataset_id", flat=True)
+        )
+
+        service_tos_docs = (
+            TOSDocument.objects.filter(
+                service__name=service,
+                dataset_id__in=user_dataset_ids,
+                effective_date__lte=now,
+            )
+            .filter(Q(retired_date__isnull=True) | Q(retired_date__gt=now))
+            .exclude(pk__in=accepted_tos_ids)
+            .select_related("dataset")
+        )
+        for tos in service_tos_docs:
+            result.append({
+                "dataset_id": tos.dataset_id,
+                "dataset_name": tos.dataset.name if tos.dataset else None,
+                "tos_id": tos.pk,
+                "tos_name": tos.name,
+                "service": service,
+            })
+
+    return result
