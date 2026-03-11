@@ -256,6 +256,20 @@ class Grant(models.Model):
         return f"{self.user} -> {self.dataset}{scope}: {self.permission}"
 
 
+class Service(models.Model):
+    """A named service that can have its own TOS requirements per dataset."""
+
+    name = models.SlugField(max_length=255, unique=True)
+    display_name = models.CharField(max_length=255, blank=True, default="")
+    base_url = models.URLField(blank=True, default="")
+
+    class Meta:
+        db_table = "service"
+
+    def __str__(self):
+        return self.display_name or self.name
+
+
 class ServiceTable(models.Model):
     """Maps a CAVE service table to a dataset."""
 
@@ -272,7 +286,7 @@ class ServiceTable(models.Model):
 
 
 class TOSDocument(models.Model):
-    """Terms of Service document, optionally scoped to dataset/version."""
+    """Terms of Service document, optionally scoped to dataset/version/service."""
 
     name = models.CharField(max_length=255)
     text = models.TextField()
@@ -289,6 +303,14 @@ class TOSDocument(models.Model):
         null=True,
         blank=True,
         related_name="tos_documents",
+    )
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="tos_documents",
+        help_text="If set, this TOS is required only when accessing via this service",
     )
     invite_token = models.CharField(
         max_length=64, unique=True, default=secrets.token_urlsafe,

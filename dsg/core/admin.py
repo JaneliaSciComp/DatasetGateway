@@ -16,6 +16,7 @@ from .models import (
     GroupDatasetPermission,
     Permission,
     PublicRoot,
+    Service,
     ServiceTable,
     TOSAcceptance,
     TOSDocument,
@@ -199,6 +200,12 @@ class PublicRootInline(admin.TabularInline):
     extra = 0
 
 
+@admin.register(Service)
+class ServiceAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "display_name", "base_url")
+    search_fields = ("name", "display_name")
+
+
 @admin.register(ServiceTable)
 class ServiceTableAdmin(admin.ModelAdmin):
     list_display = ("id", "service_name", "table_name", "dataset")
@@ -208,8 +215,8 @@ class ServiceTableAdmin(admin.ModelAdmin):
 
 @admin.register(TOSDocument)
 class TOSDocumentAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "dataset", "dataset_version", "effective_date", "retired_date")
-    list_filter = ("effective_date",)
+    list_display = ("id", "name", "dataset", "dataset_version", "service", "effective_date", "retired_date")
+    list_filter = ("effective_date", "service")
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
