@@ -42,6 +42,14 @@ class AuthorizeView(APIView):
         if tos_id:
             request.session["oauth_tos_id"] = tos_id
 
+        # Store optional service + dataset for post-login TOS interception
+        service = request.query_params.get("service")
+        dataset = request.query_params.get("dataset")
+        if service:
+            request.session["oauth_service"] = service
+        if dataset:
+            request.session["oauth_dataset"] = dataset
+
         callback_url = request.build_absolute_uri("/api/v1/oauth2callback")
 
         params = {
@@ -120,8 +128,16 @@ class OAuth2CallbackView(APIView):
         # Create an API key token for the user
         api_key = APIKey.objects.create(user=user, description="OAuth login token")
 
-        # Redirect with cookie
+        # Check for pending TOS before redirecting
         redirect_url = request.session.pop("oauth_redirect", "/")
+        service_name = request.session.pop("oauth_service", None)
+        dataset_name = request.session.pop("oauth_dataset", None)
+
+        if service_name and dataset_name:
+            redirect_url = self._maybe_intercept_for_tos(
+                request, user, redirect_url, service_name, dataset_name,
+            )
+
         response = HttpResponseRedirect(redirect_url)
         cookie_kwargs = {
             "max_age": settings.AUTH_COOKIE_AGE,
@@ -139,6 +155,53 @@ class OAuth2CallbackView(APIView):
         )
 
         return response
+
+    def _maybe_intercept_for_tos(self, request, user, redirect_url, service_name, dataset_name):
+        """If the user has pending TOS for this service+dataset, redirect to TOS page instead."""
+        from urllib.parse import urlencode
+
+        from django.db.models import Q
+
+        from core.models import Dataset, TOSAcceptance, TOSDocument
+
+        try:
+            dataset = Dataset.objects.get(name=dataset_name)
+        except Dataset.DoesNotExist:
+            return redirect_url
+
+        tos_user_id = user.parent_id if user.is_service_account else user.pk
+        accepted_tos_ids = set(
+            TOSAcceptance.objects.filter(user_id=tos_user_id).values_list(
+                "tos_document_id", flat=True
+            )
+        )
+
+        pending = []
+        # Check general dataset TOS
+        if dataset.tos_id and dataset.tos_id not in accepted_tos_ids:
+            pending.append(dataset.tos_id)
+
+        # Check service-specific TOS
+        now = timezone.now()
+        service_tos_ids = list(
+            TOSDocument.objects.filter(
+                service__name=service_name,
+                dataset=dataset,
+                effective_date__lte=now,
+            )
+            .filter(Q(retired_date__isnull=True) | Q(retired_date__gt=now))
+            .exclude(pk__in=accepted_tos_ids)
+            .values_list("pk", flat=True)
+        )
+        pending.extend(service_tos_ids)
+
+        if not pending:
+            return redirect_url
+
+        # Store context in session for the TOS service-check view
+        request.session["tos_check_ids"] = pending
+        request.session["tos_check_next"] = redirect_url
+        return f"/web/tos/service-check/"
 
     def _exchange_code(self, code, redirect_uri):
         """Exchange authorization code for tokens."""

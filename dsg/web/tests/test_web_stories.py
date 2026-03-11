@@ -15,6 +15,7 @@ from core.models import (
     GroupDatasetPermission,
     Permission,
     PublicRoot,
+    Service,
     ServiceTable,
     TOSAcceptance,
     TOSDocument,
@@ -1104,3 +1105,97 @@ class TestServiceTableManagement(_WebTestBase):
         self._login(self.regular_key)
         resp = self.client.get("/web/datasets")
         self.assertContains(resp, "Service Tables & Roots")
+
+
+# ──────────────────────────────────────────────────────────────
+# TOS Service Check
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestTOSServiceCheck(_WebTestBase):
+    """Tests for the /web/tos/service-check/ flow."""
+
+    def setUp(self):
+        super().setUp()
+        self.svc = Service.objects.create(name="celltyping", display_name="Cell Typing")
+        self.general_tos = TOSDocument.objects.create(
+            name="General TOS", text="General terms.", dataset=self.dataset,
+        )
+        self.dataset.tos = self.general_tos
+        self.dataset.save()
+        self.svc_tos = TOSDocument.objects.create(
+            name="CT TOS", text="Celltyping terms.",
+            dataset=self.dataset, service=self.svc,
+        )
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset,
+            permission=self.view_perm,
+        )
+
+    def test_unauthenticated_redirects_to_login(self):
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/auth/login", resp.url)
+
+    def test_no_pending_tos_redirects_to_next(self):
+        TOSAcceptance.objects.create(user=self.regular_user, tos_document=self.general_tos)
+        TOSAcceptance.objects.create(user=self.regular_user, tos_document=self.svc_tos)
+        self._login(self.regular_key)
+
+        session = self.client.session
+        session["tos_check_ids"] = [self.general_tos.pk, self.svc_tos.pk]
+        session["tos_check_next"] = "/some-service/"
+        session.save()
+
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, "/some-service/")
+
+    def test_shows_pending_tos_documents(self):
+        self._login(self.regular_key)
+
+        session = self.client.session
+        session["tos_check_ids"] = [self.general_tos.pk, self.svc_tos.pk]
+        session["tos_check_next"] = "/return/"
+        session.save()
+
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "General TOS")
+        self.assertContains(resp, "CT TOS")
+        self.assertContains(resp, "Cell Typing")
+
+    def test_post_accepts_all_and_redirects(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+
+        session = self.client.session
+        session["tos_check_ids"] = [self.general_tos.pk, self.svc_tos.pk]
+        session["tos_check_next"] = "/return/"
+        session.save()
+
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post("/web/tos/service-check/")
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, "/return/")
+
+        self.assertTrue(TOSAcceptance.objects.filter(
+            user=self.regular_user, tos_document=self.general_tos
+        ).exists())
+        self.assertTrue(TOSAcceptance.objects.filter(
+            user=self.regular_user, tos_document=self.svc_tos
+        ).exists())
+
+    def test_query_param_mode(self):
+        """Already-authenticated user can be directed with query params."""
+        self._login(self.regular_key)
+        resp = self.client.get(
+            f"/web/tos/service-check/?service=celltyping&dataset={self.dataset.name}&next=/ct/"
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "General TOS")
+        self.assertContains(resp, "CT TOS")

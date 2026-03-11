@@ -7,6 +7,7 @@ from django.contrib import messages
 from django.contrib.auth import logout as auth_logout
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views import View
 
 logger = logging.getLogger(__name__)
@@ -669,6 +670,127 @@ class TOSLandingView(View):
             messages.info(request, f"You have already accepted: {tos_doc.name}")
 
         return redirect("web-my-account")
+
+
+class TOSServiceCheckView(View):
+    """GET/POST /web/tos/service-check/ — Accept all pending TOS before redirecting to a service.
+
+    Pending TOS IDs and the redirect URL come from the Django session
+    (set by the OAuth callback) or from query params (for already-authenticated
+    users redirected by a service).
+    """
+
+    def _load_context(self, request):
+        """Load pending TOS IDs and redirect URL from session or query params."""
+        tos_ids = request.session.get("tos_check_ids")
+        next_url = request.session.get("tos_check_next", "/")
+
+        # Allow query-param override for already-authenticated users
+        if not tos_ids:
+            service = request.GET.get("service")
+            dataset_name = request.GET.get("dataset")
+            next_url = request.GET.get("next", next_url)
+
+            if service and dataset_name:
+                from django.db.models import Q
+
+                user = _get_web_user(request)
+                if user:
+                    try:
+                        ds = Dataset.objects.get(name=dataset_name)
+                    except Dataset.DoesNotExist:
+                        return [], next_url
+
+                    tos_user_id = user.parent_id if user.is_service_account else user.pk
+                    accepted = set(
+                        TOSAcceptance.objects.filter(user_id=tos_user_id).values_list(
+                            "tos_document_id", flat=True
+                        )
+                    )
+                    now = timezone.now()
+                    pending = []
+                    if ds.tos_id and ds.tos_id not in accepted:
+                        pending.append(ds.tos_id)
+                    svc_ids = list(
+                        TOSDocument.objects.filter(
+                            service__name=service,
+                            dataset=ds,
+                            effective_date__lte=now,
+                        )
+                        .filter(Q(retired_date__isnull=True) | Q(retired_date__gt=now))
+                        .exclude(pk__in=accepted)
+                        .values_list("pk", flat=True)
+                    )
+                    pending.extend(svc_ids)
+                    tos_ids = pending
+
+        return tos_ids or [], next_url
+
+    def get(self, request):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login?next=/web/tos/service-check/")
+
+        tos_ids, next_url = self._load_context(request)
+
+        if not tos_ids:
+            return redirect(next_url)
+
+        tos_docs = TOSDocument.objects.filter(pk__in=tos_ids).select_related("dataset", "service")
+
+        # Check which are already accepted
+        accepted_ids = set(
+            TOSAcceptance.objects.filter(
+                user=user, tos_document_id__in=tos_ids
+            ).values_list("tos_document_id", flat=True)
+        )
+        pending_docs = [d for d in tos_docs if d.pk not in accepted_ids]
+
+        if not pending_docs:
+            request.session.pop("tos_check_ids", None)
+            request.session.pop("tos_check_next", None)
+            return redirect(next_url)
+
+        return render(request, "web/tos_service_check.html", {
+            "user": user,
+            "tos_docs": pending_docs,
+            "next_url": next_url,
+        })
+
+    def post(self, request):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login")
+
+        tos_ids, next_url = self._load_context(request)
+
+        for tos_id in tos_ids:
+            try:
+                tos_doc = TOSDocument.objects.select_related("dataset").get(pk=tos_id)
+            except TOSDocument.DoesNotExist:
+                continue
+
+            acceptance, created = TOSAcceptance.objects.get_or_create(
+                user=user,
+                tos_document=tos_doc,
+                defaults={"ip_address": request.META.get("REMOTE_ADDR")},
+            )
+            if created:
+                log_audit(user, "tos_accepted", "TOSAcceptance", acceptance.pk, after_state={
+                    "user": user.email,
+                    "tos_document": tos_doc.name,
+                    "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
+                    "service": tos_doc.service.name if tos_doc.service_id else None,
+                })
+                if tos_doc.dataset:
+                    from core.iam import sync_user_dataset_iam
+                    sync_user_dataset_iam(user, tos_doc.dataset)
+
+        # Clean up session
+        request.session.pop("tos_check_ids", None)
+        request.session.pop("tos_check_next", None)
+
+        return redirect(next_url)
 
 
 class GroupDashboardView(View):

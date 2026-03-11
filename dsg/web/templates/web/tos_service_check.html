@@ -1,0 +1,26 @@
+{% extends "web/base.html" %}
+{% block title %}Accept Terms of Service — DatasetGateway{% endblock %}
+{% block content %}
+<h1>Terms of Service Required</h1>
+<p>Please review and accept the following terms before continuing.</p>
+
+{% for doc in tos_docs %}
+<div class="card" style="margin-bottom: 20px;">
+    <h2>{{ doc.name }}</h2>
+    {% if doc.dataset %}
+        <p><strong>Dataset:</strong> {{ doc.dataset.name }}</p>
+    {% endif %}
+    {% if doc.service %}
+        <p><strong>Service:</strong> {{ doc.service.display_name|default:doc.service.name }}</p>
+    {% endif %}
+    <div style="max-height: 300px; overflow-y: auto; border: 1px solid #eee; padding: 10px; margin: 10px 0; border-radius: 4px;">
+        {{ doc.text|safe }}
+    </div>
+</div>
+{% endfor %}
+
+<form method="post">
+    {% csrf_token %}
+    <button type="submit" class="btn">I Accept All &amp; Continue</button>
+</form>
+{% endblock %}
