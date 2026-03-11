@@ -223,8 +223,10 @@ class TOSDocumentAdmin(admin.ModelAdmin):
         action = "tos_document_updated" if change else "tos_document_created"
         log_audit(request.user, action, "TOSDocument", obj.pk, after_state={
             "name": obj.name, "dataset": str(obj.dataset) if obj.dataset else None,
+            "service": str(obj.service) if obj.service else None,
         })
-        if obj.dataset_id and obj.dataset.tos_id != obj.pk:
+        # Auto-set Dataset.tos only for general (non-service-specific) TOS docs
+        if obj.dataset_id and not obj.service_id and obj.dataset.tos_id != obj.pk:
             obj.dataset.tos = obj
             obj.dataset.save(update_fields=["tos"])
 

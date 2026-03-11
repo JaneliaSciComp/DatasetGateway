@@ -8,9 +8,17 @@
     <h3>{{ item.dataset.name }}</h3>
     {% if item.dataset.description %}<p>{{ item.dataset.description }}</p>{% endif %}
 
-    {% if item.dataset.tos %}
-        <p>TOS invite link: <a href="/web/tos/{{ item.dataset.tos.invite_token }}/">{{ request.get_host }}/web/tos/{{ item.dataset.tos.invite_token }}/</a></p>
-    {% endif %}
+    {% for tos in item.tos_docs %}
+        <p>
+            {% if tos.service %}
+                TOS ({{ tos.service.display_name|default:tos.service.name }}):
+            {% else %}
+                TOS:
+            {% endif %}
+            <a href="/web/tos/{{ tos.invite_token }}/">{{ tos.name }}</a>
+            <span style="color:#999;font-size:12px;margin-left:5px;">{{ request.get_host }}/web/tos/{{ tos.invite_token }}/</span>
+        </p>
+    {% endfor %}
 
     {% if item.versions %}
     <table>

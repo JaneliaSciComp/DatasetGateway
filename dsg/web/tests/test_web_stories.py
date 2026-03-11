@@ -1011,6 +1011,27 @@ class TestTOSLandingGeneral(_WebTestBase):
         self.assertContains(resp, "/web/tos/link-tok/")
         self.assertNotContains(resp, f"/web/tos/{tos.pk}/accept")
 
+    def test_datasets_page_shows_all_tos_docs(self):
+        """Both general and service-specific TOS appear on the datasets page."""
+        general_tos = TOSDocument.objects.create(
+            name="General TOS", text="General.", dataset=self.dataset,
+            invite_token="gen-tok",
+        )
+        self.dataset.tos = general_tos
+        self.dataset.save()
+
+        svc = Service.objects.create(name="celltyping", display_name="Cell Typing")
+        svc_tos = TOSDocument.objects.create(
+            name="CT TOS", text="CT terms.", dataset=self.dataset,
+            service=svc, invite_token="ct-tok",
+        )
+
+        self._login(self.global_admin_key)
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "/web/tos/gen-tok/")
+        self.assertContains(resp, "/web/tos/ct-tok/")
+        self.assertContains(resp, "Cell Typing")
+
 
 # ──────────────────────────────────────────────────────────────
 # Service Table Management

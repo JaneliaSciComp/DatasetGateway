@@ -121,11 +121,18 @@ class DatasetsView(View):
             versions = DatasetVersion.objects.filter(dataset=d).prefetch_related("buckets")
             can_manage = _can_manage_dataset(user, d)
             has_service_tables = ServiceTable.objects.filter(dataset=d).exists()
+            # All active TOS documents for this dataset (general + service-specific)
+            tos_docs = list(
+                TOSDocument.objects.filter(dataset=d)
+                .select_related("service")
+                .order_by("service__name", "name")
+            )
             dataset_list.append({
                 "dataset": d,
                 "versions": versions,
                 "can_manage": can_manage,
                 "has_service_tables": has_service_tables,
+                "tos_docs": tos_docs,
             })
 
         return render(request, "web/datasets.html", {
