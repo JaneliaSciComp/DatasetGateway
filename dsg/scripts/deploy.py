@@ -94,28 +94,34 @@ def main() -> None:
     run([*compose_exec, "python", "manage.py", "seed_groups"])
 
     # --- Summary ---
-    # Read port from .env (default 8080 for Docker)
+    # Read origin from .env
+    origin = "http://localhost:8080"
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if line.startswith("DSG_ORIGIN="):
+            origin = line.split("=", 1)[1].strip()
+            break
+
+    cf = str(compose_file)
     print("\n[4/4] Deployment complete!")
     print("\n" + "=" * 60)
     print("DatasetGateway is running")
     print("=" * 60)
-    print("""
-  Service:     http://localhost:8080
-  Admin:       http://localhost:8080/admin/
+    print(f"""
+  Service:     {origin}
+  Admin:       {origin}/admin/
 
   Next steps:
     1. Create an admin user:
-       docker compose -f dsg/docker-compose.yml exec dsg python manage.py make_admin user@example.com
+       docker compose -f {cf} exec dsg \\
+           python manage.py make_admin user@example.com
 
     2. Put a reverse proxy (nginx/caddy) in front for TLS termination
 
-    3. Update the Site domain in Django admin to match your production URL
-
   Useful commands:
-    pixi run stop                                        # stop
-    docker compose -f dsg/docker-compose.yml down        # stop (equivalent)
-    docker compose -f dsg/docker-compose.yml logs -f     # view logs
-    docker compose -f dsg/docker-compose.yml up -d       # restart
+    pixi run deploy                                     # rebuild and redeploy
+    pixi run stop                                       # stop containers
+    docker compose -f {cf} logs -f     # view logs
 """)
 
 
