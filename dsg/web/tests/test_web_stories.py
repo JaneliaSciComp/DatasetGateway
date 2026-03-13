@@ -1220,3 +1220,32 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "General TOS")
         self.assertContains(resp, "CT TOS")
+
+    def test_query_param_post_redirects_to_next(self):
+        """POST after query-param GET redirects to the next URL, not /."""
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        # GET loads the TOS page with query params (no session)
+        self.client.get(
+            f"/web/tos/service-check/?service=celltyping&dataset={self.dataset.name}"
+            "&next=https://celltyping.example.com/graph/fish"
+        )
+
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post(
+                "/web/tos/service-check/",
+                {"next": "https://celltyping.example.com/graph/fish"},
+            )
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, "https://celltyping.example.com/graph/fish")
+
+        # Verify TOS were actually accepted
+        self.assertTrue(TOSAcceptance.objects.filter(
+            user=self.regular_user, tos_document=self.general_tos
+        ).exists())
+        self.assertTrue(TOSAcceptance.objects.filter(
+            user=self.regular_user, tos_document=self.svc_tos
+        ).exists())

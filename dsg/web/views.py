@@ -698,9 +698,13 @@ class TOSServiceCheckView(View):
     """
 
     def _load_context(self, request):
-        """Load pending TOS IDs and redirect URL from session or query params."""
+        """Load pending TOS IDs and redirect URL from session, query, or POST params."""
         tos_ids = request.session.get("tos_check_ids")
         next_url = request.session.get("tos_check_next", "/")
+
+        # POST form may carry the redirect URL from the hidden field
+        if request.method == "POST" and request.POST.get("next"):
+            next_url = request.POST["next"]
 
         # Allow query-param override for already-authenticated users
         if not tos_ids:
@@ -767,6 +771,11 @@ class TOSServiceCheckView(View):
             request.session.pop("tos_check_ids", None)
             request.session.pop("tos_check_next", None)
             return redirect(next_url)
+
+        # Persist to session so the POST handler can find them
+        # (query-param mode doesn't set session — only the OAuth callback does)
+        request.session["tos_check_ids"] = [d.pk for d in pending_docs]
+        request.session["tos_check_next"] = next_url
 
         return render(request, "web/tos_service_check.html", {
             "user": user,

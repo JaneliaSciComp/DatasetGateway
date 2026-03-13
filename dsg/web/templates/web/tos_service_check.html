@@ -22,6 +22,7 @@
 
 <form method="post">
     {% csrf_token %}
+    <input type="hidden" name="next" value="{{ next_url }}">
     <button type="submit" class="btn">I Accept All &amp; Continue</button>
 </form>
 {% endblock %}
