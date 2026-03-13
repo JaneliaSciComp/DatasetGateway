@@ -55,7 +55,7 @@ cmd = "python scripts/deploy.py"
 description = "Build and deploy with Docker"
 
 [tool.pixi.tasks.make-admin]
-cmd = "python manage.py make_admin"
+cmd = "bash scripts/manage.sh make_admin"
 description = "Create or promote a user to admin (replaces createsuperuser)"
 
 [tool.pixi.tasks.stop]

@@ -30,7 +30,8 @@ settings — existing values are shown as defaults.
 pixi run make-admin user@example.com
 ```
 
-This creates the user if they don't exist, sets `admin=True`, and
+This works for both local and Docker deployments — it automatically
+detects a running container. It creates the user if they don't exist, sets `admin=True`, and
 prompts for a password (needed to log into the Django admin console at
 `/admin/`). If the user already exists (e.g., from an import or OAuth
 login), it promotes them and adds a password. Use `--no-password` to skip 
@@ -39,8 +40,15 @@ the password prompt, or `--remove` to revoke admin status.
 ### 3. (Optional) Import Clio auth data
 
 ```bash
-pixi run python manage.py import_clio_auth path/to/clio_export_auth.json
+bash scripts/manage.sh import_clio_auth path/to/clio_export_auth.json
 ```
+
+> **Docker deployment:** The file must be accessible inside the container.
+> Copy it in first:
+> ```bash
+> docker compose cp path/to/clio_export_auth.json dsg:/tmp/
+> bash scripts/manage.sh import_clio_auth /tmp/clio_export_auth.json
+> ```
 
 This imports users, datasets, grants, groups, and dataset-admin
 assignments from a Clio export. It is idempotent — running it again
@@ -48,8 +56,14 @@ will skip records that already exist.
 
 ### 4. Start the server
 
+**Local development:**
 ```bash
 pixi run serve
+```
+
+**Docker deployment:**
+```bash
+pixi run deploy
 ```
 
 If `.env` doesn't exist yet, the setup wizard runs automatically.
@@ -59,13 +73,20 @@ The admin console is at `/admin/`.
 
 To start completely fresh:
 
+**Local development:**
 ```bash
 cd dsg
 rm db.sqlite3
 pixi run setup                        # re-runs migrations and seeds
-# optionally re-import Clio data:
-pixi run python manage.py import_clio_auth ../clio_export_auth.json
-pixi run make-admin user@example.com  # create or promote admin (order doesn't matter)
+pixi run make-admin user@example.com
+```
+
+**Docker deployment:**
+```bash
+cd dsg
+docker compose down -v                # removes containers and database volume
+pixi run deploy                       # rebuilds, runs migrations and seeds
+pixi run make-admin user@example.com
 ```
 
 ---
@@ -270,7 +291,7 @@ local development works out of the box. **For production**, update it
 to match your deployment domain:
 
 ```bash
-pixi run python manage.py shell -c "
+bash scripts/manage.sh shell -c "
 from django.contrib.sites.models import Site
 Site.objects.update_or_create(id=1, defaults={'domain': 'auth.example.org', 'name': 'DatasetGateway'})
 "
@@ -325,19 +346,20 @@ logins. You generally don't need to touch them.
 
 ## Management Commands Reference
 
-All commands are run from the `dsg/` directory.
+All commands are run from the `dsg/` directory. Use `bash scripts/manage.sh`
+instead of `python manage.py` to auto-detect whether to run locally or
+inside a Docker container.
 
 | Command | Purpose |
 |---------|---------|
-| `python manage.py migrate` | Create/update database tables. |
-| `pixi run make-admin EMAIL` | Create or promote a user to admin (replaces `createsuperuser`). |
-| `python manage.py make_admin EMAIL --remove` | Revoke admin status from a user. |
-| `python manage.py changepassword EMAIL` | Reset a user's admin console password. |
-| `python manage.py seed_permissions` | Create `view`, `edit`, `manage`, and `admin` permission types. |
-| `python manage.py seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
-| `python manage.py import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
+| `pixi run make-admin EMAIL` | Create or promote a user to admin (works for both local and Docker). |
+| `pixi run make-admin EMAIL --remove` | Revoke admin status from a user. |
+| `bash scripts/manage.sh migrate` | Create/update database tables. |
+| `bash scripts/manage.sh changepassword EMAIL` | Reset a user's admin console password. |
+| `bash scripts/manage.sh seed_permissions` | Create `view`, `edit`, `manage`, and `admin` permission types. |
+| `bash scripts/manage.sh seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
+| `bash scripts/manage.sh import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
 | `pixi run setup` | Interactive setup wizard — generates `.env`. |
 | `pixi run serve` | Start the development server (runs setup if `.env` is missing). |
 | `pixi run deploy` | Build and deploy with Docker. |
 | `pixi run stop` | Stop the Docker deployment. |
-| `python manage.py collectstatic` | Collect static files for production deployment. |

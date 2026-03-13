@@ -113,8 +113,7 @@ def main() -> None:
 
   Next steps:
     1. Create an admin user:
-       docker compose -f {cf} exec dsg \\
-           python manage.py make_admin user@example.com
+       pixi run make-admin user@example.com
 
     2. Put a reverse proxy (nginx/caddy) in front for TLS termination
 
