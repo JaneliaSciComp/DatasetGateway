@@ -62,6 +62,16 @@ class AuthorizeView(APIView):
         }
         request.session["oauth_state"] = params["state"]
 
+        # If user already has a valid dsg_token, pass login_hint to skip
+        # Google's account selector on re-auth (e.g., TOS acceptance flows).
+        token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
+        if token:
+            try:
+                api_key = APIKey.objects.select_related("user").get(key=token)
+                params["login_hint"] = api_key.user.email
+            except APIKey.DoesNotExist:
+                pass
+
         auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
 
         # Programmatic clients get the URL in the response
