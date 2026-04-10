@@ -208,7 +208,10 @@ class OAuth2CallbackView(APIView):
         if not pending:
             return redirect_url
 
-        # Store context in session for the TOS service-check view
+        # Store context in session for the TOS service-check view.
+        # The redirect_url is the service's own URL (potentially with
+        # query params like ?dataset=hemibrain:v1.2) and must be
+        # preserved exactly as received.
         request.session["tos_check_ids"] = pending
         request.session["tos_check_next"] = redirect_url
         return f"/web/tos/service-check/"

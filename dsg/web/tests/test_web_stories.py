@@ -1249,3 +1249,61 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertTrue(TOSAcceptance.objects.filter(
             user=self.regular_user, tos_document=self.svc_tos
         ).exists())
+
+    def test_redirect_preserves_query_string(self):
+        """Redirect URL with query params (e.g. ?dataset=hemibrain) survives the full TOS flow.
+
+        Services pass their own dataset identifiers in the redirect URL.
+        DSG must preserve the URL exactly — including query string — so the
+        user returns to the correct dataset after accepting TOS.
+        """
+        from html import escape
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+
+        redirect_url = "https://neuprint-test.example.com/?dataset=hemibrain%3Av1.2.1&tab=graph"
+
+        session = self.client.session
+        session["tos_check_ids"] = [self.general_tos.pk, self.svc_tos.pk]
+        session["tos_check_next"] = redirect_url
+        session.save()
+
+        # GET should render the hidden field with the full redirect URL
+        # (& is HTML-escaped to &amp; in the template, which browsers
+        # decode back to & when submitting the form)
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, escape(redirect_url))
+
+        # POST (via session) should redirect to the exact URL
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post("/web/tos/service-check/")
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, redirect_url)
+
+    def test_redirect_preserves_query_string_via_form(self):
+        """Same as above but simulates the browser POST with the hidden field value."""
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+
+        redirect_url = "https://neuprint-test.example.com/?dataset=hemibrain%3Av1.2.1&tab=graph"
+
+        session = self.client.session
+        session["tos_check_ids"] = [self.general_tos.pk, self.svc_tos.pk]
+        session["tos_check_next"] = redirect_url
+        session.save()
+
+        # Simulate browser form submission with the hidden 'next' field
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post(
+                "/web/tos/service-check/",
+                {"next": redirect_url},
+            )
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, redirect_url)
