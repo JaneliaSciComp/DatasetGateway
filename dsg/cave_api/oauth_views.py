@@ -139,7 +139,8 @@ class OAuth2CallbackView(APIView):
             defaults=defaults,
         )
 
-        # Create an API key token for the user
+        # Clean up old login tokens and create a fresh one
+        APIKey.objects.filter(user=user, description="OAuth login token").delete()
         api_key = APIKey.objects.create(user=user, description="OAuth login token")
 
         # Check for pending TOS before redirecting
@@ -302,6 +303,7 @@ class CreateTokenView(APIView):
         api_key = APIKey.objects.create(
             user=request.user,
             description=request.data.get("description", "API token"),
+            expires_at=None,
         )
         return Response(api_key.key)
 

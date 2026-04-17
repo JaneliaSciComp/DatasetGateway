@@ -371,6 +371,10 @@ def _generate_token():
     return secrets.token_hex(32)
 
 
+def _default_expiry():
+    return timezone.now() + timezone.timedelta(days=7)
+
+
 class APIKey(models.Model):
     """API token for authenticating requests."""
 
@@ -379,12 +383,19 @@ class APIKey(models.Model):
     description = models.CharField(max_length=255, blank=True, default="")
     created = models.DateTimeField(auto_now_add=True)
     last_used = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True, default=_default_expiry)
 
     class Meta:
         db_table = "api_key"
 
     def __str__(self):
         return f"APIKey({self.user}, {self.description!r})"
+
+    @property
+    def is_expired(self):
+        if self.expires_at is None:
+            return False
+        return timezone.now() >= self.expires_at
 
 
 class PublicRoot(models.Model):

@@ -86,6 +86,9 @@ class TokenAuthentication(BaseAuthentication):
         except APIKey.DoesNotExist:
             return None
 
+        if api_key.is_expired:
+            return None
+
         # Update last_used timestamp
         APIKey.objects.filter(pk=api_key.pk).update(last_used=timezone.now())
 

@@ -26,6 +26,9 @@ class SCIMAuthentication(BaseAuthentication):
         except APIKey.DoesNotExist:
             raise AuthenticationFailed("Invalid token.")
 
+        if api_key.is_expired:
+            raise AuthenticationFailed("Token has expired.")
+
         user = api_key.user
         if not user.is_active:
             raise AuthenticationFailed("User account is disabled.")

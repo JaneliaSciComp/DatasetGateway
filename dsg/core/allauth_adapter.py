@@ -19,6 +19,7 @@ class AccountAdapter(DefaultAccountAdapter):
         on the response (which we don't control here since allauth redirects).
         """
         super().login(request, user)
+        APIKey.objects.filter(user=user, description="allauth login token").delete()
         api_key = APIKey.objects.create(user=user, description="allauth login token")
         request.session["dsg_token_value"] = api_key.key
         request.session["user_email"] = user.email
@@ -48,11 +49,10 @@ class SocialAccountAdapter(DefaultSocialAccountAdapter):
             user.display_name = name
         return user
 
-    def save_user(self, request, sociallogin, form=None):
-        user = super().save_user(request, sociallogin, form)
+    def pre_social_login(self, request, sociallogin):
+        super().pre_social_login(request, sociallogin)
         extra = sociallogin.account.extra_data
         picture = extra.get("picture", "")
-        if picture:
-            user.picture_url = picture
-            user.save(update_fields=["picture_url"])
-        return user
+        if picture and sociallogin.user.pk:
+            sociallogin.user.picture_url = picture
+            sociallogin.user.save(update_fields=["picture_url"])

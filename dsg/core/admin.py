@@ -39,7 +39,7 @@ class UserGroupInline(admin.TabularInline):
 class APIKeyInline(admin.TabularInline):
     model = APIKey
     extra = 0
-    readonly_fields = ("key", "created", "last_used")
+    readonly_fields = ("key", "created", "last_used", "expires_at")
 
 
 @admin.register(User)
