@@ -39,6 +39,7 @@ class User(AbstractBaseUser):
     gdpr_consent = models.BooleanField(default=False)
     pi = models.CharField(max_length=255, blank=True, default="")
     read_only = models.BooleanField(default=False)
+    notes = models.TextField(blank=True, default="")
 
     # Service account support — parent is the owning human user
     parent = models.ForeignKey(
@@ -90,6 +91,20 @@ class User(AbstractBaseUser):
     @property
     def public_name(self):
         return self.display_name or self.name or self.email.split("@")[0]
+
+
+class Affiliation(models.Model):
+    """An organizational affiliation for a user (many-to-one)."""
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="affiliations")
+    name = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = "affiliation"
+        unique_together = [("user", "name")]
+
+    def __str__(self):
+        return f"{self.user.email}: {self.name}"
 
 
 class Group(models.Model):

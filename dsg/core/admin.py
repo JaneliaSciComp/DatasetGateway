@@ -6,6 +6,7 @@ admin.site.unregister(AuthGroup)
 
 from .audit import log_audit
 from .models import (
+    Affiliation,
     APIKey,
     AuditLog,
     Dataset,
@@ -23,6 +24,11 @@ from .models import (
     User,
     UserGroup,
 )
+
+
+class AffiliationInline(admin.TabularInline):
+    model = Affiliation
+    extra = 0
 
 
 class UserGroupInline(admin.TabularInline):
@@ -43,7 +49,7 @@ class UserAdmin(admin.ModelAdmin):
     search_fields = ("email", "name", "display_name")
     readonly_fields = ("password",)
     exclude = ("password",)
-    inlines = [UserGroupInline, APIKeyInline]
+    inlines = [AffiliationInline, UserGroupInline, APIKeyInline]
 
     def save_related(self, request, form, formsets, change):
         old_groups = set()
