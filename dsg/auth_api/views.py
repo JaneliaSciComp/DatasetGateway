@@ -30,6 +30,7 @@ class WhoAmIView(APIView):
             "id": user.pk,
             "email": user.email,
             "name": user.public_name,
+            "picture_url": user.picture_url,
             "admin": user.admin,
             "is_active": user.is_active,
             "groups": cache["groups"] if cache else [],

@@ -126,6 +126,7 @@ class UserListView(APIView):
                     "email": u.email,
                     "admin": u.admin,
                     "pi": u.pi,
+                    "picture_url": u.picture_url,
                 }
                 for u in users
             ]

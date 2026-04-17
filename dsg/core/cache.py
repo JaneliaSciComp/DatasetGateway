@@ -42,7 +42,8 @@ def build_permission_cache(user, service=None):
         "email": user.email,
         "admin": user.admin,
         "pi": user.pi,
-        "affiliations": [],  # Affiliations not ported yet; empty list for compat
+        "picture_url": user.picture_url,
+        "affiliations": list(user.affiliations.values_list("name", flat=True)),
         "groups": groups_list,
         "groups_admin": groups_admin_list,
         "permissions": {

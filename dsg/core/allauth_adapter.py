@@ -47,3 +47,12 @@ class SocialAccountAdapter(DefaultSocialAccountAdapter):
             user.name = name
             user.display_name = name
         return user
+
+    def save_user(self, request, sociallogin, form=None):
+        user = super().save_user(request, sociallogin, form)
+        extra = sociallogin.account.extra_data
+        picture = extra.get("picture", "")
+        if picture:
+            user.picture_url = picture
+            user.save(update_fields=["picture_url"])
+        return user

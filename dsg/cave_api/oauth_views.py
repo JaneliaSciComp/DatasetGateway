@@ -121,18 +121,22 @@ class OAuth2CallbackView(APIView):
         email = user_info.get("email", "")
         google_sub = user_info.get("sub", "")
         name = user_info.get("name", email.split("@")[0])
+        picture = user_info.get("picture", "")
 
         if not email:
             return Response({"error": "No email in token"}, status=400)
 
         # Create or update user
+        defaults = {
+            "google_sub": google_sub,
+            "name": name,
+            "display_name": name,
+        }
+        if picture:
+            defaults["picture_url"] = picture
         user, created = User.objects.update_or_create(
             email=email,
-            defaults={
-                "google_sub": google_sub,
-                "name": name,
-                "display_name": name,
-            },
+            defaults=defaults,
         )
 
         # Create an API key token for the user

@@ -40,6 +40,7 @@ class User(AbstractBaseUser):
     pi = models.CharField(max_length=255, blank=True, default="")
     read_only = models.BooleanField(default=False)
     notes = models.TextField(blank=True, default="")
+    picture_url = models.URLField(max_length=512, blank=True, default="")
 
     # Service account support — parent is the owning human user
     parent = models.ForeignKey(
