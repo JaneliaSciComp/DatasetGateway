@@ -51,14 +51,8 @@ pixi shell                                # interactive shell in env
 
 ## Conventions
 
-- When executing a multi-step plan, commit after each step so progress can be reverted if needed.
+- Follow the shared user-level commit protocol in `/Users/katzw/GitHub/AGENTS.md`.
 - Run tests after making changes if the project has tests.
-- Commit messages must include a co-author line with your exact model name and version:
-  ```
-  Co-Authored-By: YOUR_MODEL_NAME VERSION <noreply@PROVIDER.com>
-  ```
-  For example: `Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>`, `Co-Authored-By: Gemini 2.5 Pro <noreply@google.com>`
-- Keep changes focused — one logical change per commit.
 - If your changes add, remove, or rename files/directories shown in the
   "Repository layout" tree above, update that tree to match.
 
