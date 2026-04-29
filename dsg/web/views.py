@@ -63,23 +63,32 @@ def _is_group_admin(user, group):
 
 
 def _get_web_user(request):
-    """Get user from session or dsg_token cookie."""
-    # 1. Session email
+    """Get user from dsg_token cookie (preferred) or session.
+
+    The dsg_token cookie is reset on every successful OAuth callback, so when
+    both signals exist and disagree it reflects the most recent identity. We
+    repair a stale session entry rather than trust it, which prevents browsers
+    that have been logged into multiple Google accounts from acting on the
+    wrong user.
+    """
+    token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
+    if token:
+        try:
+            api_key = APIKey.objects.select_related("user").get(key=token)
+            cookie_user = api_key.user
+        except APIKey.DoesNotExist:
+            cookie_user = None
+        if cookie_user:
+            if request.session.get("user_email") != cookie_user.email:
+                request.session["user_email"] = cookie_user.email
+            return cookie_user
+
     email = request.session.get("user_email")
     if email:
         try:
             return User.objects.get(email=email)
         except User.DoesNotExist:
             return None
-
-    # 2. dsg_token cookie (APIKey lookup)
-    token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
-    if token:
-        try:
-            api_key = APIKey.objects.select_related("user").get(key=token)
-            return api_key.user
-        except APIKey.DoesNotExist:
-            pass
 
     return None
 

@@ -143,6 +143,13 @@ class OAuth2CallbackView(APIView):
         APIKey.objects.filter(user=user, description="OAuth login token").delete()
         api_key = APIKey.objects.create(user=user, description="OAuth login token")
 
+        # Sync the Django session to match the freshly-authenticated user.
+        # Without this, a stale session from an earlier Allauth login as a
+        # different Google account would be returned by web views' _get_web_user
+        # while DRF endpoints (which read dsg_token) would see this user —
+        # causing /web/tos/service-check to act on the wrong account.
+        request.session["user_email"] = user.email
+
         # Check for pending TOS before redirecting
         redirect_url = request.session.pop("oauth_redirect", "/")
         service_name = request.session.pop("oauth_service", None)
