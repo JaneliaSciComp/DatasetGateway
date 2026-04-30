@@ -13,3 +13,4 @@ staticfiles/
 .pixi/
 secrets/
 codebases/
+serve.log
