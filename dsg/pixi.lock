@@ -406,7 +406,7 @@ packages:
 - pypi: ./
   name: dataset-gateway
   version: 0.1.0
-  sha256: 819b0b8396d199662cabf4b62eb2753834d2a506f2f88469f1c1bb1cdf24e43f
+  sha256: bb3ac7160430a239f760607f77165973d5957705702832b50f38bfc46d2a91ed
   requires_dist:
   - django>=5.1,<6.0
   - djangorestframework>=3.15,<4.0

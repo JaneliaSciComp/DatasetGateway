@@ -343,6 +343,13 @@ class MyAccountView(View):
         is_admin = user.admin
         is_sc = UserGroup.objects.filter(user=user, group__name="sc").exists()
 
+        # Long-lived programmatic tokens (expires_at IS NULL).
+        # Login tokens (description="OAuth login token" / "allauth login token")
+        # have a 7-day expiry and are intentionally excluded.
+        api_tokens = APIKey.objects.filter(
+            user=user, expires_at__isnull=True
+        ).order_by("-created")
+
         return render(request, "web/my_account.html", {
             "user": user,
             "groups": groups,
@@ -352,7 +359,51 @@ class MyAccountView(View):
             "acceptances": acceptances,
             "is_admin": is_admin,
             "is_sc": is_sc,
+            "api_tokens": api_tokens,
         })
+
+    def post(self, request):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login")
+
+        action = request.POST.get("action", "")
+
+        if action == "create_token":
+            description = request.POST.get("description", "").strip()
+            if not description:
+                messages.error(request, "Description is required.")
+                return redirect("web-my-account")
+            token = APIKey.objects.create(
+                user=user, description=description, expires_at=None,
+            )
+            log_audit(
+                user, "api_token_created", "APIKey", token.pk,
+                after_state={"user": user.email, "description": description},
+            )
+            messages.success(request, "Token created.")
+            return redirect("web-my-account")
+
+        if action == "revoke_token":
+            token_id = request.POST.get("token_id", "")
+            try:
+                token = APIKey.objects.get(
+                    pk=int(token_id), user=user, expires_at__isnull=True,
+                )
+            except (APIKey.DoesNotExist, ValueError, TypeError):
+                messages.error(request, "Token not found.")
+                return redirect("web-my-account")
+            before = {"user": user.email, "description": token.description}
+            token.delete()
+            log_audit(
+                user, "api_token_revoked", "APIKey", token_id,
+                before_state=before,
+            )
+            messages.success(request, "Token revoked.")
+            return redirect("web-my-account")
+
+        messages.error(request, "Unknown action.")
+        return redirect("web-my-account")
 
 
 class GrantManageView(View):

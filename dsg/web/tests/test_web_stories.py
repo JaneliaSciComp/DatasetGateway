@@ -713,6 +713,81 @@ class TestMyAccountDashboard(_WebTestBase):
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/auth/login", resp.url)
 
+    def test_lists_long_lived_tokens_and_hides_login_tokens(self):
+        from django.utils import timezone
+
+        long_lived = APIKey.objects.create(
+            user=self.regular_user, description="my laptop", expires_at=None,
+        )
+        APIKey.objects.create(
+            user=self.regular_user, description="OAuth login token",
+            expires_at=timezone.now() + timezone.timedelta(days=7),
+        )
+        self._login(self.regular_key)
+        resp = self.client.get("/web/my-account")
+        self.assertContains(resp, "API Tokens")
+        self.assertContains(resp, "my laptop")
+        self.assertContains(resp, long_lived.key)
+        # The expiring login token must not appear
+        self.assertNotContains(resp, "OAuth login token")
+
+    def test_create_token(self):
+        self._login(self.regular_key)
+        resp = self.client.post("/web/my-account", {
+            "action": "create_token", "description": "CAVEclient",
+        })
+        self.assertEqual(resp.status_code, 302)
+        token = APIKey.objects.get(
+            user=self.regular_user, description="CAVEclient",
+        )
+        self.assertIsNone(token.expires_at)
+
+    def test_create_token_requires_description(self):
+        self._login(self.regular_key)
+        before = APIKey.objects.filter(user=self.regular_user).count()
+        resp = self.client.post("/web/my-account", {
+            "action": "create_token", "description": "   ",
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(
+            APIKey.objects.filter(user=self.regular_user).count(), before,
+        )
+
+    def test_revoke_token(self):
+        token = APIKey.objects.create(
+            user=self.regular_user, description="rotate me", expires_at=None,
+        )
+        self._login(self.regular_key)
+        resp = self.client.post("/web/my-account", {
+            "action": "revoke_token", "token_id": str(token.pk),
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(APIKey.objects.filter(pk=token.pk).exists())
+
+    def test_cannot_revoke_other_users_token(self):
+        from django.utils import timezone
+
+        victim_token = APIKey.objects.create(
+            user=self.global_admin, description="not yours", expires_at=None,
+        )
+        self._login(self.regular_key)
+        resp = self.client.post("/web/my-account", {
+            "action": "revoke_token", "token_id": str(victim_token.pk),
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(APIKey.objects.filter(pk=victim_token.pk).exists())
+
+    def test_cannot_revoke_login_token_via_ui(self):
+        # The login token (with expires_at set) should not be revocable via
+        # this UI even if its ID is submitted.
+        resp_id = self.regular_key.pk
+        self._login(self.regular_key)
+        resp = self.client.post("/web/my-account", {
+            "action": "revoke_token", "token_id": str(resp_id),
+        })
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(APIKey.objects.filter(pk=resp_id).exists())
+
 
 # ──────────────────────────────────────────────────────────────
 # TOS landing page tests
