@@ -120,6 +120,10 @@ pixi run serve
 
 If `.env` doesn't exist yet, the setup wizard runs automatically.
 
+Use `pixi run serve-bg` to run detached (survives logout); stdout/stderr
+are appended to `dsg/serve.log` and the PID is written to `dsg/serve.pid`.
+Stop the detached server with `pixi run stop-serve`.
+
 ### 4. Create the first DatasetGateway admin
 
 The first real user must log in via Google OAuth to create their record
@@ -438,7 +442,10 @@ All commands are run from the `dsg/` directory.
 | `python manage.py createsuperuser` | Django built-in | Create a Django admin panel login |
 | `pixi run setup` | Pixi task | Interactive setup wizard — generates `.env` |
 | `pixi run serve` | Pixi task | Start the development server (runs setup if `.env` is missing) |
+| `pixi run serve-bg` | Pixi task | Start the dev server detached; logs to `dsg/serve.log`, PID in `dsg/serve.pid` |
+| `pixi run stop-serve` | Pixi task | Stop the detached development server (kills `serve.pid`, cleans up) |
 | `pixi run deploy` | Pixi task | Build and deploy with Docker |
+| `pixi run stop-deploy` | Pixi task | Stop the Docker deployment |
 | `python manage.py collectstatic` | Django built-in | Collect static files for production |
 | `python manage.py seed_permissions` | Custom | Create `view`, `edit`, `manage`, and `admin` permission types |
 | `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `team_lead`, `user`) |

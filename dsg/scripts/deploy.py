@@ -119,7 +119,7 @@ def main() -> None:
 
   Useful commands:
     pixi run deploy                                     # rebuild and redeploy
-    pixi run stop                                       # stop containers
+    pixi run stop-deploy                                # stop containers
     docker compose -f {cf} logs -f     # view logs
 """)
 

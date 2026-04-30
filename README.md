@@ -37,6 +37,14 @@ pixi run serve
 Starts the Django dev server. If `.env` doesn't exist yet, the setup wizard
 runs automatically.
 
+To run detached (survives logout, logs to `dsg/serve.log`, PID in
+`dsg/serve.pid`):
+
+```bash
+pixi run serve-bg
+pixi run stop-serve   # to stop
+```
+
 ### Option B: Docker production
 
 ```bash

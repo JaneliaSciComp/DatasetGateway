@@ -14,3 +14,4 @@ staticfiles/
 secrets/
 codebases/
 serve.log
+serve.pid

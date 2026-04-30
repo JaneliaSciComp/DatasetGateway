@@ -50,6 +50,10 @@ description = "Interactive setup wizard — generates .env, runs migrations"
 cmd = "bash scripts/serve.sh"
 description = "Run the development server (runs setup if .env is missing)"
 
+[tool.pixi.tasks.serve-bg]
+cmd = "bash scripts/serve.sh --detach"
+description = "Run the development server detached; logs to dsg/serve.log, PID in dsg/serve.pid"
+
 [tool.pixi.tasks.deploy]
 cmd = "python scripts/deploy.py"
 description = "Build and deploy with Docker"
@@ -58,9 +62,13 @@ description = "Build and deploy with Docker"
 cmd = "bash scripts/manage.sh make_admin"
 description = "Create or promote a user to admin (replaces createsuperuser)"
 
-[tool.pixi.tasks.stop]
+[tool.pixi.tasks.stop-deploy]
 cmd = "docker compose -f docker-compose.yml down"
 description = "Stop the Docker deployment"
+
+[tool.pixi.tasks.stop-serve]
+cmd = "bash scripts/stop-serve.sh"
+description = "Stop the detached development server (kills serve.pid, cleans up)"
 
 [tool.pixi.environments]
 default = { solve-group = "default" }

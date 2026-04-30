@@ -61,6 +61,10 @@ will skip records that already exist.
 pixi run serve
 ```
 
+Use `pixi run serve-bg` to run detached (survives logout); logs are
+appended to `dsg/serve.log`, PID stored in `dsg/serve.pid`. Stop with
+`pixi run stop-serve`.
+
 **Docker deployment:**
 ```bash
 pixi run deploy
@@ -361,5 +365,7 @@ inside a Docker container.
 | `bash scripts/manage.sh import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
 | `pixi run setup` | Interactive setup wizard — generates `.env`. |
 | `pixi run serve` | Start the development server (runs setup if `.env` is missing). |
+| `pixi run serve-bg` | Start the dev server detached; logs to `dsg/serve.log`, PID in `dsg/serve.pid`. |
 | `pixi run deploy` | Build and deploy with Docker. |
-| `pixi run stop` | Stop the Docker deployment. |
+| `pixi run stop-deploy` | Stop the Docker deployment. |
+| `pixi run stop-serve` | Stop the detached development server (kills `serve.pid`, cleans up). |
