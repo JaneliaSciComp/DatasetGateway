@@ -11,6 +11,32 @@ from rest_framework.views import APIView
 
 from core.models import APIKey, User
 
+DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION = "Default long-lived API token"
+
+
+def get_or_create_default_long_lived_token(user):
+    """Return the user's stable long-lived API token, creating it if missing.
+
+    The token is identified by a reserved description and a NULL expires_at.
+    Idempotent: subsequent calls return the same token row.
+    """
+    api_key = (
+        APIKey.objects.filter(
+            user=user,
+            description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+            expires_at__isnull=True,
+        )
+        .order_by("created")
+        .first()
+    )
+    if api_key is None:
+        api_key = APIKey.objects.create(
+            user=user,
+            description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+            expires_at=None,
+        )
+    return api_key
+
 
 class AuthorizeView(APIView):
     """GET/POST /api/v1/authorize
@@ -313,6 +339,23 @@ class CreateTokenView(APIView):
             expires_at=None,
         )
         return Response(api_key.key)
+
+
+class LongLivedTokenView(APIView):
+    """GET /api/v1/long_lived_token
+
+    Return the authenticated user's stable long-lived API token. Creates the
+    token on first call and returns the same token thereafter. Use this for
+    integrated frontends that display a token for users to paste into scripts
+    and clients (neuprint-python, clio scripts, curl). Use
+    POST /api/v1/create_token for explicit token-management workflows.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        api_key = get_or_create_default_long_lived_token(request.user)
+        return Response({"token": api_key.key})
 
 
 class UserTokensView(APIView):

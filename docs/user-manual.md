@@ -271,17 +271,24 @@ All API requests authenticate via one of:
 Key endpoints:
 - `GET /api/v1/user/cache` — your identity, groups, permissions
 - `GET /api/v1/whoami` — your identity and roles
-- `POST /api/v1/create_token` — generate a new API token for
-  programmatic use
+- `GET /api/v1/long_lived_token` — fetch your stable long-lived API
+  token (creates it on first call; idempotent thereafter)
+- `POST /api/v1/create_token` — generate a *new* no-expiry API token
+  on every call (CAVEclient / middle_auth compatibility)
 
 ### Generating an API token
 
-For programmatic access (scripts, CLI tools), generate a token:
+For programmatic access (scripts, CLI tools), fetch your stable
+long-lived token:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/create_token \
+curl http://localhost:8000/api/v1/long_lived_token \
   -H "Authorization: Bearer YOUR_EXISTING_TOKEN"
 ```
+
+This returns the same token on every call, so it is safe to paste into
+scripts and configuration files. Use `POST /api/v1/create_token` only
+when you want a fresh, separately-revocable token.
 
 Or use the CAVE OAuth flow at `/api/v1/authorize` to get a token
 via browser redirect.

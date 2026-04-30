@@ -42,6 +42,11 @@ urlpatterns = [
     path("logout", oauth_views.LogoutView.as_view(), name="logout"),
     # Token management
     path("create_token", oauth_views.CreateTokenView.as_view(), name="create-token"),
+    path(
+        "long_lived_token",
+        oauth_views.LongLivedTokenView.as_view(),
+        name="long-lived-token",
+    ),
     path("user/token", oauth_views.UserTokensView.as_view(), name="user-tokens"),
     path("refresh_token", oauth_views.RefreshTokenView.as_view(), name="refresh-token"),
 ]

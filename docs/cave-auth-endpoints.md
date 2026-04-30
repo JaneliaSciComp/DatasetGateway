@@ -220,11 +220,36 @@ Called by the CAVEclient Python library for programmatic token management.
 
 #### `POST /api/v1/create_token`
 
-Generate a new API token for the authenticated user.
+Generate a new API token for the authenticated user. Always creates a new
+no-expiry `APIKey` row on every call. Use this for explicit token-management
+workflows (CAVEclient, middle_auth compatibility) where the caller wants a
+fresh token.
 
 **Request:** Header: `Authorization: Bearer {token}`
 
 **Response (200):** New token string.
+
+#### `GET /api/v1/long_lived_token`
+
+Return the authenticated user's stable long-lived API token. Creates the
+token on first call (description `Default long-lived API token`,
+`expires_at = NULL`) and returns the same token on every subsequent call.
+This is the endpoint integrated frontends should proxy to when they want to
+display a token for users to paste into scripts and clients
+(`neuprint-python`, clio scripts, `curl`).
+
+The OAuth login token row backing the `dsg_token` browser cookie is never
+selected as the long-lived token, so calling this endpoint does not rotate
+the browser session.
+
+**Request:** standard DSG authentication via `dsg_token` cookie, Bearer
+token, or supported query token.
+
+**Response (200):**
+
+```json
+{ "token": "<stable-token>" }
+```
 
 #### `GET /api/v1/user/token`
 
