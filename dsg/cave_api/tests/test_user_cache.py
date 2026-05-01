@@ -130,6 +130,57 @@ class TestUserCacheView(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["email"], "alice@example.org")
 
+    def test_public_dataset_tos_appears_in_missing_tos(self):
+        """Public datasets with a TOS should appear in missing_tos even
+        when the user has no grant — clients use this to redirect to DSG."""
+        tos_doc = TOSDocument.objects.create(name="Hemibrain TOS", text="Accept.")
+        Dataset.objects.create(
+            name="hemibrain", tos=tos_doc, access_mode=Dataset.ACCESS_PUBLIC,
+        )
+
+        resp = self.client.get("/api/v1/user/cache", **self._auth_header())
+        data = resp.json()
+        self.assertTrue(any(m["dataset_name"] == "hemibrain" for m in data["missing_tos"]))
+        # User has no grant, so dataset should not appear in permissions_v2
+        self.assertNotIn("hemibrain", data["permissions_v2"])
+
+        # After accepting, it should drop out of missing_tos
+        TOSAcceptance.objects.create(user=self.user, tos_document=tos_doc)
+        cache.clear()
+        resp = self.client.get("/api/v1/user/cache", **self._auth_header())
+        data = resp.json()
+        self.assertFalse(any(m["dataset_name"] == "hemibrain" for m in data["missing_tos"]))
+
+    def test_closed_dataset_without_grant_not_in_missing_tos(self):
+        """Closed datasets without a grant should NOT appear in missing_tos."""
+        tos_doc = TOSDocument.objects.create(name="Closed TOS", text="Accept.")
+        Dataset.objects.create(
+            name="restricted", tos=tos_doc, access_mode=Dataset.ACCESS_CLOSED,
+        )
+
+        resp = self.client.get("/api/v1/user/cache", **self._auth_header())
+        data = resp.json()
+        self.assertFalse(any(m["dataset_name"] == "restricted" for m in data["missing_tos"]))
+
+    def test_public_dataset_service_tos_in_missing_tos(self):
+        """Service-specific TOS on a public dataset must surface in missing_tos
+        even without a grant."""
+        Dataset.objects.create(name="hemibrain", access_mode=Dataset.ACCESS_PUBLIC)
+        dataset = Dataset.objects.get(name="hemibrain")
+        svc = Service.objects.create(name="celltyping", display_name="Cell Typing")
+        TOSDocument.objects.create(
+            name="Hemi CT TOS", text="Service terms.", dataset=dataset, service=svc,
+        )
+
+        resp = self.client.get(
+            "/api/v1/user/cache?service=celltyping", **self._auth_header()
+        )
+        data = resp.json()
+        self.assertTrue(any(
+            m["dataset_name"] == "hemibrain" and m.get("service") == "celltyping"
+            for m in data["missing_tos"]
+        ))
+
     def test_service_tos_filtering(self):
         """Service-specific TOS blocks permissions_v2 when not accepted."""
         view_perm = Permission.objects.create(name="view")

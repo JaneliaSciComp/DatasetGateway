@@ -191,12 +191,14 @@ def _datasets_missing_tos(user, service=None):
     """Port of User.datasets_missing_tos().
 
     Returns list of dicts for datasets where user has permissions (via
-    groups or direct grants) but hasn't accepted the required TOS.
+    groups or direct grants) — or any public dataset — but hasn't accepted
+    the required TOS. Public datasets are included even without a grant so
+    clients know to redirect users to DSG to accept the TOS.
 
     When *service* is given, also includes service-specific TOS documents
     the user hasn't accepted.
     """
-    from .models import Grant, GroupDatasetPermission, TOSAcceptance, TOSDocument
+    from .models import Dataset, Grant, GroupDatasetPermission, TOSAcceptance, TOSDocument
 
     tos_user_id = user.parent_id if user.is_service_account else user.pk
 
@@ -220,7 +222,17 @@ def _datasets_missing_tos(user, service=None):
         .distinct()
     )
 
-    datasets_with_tos = group_datasets | grant_datasets
+    # All public datasets that have a TOS — applies to every user, since
+    # public datasets are self-service and a TOS may be required to access.
+    public_datasets = set(
+        Dataset.objects.filter(
+            access_mode=Dataset.ACCESS_PUBLIC,
+            tos__isnull=False,
+        )
+        .values_list("id", "name", "tos_id", "tos__name")
+    )
+
+    datasets_with_tos = group_datasets | grant_datasets | public_datasets
 
     # Find which TOS the user has already accepted
     accepted_tos_ids = set(
@@ -243,13 +255,18 @@ def _datasets_missing_tos(user, service=None):
     # Service-specific TOS: find active service TOS docs the user hasn't accepted
     if service:
         now = timezone.now()
-        # Datasets the user has any permission on (ignoring TOS)
+        # Datasets the user has any permission on (ignoring TOS), plus all
+        # public datasets — service-specific TOS on public datasets must be
+        # surfaced too, even without a pre-existing grant.
         user_dataset_ids = set(
             GroupDatasetPermission.objects.filter(
                 group__user_groups__user=user,
             ).values_list("dataset_id", flat=True)
         ) | set(
             Grant.objects.filter(user=user).values_list("dataset_id", flat=True)
+        ) | set(
+            Dataset.objects.filter(access_mode=Dataset.ACCESS_PUBLIC)
+            .values_list("id", flat=True)
         )
 
         service_tos_docs = (
