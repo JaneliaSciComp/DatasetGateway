@@ -1204,6 +1204,81 @@ class TestServiceTableManagement(_WebTestBase):
 
 
 # ──────────────────────────────────────────────────────────────
+# Datasets page sectioning (granted vs public)
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestDatasetsPageSections(_WebTestBase):
+    """The /web/datasets page splits granted datasets from public datasets."""
+
+    def setUp(self):
+        super().setUp()
+        # A public dataset with no grant for any test user — should appear in
+        # the "Public datasets" section even though regular_user has no grant.
+        self.hemibrain = Dataset.objects.create(
+            name="hemibrain", access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        # A closed dataset regular_user has no grant on — should NOT appear
+        # for non-admins.
+        self.secret = Dataset.objects.create(
+            name="secret", access_mode=Dataset.ACCESS_CLOSED,
+        )
+
+    def test_regular_user_sees_public_dataset_without_grant(self):
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "hemibrain")
+        self.assertContains(resp, "Public datasets")
+        self.assertNotContains(resp, "secret")  # closed, no grant
+
+    def test_regular_user_granted_dataset_in_your_section(self):
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset, permission=self.view_perm,
+        )
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        body = resp.content.decode()
+        # "Your datasets" appears before "Public datasets"
+        self.assertIn("Your datasets", body)
+        self.assertIn("Public datasets", body)
+        self.assertLess(body.index("Your datasets"), body.index("Public datasets"))
+        # test-dataset (granted) listed before hemibrain (public-only)
+        self.assertLess(body.index("test-dataset"), body.index("hemibrain"))
+
+    def test_public_dataset_with_unaccepted_tos_shows_acceptance_link(self):
+        tos = TOSDocument.objects.create(
+            name="Hemi TOS", text="Accept.",
+            dataset=self.hemibrain, invite_token="hemi-tok",
+        )
+        self.hemibrain.tos = tos
+        self.hemibrain.save()
+
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "/web/tos/hemi-tok/")
+        self.assertContains(resp, "acceptance needed")
+
+    def test_admin_sees_closed_ungranted_in_your_section(self):
+        self._login(self.global_admin_key)
+        resp = self.client.get("/web/datasets")
+        body = resp.content.decode()
+        # Admin sees the closed ungranted dataset under "Your datasets"
+        self.assertIn("Your datasets", body)
+        self.assertIn("secret", body)
+        self.assertLess(body.index("secret"), body.index("Public datasets"))
+        # And public ungranted under "Public datasets"
+        self.assertLess(body.index("Public datasets"), body.index("hemibrain"))
+
+    def test_empty_state_when_no_datasets(self):
+        # Remove all datasets
+        Dataset.objects.all().delete()
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        self.assertContains(resp, "No datasets available")
+
+
+# ──────────────────────────────────────────────────────────────
 # TOS Service Check
 # ──────────────────────────────────────────────────────────────
 

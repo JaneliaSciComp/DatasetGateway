@@ -3,53 +3,22 @@
 {% block content %}
 <h1>Datasets</h1>
 
-{% for item in dataset_list %}
-<div class="card">
-    <h3>{{ item.dataset.name }}</h3>
-    {% if item.dataset.description %}<p>{{ item.dataset.description }}</p>{% endif %}
-
-    {% for tos in item.tos_docs %}
-        <p>
-            {% if tos.accepted %}
-                <span title="Accepted" style="color:#34a853;">&#x2713;</span>
-            {% else %}
-                <span title="Acceptance needed" style="color:#d93025;font-size:1.2em;">&#x26A0;&#xFE0F;</span>
-            {% endif %}
-            {% if tos.service %}
-                TOS ({{ tos.service.display_name|default:tos.service.name }}):
-            {% else %}
-                TOS:
-            {% endif %}
-            <a href="/web/tos/{{ tos.invite_token }}/">{{ tos.name }}</a>
-            {% if not tos.accepted %}
-                <span style="color:#d93025;font-size:12px;font-weight:bold;margin-left:5px;">— acceptance needed</span>
-            {% endif %}
-            <span style="color:#999;font-size:12px;margin-left:5px;">{{ request.get_host }}/web/tos/{{ tos.invite_token }}/</span>
-        </p>
-    {% endfor %}
-
-    {% if item.versions %}
-    <table>
-        <tr><th>Version</th><th>Buckets</th><th>Public</th></tr>
-        {% for v in item.versions %}
-        <tr>
-            <td>{{ v.version }}</td>
-            <td>{{ v.buckets.all|join:", " }}</td>
-            <td>{{ v.is_public|yesno:"Yes,No" }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-    {% endif %}
-
-    {% if item.can_manage %}
-        <a href="/web/grants/{{ item.dataset.name }}" class="btn btn-sm">Manage Grants</a>
-        <a href="/web/public-roots/{{ item.dataset.name }}" class="btn btn-sm">Service Tables & Roots</a>
-    {% endif %}
-    {% if is_sc_or_admin %}
-        <a href="/web/dataset-admins/{{ item.dataset.name }}" class="btn btn-sm">Manage Dataset Admins</a>
-    {% endif %}
-</div>
-{% empty %}
-<p>No datasets available.</p>
+{% if your_datasets %}
+<h2>Your datasets</h2>
+{% for item in your_datasets %}
+{% include "web/_dataset_card.html" with item=item is_sc_or_admin=is_sc_or_admin %}
 {% endfor %}
+{% endif %}
+
+{% if public_datasets %}
+<h2>Public datasets</h2>
+<p>These datasets are open for self-service access. Accept any required TOS to gain access.</p>
+{% for item in public_datasets %}
+{% include "web/_dataset_card.html" with item=item is_sc_or_admin=is_sc_or_admin %}
+{% endfor %}
+{% endif %}
+
+{% if not your_datasets and not public_datasets %}
+<p>No datasets available.</p>
+{% endif %}
 {% endblock %}

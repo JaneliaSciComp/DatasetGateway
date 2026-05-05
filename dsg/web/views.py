@@ -5,6 +5,7 @@ import logging
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import logout as auth_logout
+from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -108,7 +109,15 @@ class LogoutView(View):
 
 
 class DatasetsView(View):
-    """GET /web/datasets — Browse datasets (login required)."""
+    """GET /web/datasets — Browse datasets (login required).
+
+    Splits datasets into two sections:
+    - "your_datasets": datasets the user has been granted access to (plus
+      every closed dataset for global admins, who manage them all).
+    - "public_datasets": public datasets the user does not yet have a grant
+      on. These are visible to everyone so users can see the dataset and
+      accept any required TOS to gain self-service access.
+    """
 
     def get(self, request):
         user = _get_web_user(request)
@@ -117,13 +126,22 @@ class DatasetsView(View):
 
         is_sc_or_admin = user and _is_sc_or_admin(user)
 
+        granted_ids = set(
+            Grant.objects.filter(user=user).values_list("dataset_id", flat=True)
+        )
+
         if user.admin:
-            datasets = Dataset.objects.all().order_by("name")
+            your_qs = Dataset.objects.filter(
+                Q(pk__in=granted_ids) | Q(access_mode=Dataset.ACCESS_CLOSED)
+            ).order_by("name")
         else:
-            granted_ids = Grant.objects.filter(user=user).values_list(
-                "dataset_id", flat=True
-            )
-            datasets = Dataset.objects.filter(pk__in=granted_ids).order_by("name")
+            your_qs = Dataset.objects.filter(pk__in=granted_ids).order_by("name")
+
+        public_qs = (
+            Dataset.objects.filter(access_mode=Dataset.ACCESS_PUBLIC)
+            .exclude(pk__in=granted_ids)
+            .order_by("name")
+        )
 
         # TOS IDs the current user has already accepted
         accepted_tos_ids = set(
@@ -132,31 +150,30 @@ class DatasetsView(View):
             )
         )
 
-        dataset_list = []
-        for d in datasets:
+        def _build_entry(d):
             versions = DatasetVersion.objects.filter(dataset=d).prefetch_related("buckets")
-            can_manage = _can_manage_dataset(user, d)
-            has_service_tables = ServiceTable.objects.filter(dataset=d).exists()
-            # All active TOS documents for this dataset (general + service-specific)
             tos_docs = list(
                 TOSDocument.objects.filter(dataset=d)
                 .select_related("service")
                 .order_by("service__name", "name")
             )
-            # Annotate each TOS doc with acceptance status
             for tos in tos_docs:
                 tos.accepted = tos.pk in accepted_tos_ids
-            dataset_list.append({
+            return {
                 "dataset": d,
                 "versions": versions,
-                "can_manage": can_manage,
-                "has_service_tables": has_service_tables,
+                "can_manage": _can_manage_dataset(user, d),
+                "has_service_tables": ServiceTable.objects.filter(dataset=d).exists(),
                 "tos_docs": tos_docs,
-            })
+            }
+
+        your_datasets = [_build_entry(d) for d in your_qs]
+        public_datasets = [_build_entry(d) for d in public_qs]
 
         return render(request, "web/datasets.html", {
             "user": user,
-            "dataset_list": dataset_list,
+            "your_datasets": your_datasets,
+            "public_datasets": public_datasets,
             "is_sc_or_admin": is_sc_or_admin,
         })
 
