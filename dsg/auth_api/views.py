@@ -12,19 +12,35 @@ from core.models import (
     Grant,
     GroupDatasetPermission,
     Permission,
+    ServiceAccount,
+    ServiceAccountGrant,
     TOSAcceptance,
     TOSDocument,
 )
 
 
 class WhoAmIView(APIView):
-    """GET /api/v1/whoami — User identity + roles."""
+    """GET /api/v1/whoami — Principal identity + roles."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
         cache = getattr(request, "permission_cache", None)
+
+        if isinstance(user, ServiceAccount):
+            return Response({
+                "id": user.pk,
+                "email": user.email,
+                "name": user.name,
+                "picture_url": "",
+                "admin": False,
+                "is_active": user.is_active,
+                "groups": [],
+                "datasets_admin": [],
+                "service_account": True,
+                "description": user.description,
+            })
 
         return Response({
             "id": user.pk,
@@ -46,7 +62,12 @@ class DatasetsListView(APIView):
     def get(self, request):
         user = request.user
 
-        if user.admin:
+        if isinstance(user, ServiceAccount):
+            sa_dataset_ids = ServiceAccountGrant.objects.filter(
+                service_account=user
+            ).values_list("dataset_id", flat=True)
+            datasets = Dataset.objects.filter(pk__in=sa_dataset_ids).distinct()
+        elif user.admin:
             datasets = Dataset.objects.all()
         else:
             # Datasets where user has group permissions or direct grants
@@ -135,6 +156,29 @@ class AuthorizeDecisionView(APIView):
             return Response(
                 {"allowed": False, "reason": "Dataset not found"}, status=404
             )
+
+        # Service accounts have a simpler decision path: no admin shortcut,
+        # no TOS, no group permissions — only direct ServiceAccountGrant.
+        if isinstance(user, ServiceAccount):
+            sa_filter = {
+                "service_account": user,
+                "dataset": dataset,
+                "permission__name": permission_name,
+            }
+            if version:
+                try:
+                    dv = DatasetVersion.objects.get(dataset=dataset, version=version)
+                    has_grant = ServiceAccountGrant.objects.filter(
+                        Q(dataset_version=dv) | Q(dataset_version__isnull=True),
+                        **sa_filter,
+                    ).exists()
+                except DatasetVersion.DoesNotExist:
+                    has_grant = False
+            else:
+                has_grant = ServiceAccountGrant.objects.filter(**sa_filter).exists()
+            if has_grant:
+                return Response({"allowed": True, "reason": "service_account_grant"})
+            return Response({"allowed": False, "reason": "no_permission"})
 
         # Admins always have access
         if user.admin:

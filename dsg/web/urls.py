@@ -13,4 +13,6 @@ urlpatterns = [
     path("dataset-admins/<slug:dataset>", views.DatasetAdminManageView.as_view(), name="web-dataset-admin-manage"),
     path("public-roots/<slug:dataset>", views.PublicRootManageView.as_view(), name="web-public-roots"),
     path("group/<slug:group_name>/", views.GroupDashboardView.as_view(), name="web-group-dashboard"),
+    path("service-accounts", views.ServiceAccountListView.as_view(), name="web-service-accounts"),
+    path("service-accounts/<slug:name>", views.ServiceAccountDetailView.as_view(), name="web-service-account-detail"),
 ]

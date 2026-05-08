@@ -37,18 +37,26 @@ class TokenAuthentication(BaseAuthentication):
         if token is None:
             return None
 
-        user = self._get_user_for_token(token)
-        if user is None:
+        principal = self._get_principal_for_token(token)
+        if principal is None:
             raise AuthenticationFailed("Invalid or expired token.")
 
-        if not user.is_active:
+        from .models import ServiceAccount
+
+        if not principal.is_active:
+            if isinstance(principal, ServiceAccount):
+                raise AuthenticationFailed("Service account is disabled.")
             raise AuthenticationFailed("User account is disabled.")
 
-        # Attach cached permissions to the request for downstream views
-        cache_key = f"{self.CACHE_PREFIX}{user.pk}"
+        # Attach cached permissions to the request for downstream views.
+        # SA pks could collide with User pks, so namespace the cache key.
+        if isinstance(principal, ServiceAccount):
+            cache_key = f"{self.CACHE_PREFIX}sa_{principal.pk}"
+        else:
+            cache_key = f"{self.CACHE_PREFIX}{principal.pk}"
         permission_cache = cache.get(cache_key)
         if permission_cache is None:
-            permission_cache = build_permission_cache(user)
+            permission_cache = build_permission_cache(principal)
             cache.set(
                 cache_key,
                 permission_cache,
@@ -56,7 +64,7 @@ class TokenAuthentication(BaseAuthentication):
             )
         request.permission_cache = permission_cache
 
-        return (user, token)
+        return (principal, token)
 
     def _extract_token(self, request):
         """Extract token from cookie, header, or query param."""
@@ -77,19 +85,33 @@ class TokenAuthentication(BaseAuthentication):
 
         return None
 
-    def _get_user_for_token(self, token):
-        """Look up user by API key token."""
-        from .models import APIKey
+    def _get_principal_for_token(self, token):
+        """Look up the principal (User or ServiceAccount) for a bearer token.
+
+        Tries APIKey first, then ServiceAccountToken. Returns None if neither
+        matches or the APIKey is expired.
+        """
+        from .models import APIKey, ServiceAccountToken
 
         try:
             api_key = APIKey.objects.select_related("user").get(key=token)
         except APIKey.DoesNotExist:
+            api_key = None
+
+        if api_key is not None:
+            if api_key.is_expired:
+                return None
+            APIKey.objects.filter(pk=api_key.pk).update(last_used=timezone.now())
+            return api_key.user
+
+        try:
+            sa_token = ServiceAccountToken.objects.select_related(
+                "service_account"
+            ).get(key=token)
+        except ServiceAccountToken.DoesNotExist:
             return None
 
-        if api_key.is_expired:
-            return None
-
-        # Update last_used timestamp
-        APIKey.objects.filter(pk=api_key.pk).update(last_used=timezone.now())
-
-        return api_key.user
+        ServiceAccountToken.objects.filter(pk=sa_token.pk).update(
+            last_used=timezone.now()
+        )
+        return sa_token.service_account

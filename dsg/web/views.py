@@ -23,6 +23,9 @@ from core.models import (
     GroupDatasetPermission,
     Permission,
     PublicRoot,
+    ServiceAccount,
+    ServiceAccountGrant,
+    ServiceAccountToken,
     ServiceTable,
     TOSAcceptance,
     TOSDocument,
@@ -462,6 +465,14 @@ class GrantManageView(View):
             permissions = permissions.exclude(name="admin")
         versions = DatasetVersion.objects.filter(dataset=ds)
 
+        sa_grants = ServiceAccountGrant.objects.filter(dataset=ds).select_related(
+            "service_account", "permission", "dataset_version", "granted_by",
+        ).order_by("service_account__name")
+        granted_sa_ids = {g.service_account_id for g in sa_grants}
+        # Available SAs: active ones not yet granted at this dataset (regardless
+        # of permission level — admins can still add multiple permissions).
+        available_sas = ServiceAccount.objects.filter(is_active=True).order_by("name")
+
         return render(request, "web/grant_manage.html", {
             "user": user,
             "dataset": ds,
@@ -470,6 +481,8 @@ class GrantManageView(View):
             "versions": versions,
             "group_names": group_names,
             "is_admin_user": is_admin_user,
+            "sa_grants": sa_grants,
+            "available_sas": available_sas,
         })
 
     def post(self, request, dataset):
@@ -550,6 +563,58 @@ class GrantManageView(View):
                 from core.iam import sync_user_dataset_iam
                 sync_user_dataset_iam(revoked_user, ds)
                 messages.success(request, "Grant revoked")
+
+        elif action == "grant_sa":
+            sa_id = request.POST.get("service_account_id")
+            perm_id = request.POST.get("permission")
+            version_id = request.POST.get("version") or None
+            sa = get_object_or_404(ServiceAccount, pk=sa_id)
+            perm = get_object_or_404(Permission, pk=perm_id)
+            if perm.name == "admin" and not is_admin_user:
+                messages.error(request, "You cannot grant admin permission")
+                return redirect("web-grant-manage", dataset=dataset)
+            dv = DatasetVersion.objects.get(pk=version_id) if version_id else None
+            sa_grant, created = ServiceAccountGrant.objects.get_or_create(
+                service_account=sa, dataset=ds,
+                dataset_version=dv, permission=perm,
+                defaults={"granted_by": user},
+            )
+            if created:
+                log_audit(
+                    user, "sa_grant_created", "ServiceAccountGrant", sa_grant.pk,
+                    after_state={
+                        "service_account": sa.name, "dataset": ds.name,
+                        "permission": perm.name,
+                        "version": dv.version if dv else None,
+                    },
+                )
+                messages.success(request, f"Granted {perm.name} to service account {sa.name}")
+            else:
+                messages.info(request, f"{sa.name} already has {perm.name} on {ds.name}")
+
+        elif action == "revoke_sa_grant":
+            sa_grant_id = request.POST.get("sa_grant_id")
+            try:
+                sa_grant = ServiceAccountGrant.objects.select_related(
+                    "service_account", "dataset", "permission", "dataset_version",
+                ).get(pk=sa_grant_id, dataset=ds)
+            except (ServiceAccountGrant.DoesNotExist, ValueError, TypeError):
+                messages.error(request, "Service account grant not found")
+                return redirect("web-grant-manage", dataset=dataset)
+            if not is_admin_user and sa_grant.permission.name == "admin":
+                messages.error(request, "You cannot revoke admin permission")
+                return redirect("web-grant-manage", dataset=dataset)
+            before = {
+                "service_account": sa_grant.service_account.name,
+                "dataset": ds.name, "permission": sa_grant.permission.name,
+                "version": sa_grant.dataset_version.version if sa_grant.dataset_version else None,
+            }
+            sa_grant.delete()
+            log_audit(
+                user, "sa_grant_revoked", "ServiceAccountGrant", sa_grant_id,
+                before_state=before,
+            )
+            messages.success(request, "Service account grant revoked")
 
         return redirect("web-grant-manage", dataset=dataset)
 
@@ -1062,3 +1127,258 @@ class GroupDashboardView(View):
                 messages.error(request, "Member not found")
 
         return redirect("web-group-dashboard", group_name=group_name)
+
+
+class ServiceAccountListView(View):
+    """GET/POST /web/service-accounts — Admin list + create page."""
+
+    def get(self, request):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login")
+        if not user.admin:
+            return render(request, "web/access_denied.html", {"user": user})
+
+        sas = (
+            ServiceAccount.objects.all()
+            .select_related("created_by")
+            .order_by("name")
+        )
+        rows = [
+            {
+                "name": sa.name,
+                "description": sa.description,
+                "is_active": sa.is_active,
+                "created_by": sa.created_by.email if sa.created_by else "",
+                "created": sa.created,
+                "token_count": sa.tokens.count(),
+                "grant_count": sa.grants.count(),
+            }
+            for sa in sas
+        ]
+        return render(request, "web/service_accounts.html", {
+            "user": user,
+            "service_accounts": rows,
+        })
+
+    def post(self, request):
+        user = _get_web_user(request)
+        if not user:
+            return redirect("/auth/login")
+        if not user.admin:
+            return render(request, "web/access_denied.html", {"user": user})
+
+        action = request.POST.get("action")
+        if action != "create":
+            messages.error(request, "Unknown action.")
+            return redirect("web-service-accounts")
+
+        name = request.POST.get("name", "").strip()
+        description = request.POST.get("description", "").strip()
+        if not name:
+            messages.error(request, "Name is required.")
+            return redirect("web-service-accounts")
+
+        from django.core.exceptions import ValidationError
+        from django.core.validators import validate_slug
+        try:
+            validate_slug(name)
+        except ValidationError:
+            messages.error(
+                request,
+                "Name must be a slug (letters, numbers, hyphens, underscores).",
+            )
+            return redirect("web-service-accounts")
+
+        if ServiceAccount.objects.filter(name=name).exists():
+            messages.error(request, f"A service account named '{name}' already exists.")
+            return redirect("web-service-accounts")
+
+        sa = ServiceAccount.objects.create(
+            name=name, description=description, created_by=user,
+        )
+        log_audit(
+            user, "service_account_created", "ServiceAccount", sa.pk,
+            after_state={"name": name, "description": description},
+        )
+        messages.success(request, f"Created service account '{name}'.")
+        return redirect("web-service-account-detail", name=name)
+
+
+class ServiceAccountDetailView(View):
+    """GET/POST /web/service-accounts/<name> — Admin SA detail + management."""
+
+    def _get_sa_or_403(self, request, name):
+        user = _get_web_user(request)
+        if not user:
+            return None, redirect("/auth/login")
+        if not user.admin:
+            return None, render(request, "web/access_denied.html", {"user": user})
+        try:
+            sa = ServiceAccount.objects.get(name=name)
+        except ServiceAccount.DoesNotExist:
+            raise Http404("Service account not found")
+        return (user, sa), None
+
+    def get(self, request, name):
+        result, err = self._get_sa_or_403(request, name)
+        if err:
+            return err
+        user, sa = result
+
+        tokens = sa.tokens.all().order_by("-created")
+        grants = sa.grants.select_related(
+            "dataset", "dataset_version", "permission", "granted_by"
+        ).order_by("dataset__name")
+
+        new_token_plain = request.session.pop(f"sa_new_token_{sa.pk}", None)
+
+        return render(request, "web/service_account_detail.html", {
+            "user": user,
+            "sa": sa,
+            "tokens": tokens,
+            "grants": grants,
+            "datasets": Dataset.objects.all().order_by("name"),
+            "permissions": Permission.objects.all(),
+            "versions": DatasetVersion.objects.all().select_related("dataset").order_by("dataset__name", "version"),
+            "new_token_plain": new_token_plain,
+        })
+
+    def post(self, request, name):
+        result, err = self._get_sa_or_403(request, name)
+        if err:
+            return err
+        user, sa = result
+
+        action = request.POST.get("action")
+
+        if action == "update_description":
+            description = request.POST.get("description", "").strip()
+            before = {"description": sa.description}
+            sa.description = description
+            sa.save(update_fields=["description", "updated"])
+            log_audit(
+                user, "service_account_updated", "ServiceAccount", sa.pk,
+                before_state=before, after_state={"description": description},
+            )
+            messages.success(request, "Description updated.")
+            return redirect("web-service-account-detail", name=name)
+
+        if action == "toggle_active":
+            sa.is_active = not sa.is_active
+            sa.save(update_fields=["is_active", "updated"])
+            log_audit(
+                user,
+                "service_account_enabled" if sa.is_active else "service_account_disabled",
+                "ServiceAccount", sa.pk,
+                after_state={"is_active": sa.is_active},
+            )
+            messages.success(
+                request,
+                f"Service account {'enabled' if sa.is_active else 'disabled'}.",
+            )
+            return redirect("web-service-account-detail", name=name)
+
+        if action == "delete_sa":
+            confirm = request.POST.get("confirm_name", "").strip()
+            if confirm != sa.name:
+                messages.error(request, "Confirmation name did not match. Service account NOT deleted.")
+                return redirect("web-service-account-detail", name=name)
+            sa_pk = sa.pk
+            before = {
+                "name": sa.name, "description": sa.description,
+                "token_count": sa.tokens.count(), "grant_count": sa.grants.count(),
+            }
+            sa.delete()
+            log_audit(
+                user, "service_account_deleted", "ServiceAccount", sa_pk,
+                before_state=before,
+            )
+            messages.success(request, f"Service account '{name}' deleted.")
+            return redirect("web-service-accounts")
+
+        if action == "mint_token":
+            description = request.POST.get("description", "").strip()
+            if not description:
+                messages.error(request, "Token description is required.")
+                return redirect("web-service-account-detail", name=name)
+            token = ServiceAccountToken.objects.create(
+                service_account=sa, description=description,
+            )
+            log_audit(
+                user, "sa_token_created", "ServiceAccountToken", token.pk,
+                after_state={"service_account": sa.name, "description": description},
+            )
+            request.session[f"sa_new_token_{sa.pk}"] = token.key
+            messages.success(
+                request,
+                "Token created. Copy it now — it will not be shown again.",
+            )
+            return redirect("web-service-account-detail", name=name)
+
+        if action == "revoke_token":
+            token_id = request.POST.get("token_id", "")
+            try:
+                token = ServiceAccountToken.objects.get(pk=int(token_id), service_account=sa)
+            except (ServiceAccountToken.DoesNotExist, ValueError, TypeError):
+                messages.error(request, "Token not found.")
+                return redirect("web-service-account-detail", name=name)
+            before = {"service_account": sa.name, "description": token.description}
+            token.delete()
+            log_audit(
+                user, "sa_token_revoked", "ServiceAccountToken", token_id,
+                before_state=before,
+            )
+            messages.success(request, "Token revoked.")
+            return redirect("web-service-account-detail", name=name)
+
+        if action == "add_grant":
+            dataset_id = request.POST.get("dataset_id")
+            perm_id = request.POST.get("permission")
+            version_id = request.POST.get("version") or None
+            ds = get_object_or_404(Dataset, pk=dataset_id)
+            perm = get_object_or_404(Permission, pk=perm_id)
+            dv = DatasetVersion.objects.get(pk=version_id) if version_id else None
+            grant, created = ServiceAccountGrant.objects.get_or_create(
+                service_account=sa, dataset=ds,
+                dataset_version=dv, permission=perm,
+                defaults={"granted_by": user},
+            )
+            if created:
+                log_audit(
+                    user, "sa_grant_created", "ServiceAccountGrant", grant.pk,
+                    after_state={
+                        "service_account": sa.name, "dataset": ds.name,
+                        "permission": perm.name,
+                        "version": dv.version if dv else None,
+                    },
+                )
+                messages.success(request, f"Granted {perm.name} on {ds.name} to {sa.name}.")
+            else:
+                messages.info(request, f"{sa.name} already has {perm.name} on {ds.name}.")
+            return redirect("web-service-account-detail", name=name)
+
+        if action == "revoke_grant":
+            grant_id = request.POST.get("grant_id")
+            try:
+                grant = ServiceAccountGrant.objects.select_related(
+                    "dataset", "permission", "dataset_version",
+                ).get(pk=int(grant_id), service_account=sa)
+            except (ServiceAccountGrant.DoesNotExist, ValueError, TypeError):
+                messages.error(request, "Grant not found.")
+                return redirect("web-service-account-detail", name=name)
+            before = {
+                "service_account": sa.name, "dataset": grant.dataset.name,
+                "permission": grant.permission.name,
+                "version": grant.dataset_version.version if grant.dataset_version else None,
+            }
+            grant.delete()
+            log_audit(
+                user, "sa_grant_revoked", "ServiceAccountGrant", grant_id,
+                before_state=before,
+            )
+            messages.success(request, "Grant revoked.")
+            return redirect("web-service-account-detail", name=name)
+
+        messages.error(request, "Unknown action.")
+        return redirect("web-service-account-detail", name=name)

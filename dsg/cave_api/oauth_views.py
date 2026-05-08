@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.models import APIKey, User
+from core.permissions import IsHumanUser
 
 DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION = "Default long-lived API token"
 
@@ -330,7 +331,7 @@ class CreateTokenView(APIView):
     Generate a new API token for the authenticated user.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsHumanUser]
 
     def post(self, request):
         api_key = APIKey.objects.create(
@@ -351,7 +352,7 @@ class LongLivedTokenView(APIView):
     POST /api/v1/create_token for explicit token-management workflows.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsHumanUser]
 
     def get(self, request):
         api_key = get_or_create_default_long_lived_token(request.user)
@@ -364,7 +365,7 @@ class UserTokensView(APIView):
     List all tokens for the current user.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsHumanUser]
 
     def get(self, request):
         tokens = APIKey.objects.filter(user=request.user).values(
@@ -379,7 +380,7 @@ class RefreshTokenView(APIView):
     Deprecated but still referenced in CAVEclient.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsHumanUser]
 
     def get(self, request):
         return Response({"status": "deprecated", "message": "Use /api/v1/create_token instead"})

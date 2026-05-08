@@ -12,6 +12,22 @@ class IsAdmin(BasePermission):
         return getattr(request.user, "admin", False)
 
 
+class IsHumanUser(BasePermission):
+    """Rejects ServiceAccount principals — endpoint is for real users only.
+
+    Use alongside IsAuthenticated for endpoints that mint or list per-user
+    APIKey rows, or otherwise embed assumptions that the principal is a
+    User row in the database.
+    """
+
+    def has_permission(self, request, view):
+        from .models import ServiceAccount
+
+        if request.user is None:
+            return False
+        return not isinstance(request.user, ServiceAccount)
+
+
 class IsDatasetAdmin(BasePermission):
     """Allows access if user is admin of the dataset in context.
 
@@ -20,6 +36,8 @@ class IsDatasetAdmin(BasePermission):
     """
 
     def has_permission(self, request, view):
+        from .models import ServiceAccount
+
         if request.user is None:
             return False
         if getattr(request.user, "admin", False):
@@ -34,6 +52,11 @@ class IsDatasetAdmin(BasePermission):
         cache = getattr(request, "permission_cache", None)
         if cache:
             return dataset_name in cache.get("datasets_admin", [])
+
+        # Service accounts never have admin grants; only the User path falls
+        # back to a direct Grant query.
+        if isinstance(request.user, ServiceAccount):
+            return False
 
         from .models import Grant
 

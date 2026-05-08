@@ -433,3 +433,140 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.actor} {self.action} {self.target_type}:{self.target_id}"
+
+
+class ServiceAccount(models.Model):
+    """A non-human identity for programmatic access.
+
+    Distinct from User: no Google OAuth, no TOS, no group membership, no
+    DSG-service login. Holds long-lived API tokens and dataset privileges.
+    Created and managed by global admins only.
+    """
+
+    name = models.SlugField(max_length=255, unique=True)
+    description = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="service_accounts_created",
+    )
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    # Duck-typed surface so DRF and downstream code accept this as request.user.
+    # Service accounts are never global admins, never have TOS, never have groups.
+    is_authenticated = True
+    is_anonymous = False
+    is_staff = False
+    is_superuser = False
+    admin = False
+    is_service_account = True
+    parent_id = None
+    pi = ""
+    picture_url = ""
+    read_only = False
+    google_sub = None
+
+    class Meta:
+        db_table = "service_account"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def email(self):
+        # Synthetic identifier; never sent to GCS IAM (SAs use bearer-token
+        # auth at the gateway, not bucket-level IAM).
+        return f"{self.name}@service-account.dsg.local"
+
+    @property
+    def public_name(self):
+        return self.name
+
+    @property
+    def affiliations(self):
+        return _EmptyRelatedManager()
+
+    def has_perm(self, perm, obj=None):
+        return False
+
+    def has_module_perms(self, app_label):
+        return False
+
+
+class _EmptyRelatedManager:
+    """Stand-in for User.affiliations on ServiceAccount — yields nothing."""
+
+    def all(self):
+        return []
+
+    def values_list(self, *args, **kwargs):
+        return []
+
+    def exists(self):
+        return False
+
+
+class ServiceAccountToken(models.Model):
+    """Long-lived API token for a ServiceAccount. No expiry by design."""
+
+    service_account = models.ForeignKey(
+        ServiceAccount, on_delete=models.CASCADE, related_name="tokens"
+    )
+    key = models.CharField(
+        max_length=128, unique=True, default=_generate_token, db_index=True
+    )
+    description = models.CharField(max_length=255, blank=True, default="")
+    created = models.DateTimeField(auto_now_add=True)
+    last_used = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "service_account_token"
+        ordering = ["-created"]
+
+    def __str__(self):
+        return f"ServiceAccountToken({self.service_account}, {self.description!r})"
+
+
+class ServiceAccountGrant(models.Model):
+    """Direct service-account grant on a dataset (optionally scoped to a version).
+
+    Mirrors Grant for SAs. Kept separate from Grant so existing user-grant
+    queries are untouched and SA grants never trigger per-user GCS bucket
+    IAM provisioning (which is human-only).
+    """
+
+    service_account = models.ForeignKey(
+        ServiceAccount, on_delete=models.CASCADE, related_name="grants"
+    )
+    dataset = models.ForeignKey(
+        Dataset, on_delete=models.CASCADE, related_name="service_account_grants"
+    )
+    dataset_version = models.ForeignKey(
+        DatasetVersion,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="service_account_grants",
+    )
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
+    granted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="sa_grants_given",
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "service_account_grant"
+        unique_together = [("service_account", "dataset", "dataset_version", "permission")]
+
+    def __str__(self):
+        scope = f":{self.dataset_version.version}" if self.dataset_version else ""
+        return f"{self.service_account} -> {self.dataset}{scope}: {self.permission}"

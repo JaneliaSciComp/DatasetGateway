@@ -18,6 +18,9 @@ from .models import (
     Permission,
     PublicRoot,
     Service,
+    ServiceAccount,
+    ServiceAccountGrant,
+    ServiceAccountToken,
     ServiceTable,
     TOSAcceptance,
     TOSDocument,
@@ -249,3 +252,39 @@ class AuditLogAdmin(admin.ModelAdmin):
     list_display = ("timestamp", "actor", "action", "target_type", "target_id")
     list_filter = ("action", "target_type")
     readonly_fields = ("actor", "action", "target_type", "target_id", "before_state", "after_state", "timestamp")
+
+
+class ServiceAccountTokenInline(admin.TabularInline):
+    model = ServiceAccountToken
+    extra = 0
+    readonly_fields = ("key", "created", "last_used")
+
+
+class ServiceAccountGrantInline(admin.TabularInline):
+    model = ServiceAccountGrant
+    extra = 0
+    readonly_fields = ("created",)
+
+
+@admin.register(ServiceAccount)
+class ServiceAccountAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "is_active", "created_by", "created")
+    list_filter = ("is_active",)
+    search_fields = ("name", "description")
+    readonly_fields = ("created", "updated")
+    inlines = [ServiceAccountTokenInline, ServiceAccountGrantInline]
+
+
+@admin.register(ServiceAccountToken)
+class ServiceAccountTokenAdmin(admin.ModelAdmin):
+    list_display = ("id", "service_account", "description", "created", "last_used")
+    list_filter = ("service_account",)
+    readonly_fields = ("key", "created", "last_used")
+    search_fields = ("service_account__name", "description")
+
+
+@admin.register(ServiceAccountGrant)
+class ServiceAccountGrantAdmin(admin.ModelAdmin):
+    list_display = ("id", "service_account", "dataset", "dataset_version", "permission", "granted_by")
+    list_filter = ("permission",)
+    search_fields = ("service_account__name", "dataset__name")

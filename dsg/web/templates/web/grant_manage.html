@@ -64,4 +64,69 @@
 {% else %}
 <p>No grants yet.</p>
 {% endif %}
+
+<h2>Service Account Grants</h2>
+{% if available_sas %}
+<form method="post" style="margin-bottom: 10px;">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="grant_sa">
+    <select name="service_account_id" required>
+        <option value="">— Service account —</option>
+        {% for sa in available_sas %}
+        <option value="{{ sa.pk }}">{{ sa.name }}{% if sa.description %} — {{ sa.description }}{% endif %}</option>
+        {% endfor %}
+    </select>
+    <select name="permission" required>
+        {% for p in permissions %}
+        <option value="{{ p.pk }}">{{ p.name }}</option>
+        {% endfor %}
+    </select>
+    <select name="version">
+        <option value="">All versions</option>
+        {% for v in versions %}
+        <option value="{{ v.pk }}">{{ v.version }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-sm">Grant</button>
+</form>
+{% else %}
+<p style="color: #666;">
+    No active service accounts.
+    {% if user.admin %}<a href="/web/service-accounts">Create one →</a>{% endif %}
+</p>
+{% endif %}
+
+{% if sa_grants %}
+<table>
+    <tr><th>Service Account</th><th>Permission</th><th>Version</th><th>Granted By</th><th>Granted</th><th></th></tr>
+    {% for g in sa_grants %}
+    <tr>
+        <td>
+            {% if user.admin %}
+                <a href="/web/service-accounts/{{ g.service_account.name }}">{{ g.service_account.name }}</a>
+            {% else %}
+                {{ g.service_account.name }}
+            {% endif %}
+            {% if not g.service_account.is_active %}<span style="color:#d93025;"> (disabled)</span>{% endif %}
+        </td>
+        <td>{{ g.permission.name }}</td>
+        <td>{{ g.dataset_version.version|default:"All" }}</td>
+        <td>{{ g.granted_by.email|default:"-" }}</td>
+        <td>{{ g.created|date:"Y-m-d" }}</td>
+        <td>
+            {% if is_admin_user or g.permission.name != "admin" %}
+            <form method="post" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="revoke_sa_grant">
+                <input type="hidden" name="sa_grant_id" value="{{ g.pk }}">
+                <button type="submit" class="btn btn-danger btn-sm">Revoke</button>
+            </form>
+            {% endif %}
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No service account grants on this dataset.</p>
+{% endif %}
 {% endblock %}

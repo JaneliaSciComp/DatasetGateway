@@ -31,6 +31,7 @@
         {% if user %}
             <a href="/web/datasets">Datasets</a>
             <a href="/web/my-account">My Account</a>
+            {% if user.admin %}<a href="/web/service-accounts">Service Accounts</a>{% endif %}
             <span style="float: right; color: #666;">
                 {{ user.email }}
                 <form action="/web/logout" method="post" class="inline" style="margin-left: 10px;">

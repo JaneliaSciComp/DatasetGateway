@@ -8,14 +8,15 @@ from django.utils import timezone
 
 
 def build_permission_cache(user, service=None):
-    """Build the permission cache dict for a user.
+    """Build the permission cache dict for a principal (User or ServiceAccount).
 
     Parameters
     ----------
-    user : User
+    user : User or ServiceAccount
     service : str or None
         If given, the service slug (e.g. "celltyping"). Service-specific TOS
         requirements are enforced in addition to general dataset TOS.
+        Service-specific TOS does not apply to service accounts.
 
     Returns a dict matching CAVE's create_cache() output exactly:
     {
@@ -25,6 +26,11 @@ def build_permission_cache(user, service=None):
         "datasets_admin"
     }
     """
+    from .models import ServiceAccount
+
+    if isinstance(user, ServiceAccount):
+        return _build_service_account_cache(user)
+
     permissions = _get_permissions(user, ignore_tos=False, service=service)
     permissions_ignore_tos = _get_permissions(user, ignore_tos=True)
 
@@ -58,6 +64,67 @@ def build_permission_cache(user, service=None):
         },
         "missing_tos": _datasets_missing_tos(user, service=service),
         "datasets_admin": _get_datasets_adminning(user),
+    }
+
+
+def _build_service_account_cache(sa):
+    """Build the permission-cache dict for a ServiceAccount.
+
+    SAs have no groups, no TOS, no admin grants. The returned dict shape is
+    identical to the User path so middle_auth_client consumers don't notice
+    the difference; SA-specific fields are empty.
+    """
+    from .models import ServiceAccountGrant
+
+    hierarchy = {
+        "admin": {"manage", "edit", "view"},
+        "manage": {"edit", "view"},
+        "edit": {"view"},
+    }
+    permission_to_level = {"none": 0, "view": 1, "edit": 2, "manage": 3, "admin": 4}.get
+
+    grants = (
+        ServiceAccountGrant.objects.filter(service_account=sa)
+        .select_related("dataset", "permission")
+    )
+
+    by_dataset = {}
+    for g in grants:
+        did = g.dataset_id
+        entry = by_dataset.setdefault(
+            did, {"id": did, "name": g.dataset.name, "permissions": set()}
+        )
+        entry["permissions"].add(g.permission.name)
+
+    permissions_v2 = {}
+    permissions = {}
+    for entry in by_dataset.values():
+        expanded = set(entry["permissions"])
+        for p in list(entry["permissions"]):
+            expanded |= hierarchy.get(p, set())
+        sorted_perms = sorted(expanded)
+        permissions_v2[entry["name"]] = sorted_perms
+        permissions[entry["name"]] = max(
+            (permission_to_level(p, 0) for p in sorted_perms), default=0
+        )
+
+    return {
+        "id": sa.pk,
+        "parent_id": None,
+        "service_account": True,
+        "name": sa.name,
+        "email": sa.email,
+        "admin": False,
+        "pi": "",
+        "picture_url": "",
+        "affiliations": [],
+        "groups": [],
+        "groups_admin": [],
+        "permissions": permissions,
+        "permissions_v2": permissions_v2,
+        "permissions_v2_ignore_tos": permissions_v2,
+        "missing_tos": [],
+        "datasets_admin": [],
     }
 
 

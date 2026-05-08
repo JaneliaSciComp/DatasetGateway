@@ -3,7 +3,8 @@
 This manual covers initial system setup and day-to-day administration
 through the Django admin console (`/admin/`). For end-user workflows
 (logging in, browsing datasets, accepting TOS) see the
-[User Manual](user-manual.md).
+[User Manual](user-manual.md). For programmatic non-human identities
+(CI jobs, backend services), see [Service Accounts](service-accounts.md).
 
 ---
 
@@ -112,6 +113,7 @@ system. It is organized into sections.
 | Promote team leads | Web UI (`/web/team-leads/<dataset>`) — SC/admin only |
 | Manage team members and group grants | Web UI (`/web/team/<group>/`) — team leads |
 | Manage public roots | Web UI (`/web/public-roots/<dataset>`) |
+| Create / manage service accounts and their tokens | Web UI (`/web/service-accounts`) — admin only. See [Service Accounts](service-accounts.md). |
 
 The web UI enforces authorization rules (only team leads can manage
 their groups, only SC/admin can promote team leads). The admin console
@@ -137,7 +139,7 @@ Each row is a DatasetGateway user. Key fields:
 | **Is active** | Unchecked = account disabled. Disabled users cannot authenticate. |
 | **Read only** | If checked, `edit` permissions are stripped from this user's permission cache. They can only view. |
 | **Pi** | Principal Investigator field (informational, from Clio legacy). |
-| **Parent** | If set, this is a service account owned by the parent user. Service accounts inherit TOS acceptance from their parent. |
+| **Parent** | Legacy field for an early User-as-service-account design. Not used by the current service-account feature — see [Service Accounts](service-accounts.md). Existing parent-linked rows still inherit TOS acceptance from their parent. |
 
 **Inline sections on the User detail page:**
 
@@ -279,6 +281,18 @@ actions here.
 Authentication tokens. Each row links a token string to a user. Created
 automatically on OAuth login. Usually viewed inline on the User detail
 page. You can delete old/unused keys here if needed.
+
+### Service accounts, Service account tokens, Service account grants
+
+Non-human identities for programmatic access (CI jobs, backend services,
+shared scripting credentials). Distinct from users — no Google login,
+no TOS, no group membership. The admin console exposes the three models
+for back-office visibility, but day-to-day management (create, mint
+tokens, assign dataset grants, disable, delete) happens in the web UI
+at `/web/service-accounts` and is admin-only.
+
+See the dedicated [Service Accounts](service-accounts.md) doc for the
+full model, capabilities, limitations, and architectural decisions.
 
 ---
 
