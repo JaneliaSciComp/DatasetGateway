@@ -125,6 +125,47 @@ system.
 
 ---
 
+## Identifying a service account from a downstream service
+
+Downstream services that delegate auth to DSG (Clio, neuprint, CAVE
+microservices via `middle_auth_client`) call `GET /api/v1/user/cache`
+or `GET /api/v1/whoami` with the bearer token. The response shape is
+identical for users and service accounts — three fields let the
+service identify the SA:
+
+| Field | For a user | For a service account |
+|---|---|---|
+| `service_account` | `false` | `true` |
+| `name` | display name or email prefix | the SA slug (e.g. `"ci-bot"`) — exactly `ServiceAccount.name`, immutable in practice |
+| `id` | `User.pk` | `ServiceAccount.pk` |
+| `email` | real Google email | synthetic `<name>@service-account.dsg.local` |
+
+Recommendations:
+
+- **Primary identifier: `name`.** It's the slug the admin sees in the
+  UI, human-readable, and stable.
+- **Always disambiguate with `service_account`.** On the wire, `id` is
+  a plain integer for both Users and SAs — they share the integer
+  namespace. Treating `id` alone as a globally unique principal key
+  will collide. Use `(service_account, id)` or just `name` when
+  `service_account` is true.
+- **`email` is stable too.** The `service-account.dsg.local` suffix is
+  a reliable marker, useful if your existing code already keys
+  attribution on email.
+
+```python
+cache = dsg.get("/api/v1/user/cache", token=token).json()
+
+if cache["service_account"]:
+    principal = f"sa:{cache['name']}"        # "sa:ci-bot"
+else:
+    principal = cache["email"]               # "alice@example.org"
+
+log_attribution(principal)
+```
+
+---
+
 ## Architectural decisions
 
 ### Service accounts are a separate model, not a kind of User
