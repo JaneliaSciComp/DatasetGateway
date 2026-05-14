@@ -5,12 +5,11 @@ Unified authorization service for neuroscience datasets.
 DatasetGateway is a single Django service that centralizes dataset access control
 across multiple platforms:
 
-- **CAVE** — drop-in replacement for middle_auth with compatible API endpoints
 - **Neuroglancer** — implements the ngauth protocol for GCS token-based access
 - **Clio and neuprint** — provides authorization APIs these services call to
   check user permissions
-- **WebKnossos** — planned; will require building compatible APIs based on
-  their open source code, similar to the CAVE integration approach
+- **CAVE** — planned; drop-in replacement for middle_auth with compatible API endpoints
+- **WebKnossos** — planned; will require coordination with ScalableMinds
 
 ## Quick start
 
