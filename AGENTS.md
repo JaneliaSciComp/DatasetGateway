@@ -56,7 +56,7 @@ pixi shell                                # interactive shell in env
 
 ## Conventions
 
-- Follow the shared user-level commit protocol in `/Users/katzw/GitHub/AGENTS.md`.
+- Follow the shared user-level commit protocol in `/Users/katzw/AGENTS.md`.
 - Run tests after making changes if the project has tests.
 - If your changes add, remove, or rename files/directories shown in the
   "Repository layout" tree above, update that tree to match.
