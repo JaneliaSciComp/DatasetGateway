@@ -1,3 +1,9 @@
+---
+doc_status: living-reference
+sync_policy: Update with service account model, token, permission, UI, and audit behavior changes.
+last_reviewed: 2026-06-01
+---
+
 # Service Accounts
 
 Service accounts are non-human identities that hold long-lived API tokens
@@ -58,9 +64,12 @@ service account. Treat it like a password.
 - **Belong to groups.** The single description field replaces both
   group membership and organizational affiliation.
 - **Mint user `APIKey`s** (`POST /api/v1/create_token`,
-  `GET /api/v1/long_lived_token`, etc.). The `IsHumanUser` permission
-  class on those endpoints rejects service-account principals so an SA
-  cannot create or list tokens belonging to a User row.
+  `GET /api/v1/long_lived_token`, `GET /api/v1/user/token`, and
+  `GET /api/v1/refresh_token`). The `IsHumanUser` permission class on
+  those endpoints rejects service-account principals so an SA cannot
+  create or list tokens belonging to a User row. `/api/v1/logout` only
+  clears a browser cookie token when present; it is not a service-account
+  token revocation endpoint.
 - **Receive ngauth GCS tokens.** Browser-mediated bucket access via
   `ngauth` is human-only. Service accounts call DSG endpoints directly
   with their bearer token; they do not get per-user GCS IAM bindings.
@@ -212,7 +221,8 @@ happened to equal the SA's pk. We mitigate this in two ways:
 - A new `IsHumanUser` permission class in `dsg/core/permissions.py`
   rejects SA principals at endpoints that mint or list per-user
   `APIKey` rows (`/api/v1/create_token`, `/api/v1/long_lived_token`,
-  `/api/v1/user/token`, `/api/v1/refresh_token`, `/api/v1/logout`).
+  `/api/v1/user/token`, `/api/v1/refresh_token`). `/api/v1/logout` is
+  cookie-oriented cleanup, not SA token revocation.
 - Every endpoint in `dsg/auth_api/views.py` that resolves access for a
   principal explicitly branches on `isinstance(request.user, ServiceAccount)`
   and queries `ServiceAccountGrant` instead of `Grant` /
@@ -237,8 +247,9 @@ with a User pk does not poison either cache.
 - **`ngauth`** issues GCS tokens by looking up `APIKey` directly, so
   service-account tokens simply do not match. SAs are never given GCS
   bucket IAM bindings.
-- **`scim`** requires `request.user.admin == True`, which is hard-coded
-  False on `ServiceAccount`.
+- **`scim`** uses its own `SCIMAuthentication` path and requires a
+  non-expired `APIKey` for an active `User` with `admin=True`;
+  service-account tokens are not accepted for SCIM provisioning.
 - **`web`** views resolve the session user via `_get_web_user()` against
   the User table, which a service-account token cannot satisfy. SAs
   cannot reach any web page.

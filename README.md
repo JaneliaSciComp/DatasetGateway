@@ -8,7 +8,9 @@ across multiple platforms:
 - **Neuroglancer** — implements the ngauth protocol for GCS token-based access
 - **Clio and neuprint** — provides authorization APIs these services call to
   check user permissions
-- **CAVE** — planned; drop-in replacement for middle_auth with compatible API endpoints
+- **CAVE** — preliminary middle_auth-compatible endpoints are implemented;
+  full support is planned pending CAVE deployment testing, token migration
+  validation, and review
 - **WebKnossos** — planned; will require coordination with ScalableMinds
 
 ## Quick start
@@ -75,8 +77,11 @@ mkdir -p dsg/secrets
 cp ~/Downloads/client_secret_*.json dsg/secrets/client_credentials.json
 ```
 
-The `secrets/` directory is gitignored. Alternatively, you can set environment
-variables instead of using the JSON file:
+The `secrets/` directory is gitignored. For Docker production, prefer
+`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`, or mount a credentials
+file and set `CLIENT_CREDENTIALS_PATH`; `dsg/.dockerignore` excludes local
+`secrets/` from the image. Alternatively, you can set environment variables
+instead of using the JSON file:
 
 ```bash
 export GOOGLE_CLIENT_ID="your-client-id.apps.googleusercontent.com"
@@ -99,11 +104,15 @@ API requests are authenticated by checking for the token in this order:
 
 **CAVE services** (MaterializationEngine, AnnotationEngine, etc.) call
 DatasetGateway's `/api/v1/user/cache` endpoint on every request to validate
-the user's token and retrieve their permissions. This is a drop-in
-replacement for CAVE's original `middle_auth` server — CAVE services
-only need their `AUTH_URL` environment variable pointed at DatasetGateway.
-Users log in via `/api/v1/authorize`, which redirects through Google
-OAuth and sets the `dsg_token` cookie.
+the user's token and retrieve their permissions. DatasetGateway has a
+preliminary implementation of the middle_auth-compatible endpoints, but it
+is not yet declared supported until tested with a real CAVE deployment. For
+a fresh deployment or planned migration where clients obtain DSG-minted
+Bearer tokens and CAVE services point `AUTH_URL` / `STICKY_AUTH_URL` at
+DatasetGateway, existing middle_auth_client Bearer-token flows should not
+require service code changes. Existing cookie/query-token flows that depend
+on `middle_auth_token` need a DSG login/token transition or compatibility
+configuration because DatasetGateway uses `dsg_token`.
 
 **Neuroglancer** uses the [ngauth protocol](https://github.com/google/neuroglancer/tree/master/ngauth_server).
 Users log in via a popup that hits `/auth/login` → Google OAuth →
@@ -166,6 +175,7 @@ settings and add services to `docker-compose.yml`.
 | `DSG_PORT` | `8200` | Port for the development server. |
 | `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth 2.0 client ID (overrides `client_credentials.json`). |
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret (overrides `client_credentials.json`). |
+| `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative OAuth client credentials path. Useful when mounting credentials into Docker. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins. |
 | `AUTH_COOKIE_DOMAIN` | *(empty)* | Cookie domain for cross-subdomain auth (e.g., `.example.org`). |
 | `PORT` | `8080` | Port for gunicorn (Docker). |
@@ -174,13 +184,15 @@ settings and add services to `docker-compose.yml`.
 
 ## Documentation
 
+- [Documentation index](docs/README.md) — status markers for living reference
+  docs vs historical design records.
 - [User manual](docs/user-manual.md) — setup, admin workflows, user
   workflows, management commands
-- [Architecture](docs/architecture.md) — system design, authorization model,
-  deployment strategy
 - [CAVE auth endpoints](docs/cave-auth-endpoints.md) — CAVE API compatibility
   reference and SCIM 2.0 provisioning
-- [Implementation record](docs/implemented-plan.md) — what was built,
-  with retrospective notes on deviations from the original plan
 - [Admin manual](docs/admin-manual.md) — administration and operational
   reference
+- [Service accounts](docs/service-accounts.md) — non-human identity and token
+  workflows
+- [Design archive](docs/design/) — historical architecture and implementation
+  records, not automatically synchronized with code changes

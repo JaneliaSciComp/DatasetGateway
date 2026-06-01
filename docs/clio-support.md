@@ -1,3 +1,9 @@
+---
+doc_status: living-reference
+sync_policy: Update with Clio integration, permission mapping, token, and migration changes.
+last_reviewed: 2026-06-01
+---
+
 # Clio (clio-store) Integration with DatasetGateway
 
 Clio (clio-store) is a FastAPI service managing neuroscience annotations,
@@ -44,10 +50,11 @@ During migration (import), the reverse mapping also handles `clio_read`:
 both `clio_read` and `clio_general` per-dataset roles map to a `view`
 grant in DatasetGateway.
 
-clio-store's legacy `clio_general` as a *global* role (meaning access to
-all datasets) has no DatasetGateway equivalent. Per-dataset permissions plus
-the Firestore `public` flag cover all existing behavior. Admin users
-bypass all checks regardless.
+clio-store's legacy global roles are expanded during import: global
+`clio_general` becomes a `view` grant on every exported dataset, and
+global `clio_write` becomes an `edit` grant on every exported dataset.
+After migration, DatasetGateway represents those as ordinary per-dataset
+grants. Admin users bypass all checks regardless.
 
 ---
 
@@ -167,8 +174,11 @@ etc.) remains unchanged.
    cd dsg
    python manage.py import_clio_auth exported_auth.json
    ```
-   This creates User, Dataset, Grant, Group, and UserGroup records. Use
-   `--dry-run` to preview without writing.
+   This creates User, Dataset, Grant, Group, and UserGroup records.
+   The command accepts `--dry-run`, but the current implementation still
+   performs writes and only skips the final audit record. Treat it as a
+   known bug until fixed; test imports against a disposable or backed-up
+   database.
 
 3. **Deploy** clio-store with `DSG_URL` set to the DatasetGateway URL.
 

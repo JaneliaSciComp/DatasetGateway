@@ -1,6 +1,12 @@
-# CAVE Authorization System: Drop-In Replacement Guide
+---
+doc_status: living-reference
+sync_policy: Update with CAVE-compatible endpoint, token delivery, SCIM, and routing contract changes.
+last_reviewed: 2026-06-01
+---
 
-This document describes the HTTP API surface of the CAVE authorization system (middle_auth) and what a replacement service must implement to be a drop-in substitute for CAVE services that depend on it.
+# CAVE Authorization System: Preliminary Compatibility Guide
+
+This document describes the HTTP API surface of the CAVE authorization system (`middle_auth`) and DatasetGateway's preliminary compatibility layer. CAVE support should still be treated as planned rather than certified until the implementation is tested against a real CAVE deployment and reviewed.
 
 ## Architecture Overview
 
@@ -18,7 +24,7 @@ Services locate middle_auth via environment variables set in Kubernetes deployme
 - **`AUTH_URL`** — Base URL of the auth server (e.g., `cave.example.org/auth`). Used by `middle_auth_client` decorators and by PyChunkedGraph's direct HTTP calls.
 - **`STICKY_AUTH_URL`** — URL for OAuth browser redirects (may differ for sticky session routing). Used by AnnotationFrameworkInfoService.
 
-Pointing CAVE services at a replacement is a deployment config change — update these env vars.
+For a fresh deployment or planned migration, pointing CAVE services at DatasetGateway is primarily a deployment config change: update these env vars and make sure clients obtain DSG-minted tokens. Existing Bearer-token flows through `middle_auth_client` should continue to work, while cookie/query-token flows need the token-name migration described below.
 
 ### Token Delivery
 
@@ -28,13 +34,13 @@ Tokens reach CAVE services via three mechanisms (checked in this order by Datase
 2. Authorization header: `Bearer {token}`
 3. Query parameter: `?dsg_token=...`
 
-> **Note:** The original CAVE `middle_auth_client` uses `middle_auth_token` as the cookie and query param name. DatasetGateway unifies to `dsg_token`. CAVE services using `middle_auth_client` with `Bearer` header auth are unaffected; those relying on cookie or query param names need the updated client or config.
+> **Note:** The original CAVE `middle_auth_client` uses `middle_auth_token` as the cookie and query param name. DatasetGateway unifies to `dsg_token`. CAVE services using `middle_auth_client` with Bearer header auth should be unaffected by that name change; clients relying on cookie or query param tokens need a DSG login/token transition, compatibility configuration, or an updated client.
 
 ---
 
 ## Endpoints Required for CAVE Compatibility
 
-A replacement must implement approximately 10 endpoints that CAVE services actually call. The remaining ~40 management endpoints in middle_auth are only used by its own admin UI and can use whatever API design fits the new platform.
+DatasetGateway implements preliminary versions of the small set of endpoints that CAVE services actually call. The remaining management endpoints in `middle_auth` are primarily used by its own admin UI and can use DatasetGateway's native UI/API design instead.
 
 ### Critical Path: Token Validation and Permission Checking
 
@@ -77,13 +83,13 @@ The single most important endpoint. Every `@auth_required` and `@auth_requires_p
 ```
 
 Field notes:
-- `parent_id` / `service_account` — non-null when the token belongs to a service account (child of a human user)
+- `parent_id` / `service_account` — new DatasetGateway service accounts are separate `ServiceAccount` rows and return `service_account: true`, `parent_id: null`; legacy parent-linked `User` rows can still return a non-null `parent_id`
 - `permissions` — legacy v1 format mapping dataset name to a numeric level (0=none, 1=view, 2=edit); the max level across all permissions for that dataset
 - `permissions_v2` — permissions filtered by TOS acceptance
 - `permissions_v2_ignore_tos` — permissions regardless of TOS acceptance
 - `missing_tos` — list of `{dataset_id, dataset_name, tos_id, tos_name}` for datasets where the user has permissions but hasn't accepted the required TOS
 - `groups_admin` — groups where the user has the admin role
-- `affiliations` — currently always `[]` (not yet implemented)
+- `affiliations` — list of affiliation names from the `Affiliation` model; empty for users without imported affiliations and for service accounts
 
 **Response (401):** Token invalid or expired.
 
@@ -162,7 +168,7 @@ Called when checking whether unauthenticated users can access specific data.
 
 Check if a table has any public entries.
 
-**Request:** Header: `Authorization: Bearer {token}`
+**Request:** no authentication required by the current DatasetGateway view; an Authorization header may still be sent by existing clients.
 
 **Response (200):** Boolean.
 
@@ -172,7 +178,7 @@ Check if a table has any public entries.
 
 Check if a specific root is public.
 
-**Request:** Header: `Authorization: Bearer {token}`
+**Request:** no authentication required by the current DatasetGateway view; an Authorization header may still be sent by existing clients.
 
 **Response (200):** Boolean.
 
@@ -183,10 +189,11 @@ Check if a specific root is public.
 Batch check which roots are public.
 
 **Request:**
-- Header: `Authorization: Bearer {token}`, `Content-Type: application/json`
+- No authentication required by the current DatasetGateway view; an Authorization header may still be sent by existing clients.
+- Header: `Content-Type: application/json`
 - Body: JSON array of root IDs
 
-**Response (200):** Boolean or list of booleans.
+**Response (200):** list of booleans in the same order as the requested root IDs.
 
 **Cached:** 300 seconds in `middle_auth_client`.
 
@@ -208,7 +215,7 @@ Google OAuth callback. Exchanges code for token, creates/updates user, sets `dsg
 
 #### `GET/POST /api/v1/logout`
 
-Invalidates token and clears cookie.
+Clears the `dsg_token` cookie and deletes the matching cookie token when present. Bearer tokens are managed through the token endpoints/UI; logout is not a service-account token revocation endpoint.
 
 **Consumers:** AnnotationFrameworkInfoService redirects users to `STICKY_AUTH_URL + /api/v1/logout`.
 
@@ -279,7 +286,7 @@ Default: `/auth/scim/v2`
 
 ### Authentication
 
-All SCIM endpoints require a Bearer token with super admin privileges, enforced by `scim_auth_required`:
+All SCIM endpoints require a Bearer token for a non-expired `APIKey` belonging to an active DatasetGateway `User` with `admin=True`, enforced by `SCIMAuthentication`:
 
 ```
 Authorization: Bearer {admin_token}
@@ -308,7 +315,7 @@ Returns full JSON schemas for all supported resource types.
 | `POST` | `/auth/scim/v2/Users` | Create a new user |
 | `PUT` | `/auth/scim/v2/Users/{scim_id}` | Replace a user (full update) |
 | `PATCH` | `/auth/scim/v2/Users/{scim_id}` | Partially update a user |
-| `DELETE` | `/auth/scim/v2/Users/{scim_id}` | Deactivate a user |
+| `DELETE` | `/auth/scim/v2/Users/{scim_id}` | Hard-delete a user |
 
 **Schema URNs:**
 - `urn:ietf:params:scim:schemas:core:2.0:User`
@@ -317,7 +324,7 @@ Returns full JSON schemas for all supported resource types.
 **Key field mappings:**
 - `userName` → `email`
 - `displayName` / `name.formatted` → `name`
-- `active` → `is_active` (deactivation only; no hard delete)
+- `active` → `is_active` for create/replace/patch soft-disable flows; `DELETE /Users/{scim_id}` hard-deletes the user
 - `externalId` → `external_id`
 - `id` → `scim_id` (UUID5 deterministic from internal ID)
 
@@ -366,7 +373,7 @@ uuid5(SCIM_NAMESPACE, f"{resource_type}:{internal_id}")
 
 Where `SCIM_NAMESPACE = uuid.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")`.
 
-Each resource also supports an `externalId` field for mapping to the identity provider's internal ID. Lookup priority: `externalId` first, then `scim_id`.
+Each resource also stores an optional `externalId` field for mapping to the identity provider's internal ID. Current detail routes look up resources by the SCIM `id` in the path; they do not fall back to `externalId`.
 
 ### Filtering
 
@@ -389,7 +396,7 @@ GET /auth/scim/v2/Users?startIndex=1&count=50
 
 - `startIndex` defaults to 1 (1-based index)
 - `count` defaults to 100, max 1000
-- `count=0` returns only `totalResults` (per RFC 7644 §3.4.2.4)
+- `count=0` returns the standard ListResponse envelope with `totalResults`, `itemsPerPage: 0`, and an empty `Resources` array
 
 **Response format:**
 ```json
@@ -463,7 +470,7 @@ These are the `middle_auth_client` decorators used by CAVE services. A replaceme
 
 ### Strategy A: Replace the server, keep middle_auth_client
 
-Implement the ~10 endpoints above with the same request/response contract. The `middle_auth_client` decorators don't care what's behind the URLs. This is the least disruptive path — no CAVE service code changes required, only deployment config (`AUTH_URL` env var). Note: the SCIM 2.0 endpoints add ~18 additional provisioning endpoints (3 discovery + 5 per resource type × 3 resource types) for machine-to-machine management.
+Implement the endpoint contract above and keep the existing `middle_auth_client` decorators in CAVE services. For a fresh deployment or planned migration where users and automation obtain DSG-minted Bearer tokens, this should be mostly a deployment configuration change (`AUTH_URL` / `STICKY_AUTH_URL`). It is not yet certified as drop-in support: the implementation still needs real CAVE deployment testing, and cookie/query-token flows that depend on `middle_auth_token` need a DSG token transition or compatibility layer. The SCIM 2.0 endpoints add provisioning APIs for machine-to-machine management.
 
 ### Strategy B: Replace both server and client
 

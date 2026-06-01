@@ -1,6 +1,6 @@
 ---
 doc_status: brainstorm
-sync_policy: Pre-decision brainstorm under review by the maintainer and Codex. NOT synchronized with code — nothing described here is implemented. Once a direction is chosen, supersede this doc, split the decisions into the relevant living docs (admin-manual, architecture), and move this file to docs/design/ as historical context.
+sync_policy: Pre-decision brainstorm under review by the maintainer and Codex. NOT synchronized with code — nothing described here is implemented. Once a direction is chosen, supersede this doc or split the decisions into the relevant living docs.
 last_reviewed: 2026-06-01
 ---
 

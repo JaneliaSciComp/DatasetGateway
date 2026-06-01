@@ -1,3 +1,9 @@
+---
+doc_status: living
+sync_policy: Update with setup, admin workflow, environment variable, and management command changes.
+last_reviewed: 2026-06-01
+---
+
 # DatasetGateway Admin Manual
 
 This manual covers initial system setup and day-to-day administration
@@ -35,7 +41,7 @@ This works for both local and Docker deployments — it automatically
 detects a running container. It creates the user if they don't exist, sets `admin=True`, and
 prompts for a password (needed to log into the Django admin console at
 `/admin/`). If the user already exists (e.g., from an import or OAuth
-login), it promotes them and adds a password. Use `--no-password` to skip 
+login), it promotes them and adds a password. Use `--no-password` to skip
 the password prompt, or `--remove` to revoke admin status.
 
 ### 3. (Optional) Import Clio auth data
@@ -110,8 +116,8 @@ system. It is organized into sections.
 | View audit logs | Admin console |
 | Manage API keys | Admin console |
 | Grant/revoke user access to a dataset | Web UI (`/web/grants/<dataset>`) — preferred for day-to-day use |
-| Promote team leads | Web UI (`/web/team-leads/<dataset>`) — SC/admin only |
-| Manage team members and group grants | Web UI (`/web/team/<group>/`) — team leads |
+| Promote dataset admins | Web UI (`/web/dataset-admins/<dataset>`) — SC/admin only |
+| Manage team members and group grants | Web UI (`/web/group/<group>/`) — group admins/team leads |
 | Manage public roots | Web UI (`/web/public-roots/<dataset>`) |
 | Create / manage service accounts and their tokens | Web UI (`/web/service-accounts`) — admin only. See [Service Accounts](service-accounts.md). |
 
@@ -151,7 +157,7 @@ Each row is a DatasetGateway user. Key fields:
 
 **When to edit Users here:** To toggle the `admin`, `is_active`, or
 `read_only` flags, or to add/remove group memberships. For bulk user
-creation, use `import_clio_auth` instead.
+creation, use `import_csv`, `import_clio_auth`, or `import_neuprint_auth` as appropriate.
 
 ### Groups
 
@@ -271,10 +277,10 @@ the web UI.
 
 ### Audit logs
 
-A record of administrative actions. Currently a placeholder — the
-system does not yet populate audit log entries automatically. Future
-versions will record grant changes, user promotions, and other admin
-actions here.
+A record of administrative actions. The web UI, Django admin custom save
+hooks, SCIM views, and import commands write entries through `log_audit()`.
+Use this table to inspect grant changes, TOS acceptances, service-account
+mutations, SCIM changes, and bulk imports.
 
 ### API keys
 
@@ -304,9 +310,10 @@ Required by django-allauth. There should be exactly one record with
 `id=1`. Allauth uses this domain to construct OAuth callback URLs
 (e.g., `http://<domain>/accounts/google/login/callback/`).
 
-The database migration sets this to `localhost:8000` by default so
-local development works out of the box. **For production**, update it
-to match your deployment domain:
+The historical migration sets this to `localhost:8000`, while the current
+development server defaults to port `8200`. If you configure allauth through
+Django Site/SocialApp records instead of the settings-based Google provider,
+update the Site domain to match your local or production origin:
 
 ```bash
 bash scripts/manage.sh shell -c "
@@ -353,7 +360,7 @@ logins. You generally don't need to touch them.
 | `DATABASE_PATH` | `db.sqlite3` | Path to the SQLite database file. |
 | `GOOGLE_CLIENT_ID` | (empty) | Google OAuth client ID. |
 | `GOOGLE_CLIENT_SECRET` | (empty) | Google OAuth client secret. |
-| `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative path to OAuth credentials file. |
+| `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative path to OAuth credentials file. In Docker, mount this file or use `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. |
 | `AUTH_COOKIE_DOMAIN` | (empty) | Set to `.example.org` to share the `dsg_token` cookie across subdomains. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins on ngauth endpoints. |
 | `DSG_ORIGIN` | (empty) | Public origin for CSRF trusted origins (e.g., `https://dataset-gateway.mydomain.org`). |
@@ -376,7 +383,10 @@ inside a Docker container.
 | `bash scripts/manage.sh changepassword EMAIL` | Reset a user's admin console password. |
 | `bash scripts/manage.sh seed_permissions` | Create `view`, `edit`, `manage`, and `admin` permission types. |
 | `bash scripts/manage.sh seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |
-| `bash scripts/manage.sh import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. |
+| `bash scripts/manage.sh import_csv FILE --dataset DS` | Import users from CSV and grant `view` on one dataset. |
+| `bash scripts/manage.sh import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. Note: `--dry-run` is currently not a no-write preview. |
+| `bash scripts/manage.sh import_neuprint_auth FILE --datasets DS [DS ...]` | Import neuPrint `authorized.json`. |
+| `bash scripts/manage.sh sync_bucket_iam [--dataset DS] [--dry-run]` | Reconcile GCS bucket IAM bindings. |
 | `pixi run setup` | Interactive setup wizard — generates `.env`. |
 | `pixi run serve` | Start the development server (runs setup if `.env` is missing). |
 | `pixi run serve-bg` | Start the dev server detached; logs to `dsg/serve.log`, PID in `dsg/serve.pid`. |

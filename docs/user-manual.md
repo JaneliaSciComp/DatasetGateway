@@ -1,3 +1,9 @@
+---
+doc_status: living
+sync_policy: Update with user-facing workflow, role, login, TOS, and API behavior changes.
+last_reviewed: 2026-06-01
+---
+
 # DatasetGateway User Manual
 
 ## Roles
@@ -12,10 +18,11 @@ scope of access and management capability.
 | **Team lead** | Grant with `manage` permission on a dataset + `UserGroup.is_admin=True` | Datasets where they have `manage` | Only users in their group |
 | **Regular user** | No special role | N/A | N/A |
 
-A **Django superuser** (created via `python manage.py createsuperuser`) is
-a special case: it has `admin=True` plus a usable password for the Django
-admin console at `/admin/`. The password is only used for the admin console
-— all other login flows use Google OAuth.
+A **global admin** is a `User` with `admin=True`. Create or promote one with
+`pixi run make-admin user@example.com` or `python manage.py make_admin
+user@example.com` from the `dsg/` directory. That command can also set a
+password for the Django admin console at `/admin/`. The password is only used
+for the admin console; all other login flows use Google OAuth.
 
 ### Permission hierarchy
 
@@ -44,11 +51,16 @@ different ways:
 **CAVE services** — CAVE is a set of microservices for connectomics
 annotation (MaterializationEngine, AnnotationEngine, PyChunkedGraph,
 etc.). Each service has an `AUTH_URL` environment variable pointing at
-DatasetGateway. On every authenticated request, the service calls
+the auth server. On every authenticated request, the service calls
 `GET /api/v1/user/cache` with the user's token to validate identity and
-check permissions. DatasetGateway is a drop-in replacement for CAVE's
-original auth server (`middle_auth`) — no CAVE service code changes are
-needed, only the `AUTH_URL` config.
+check permissions. DatasetGateway has a preliminary middle_auth-compatible
+endpoint implementation, but full CAVE support is still planned pending
+real deployment testing and review. For a fresh deployment or planned
+migration where clients use DSG-minted Bearer tokens and CAVE services
+point `AUTH_URL` / `STICKY_AUTH_URL` at DatasetGateway, existing
+`middle_auth_client` Bearer-token flows should not require CAVE service
+code changes. Cookie/query-token flows that depend on `middle_auth_token`
+need a DSG token transition or compatibility configuration.
 
 **Neuroglancer** — Neuroglancer is a web-based 3D viewer for
 neuroscience data stored in Google Cloud Storage (GCS). It uses the
@@ -101,16 +113,16 @@ credentials, runs migrations, and seeds the database. See the
 [README](../README.md#google-oauth-setup) for manual OAuth setup
 if you prefer.
 
-### 2. Create a Django superuser
+### 2. Create the first DatasetGateway admin
 
 ```bash
-python manage.py createsuperuser
+pixi run make-admin user@example.com
 ```
 
-This is a built-in Django command. It prompts for an email and password.
-The account is created in DatasetGateway's `User` table with `admin=True`
-and a usable password. The password is only used to access the Django
-admin panel at `/admin/` — all other login flows use Google OAuth.
+This creates the user if needed, sets `admin=True`, and prompts for a
+password for the Django admin console at `/admin/`. Use `--no-password` if
+the account should only authenticate through Google OAuth. You can also run
+`python manage.py make_admin user@example.com` from the `dsg/` directory.
 
 ### 3. Start the server
 
@@ -124,24 +136,11 @@ Use `pixi run serve-bg` to run detached (survives logout); stdout/stderr
 are appended to `dsg/serve.log` and the PID is written to `dsg/serve.pid`.
 Stop the detached server with `pixi run stop-serve`.
 
-### 4. Create the first DatasetGateway admin
+### 4. Log in with Google
 
-The first real user must log in via Google OAuth to create their record
-in the DatasetGateway `User` table:
-
-1. Visit `http://localhost:8000` and click "Log in"
-2. Complete the Google OAuth flow
-3. The user record is now in the database
-
-Then promote them to admin from the command line:
-
-```bash
-python manage.py make_admin user@example.com
-```
-
-This is a custom command. It sets the `admin` field on the DatasetGateway
-`User` model. The user must have logged in first — the command will
-error if the email isn't found.
+Visit `http://localhost:8200` and click "Log in" to exercise the browser
+login flow. If you already created the admin user with the same email,
+Google login attaches to that DatasetGateway user.
 
 ---
 
@@ -152,8 +151,8 @@ no web UI for dataset creation.
 
 ### 1. Log into the Django admin panel
 
-Go to `/admin/` and log in with the Django superuser credentials
-(from step 3 above).
+Go to `/admin/` and log in with the admin-console credentials set by
+`make_admin`.
 
 ### 2. Create a TOS document (optional)
 
@@ -252,7 +251,7 @@ API responses (the `/api/v1/user/cache` endpoint filters them out).
 
 ### Viewing your access
 
-Visit `/web/my-datasets` to see:
+Visit `/web/my-account` to see:
 - Your group memberships
 - Datasets you lead (have `admin` permission on)
 - Teams you lead (groups where you are an admin)
@@ -282,7 +281,7 @@ For programmatic access (scripts, CLI tools), fetch your stable
 long-lived token:
 
 ```bash
-curl http://localhost:8000/api/v1/long_lived_token \
+curl http://localhost:8200/api/v1/long_lived_token \
   -H "Authorization: Bearer YOUR_EXISTING_TOKEN"
 ```
 
@@ -303,8 +302,8 @@ have `manage` permission on a dataset and are a group admin
 
 ### Managing your team
 
-1. Go to `/web/my-datasets`
-2. Click "Manage Team" next to your group name
+1. Go to `/web/my-account`
+2. Click "Manage Group" next to your group name
 3. The team dashboard shows:
    - Current group members
    - Grants associated with your group
@@ -392,10 +391,14 @@ quick summary; see the linked documents for full details.
 ### CAVE
 
 CAVE services (MaterializationEngine, AnnotationEngine, PyChunkedGraph,
-etc.) set `AUTH_URL` to DatasetGateway's base URL. On every authenticated
-request, the service calls `GET /api/v1/user/cache` with the user's
-token. DatasetGateway is a drop-in replacement for CAVE's original
-`middle_auth` server -- no CAVE code changes are needed.
+etc.) set `AUTH_URL` to the auth server. DatasetGateway has a preliminary
+middle_auth-compatible endpoint implementation, but CAVE support is still
+planned rather than fully certified. In a fresh deployment or planned
+migration where clients use DSG-minted Bearer tokens and CAVE services point
+`AUTH_URL` / `STICKY_AUTH_URL` at DatasetGateway, existing middle_auth_client
+Bearer-token flows should not require service code changes. Existing
+`middle_auth_token` cookie/query-token flows need a DSG token transition or
+compatibility configuration.
 
 ### Clio (clio-store)
 
@@ -415,8 +418,9 @@ the `public` flag behavior, migration steps, and configuration.
 
 Neuroglancer uses the ngauth protocol. After Google OAuth login,
 DatasetGateway issues short-lived tokens that Neuroglancer exchanges for
-time-limited GCS read credentials. See the
-[architecture document](architecture.md) for the token flow.
+time-limited GCS read credentials. See the historical
+[architecture design note](design/architecture.md) for the original token-flow
+design context.
 
 ### neuPrint
 
@@ -434,8 +438,8 @@ python manage.py import_neuprint_auth authorized.json --datasets hemibrain manc
 
 Permission mapping: `"readonly"` → view, `"readwrite"` → edit,
 `"admin"` → global admin. Use `--dry-run` to preview without writing.
-See [`docs/auth-integration.md`](../neuprintHTTP/docs/auth-integration.md)
-in the neuprintHTTP repo for the full integration plan.
+See `neuprintHTTP/docs/auth-integration.md` in the neuprintHTTP repo for
+the full integration plan.
 
 ---
 
@@ -446,7 +450,6 @@ All commands are run from the `dsg/` directory.
 | Command | Source | Purpose |
 |---------|--------|---------|
 | `python manage.py migrate` | Django built-in | Create/update database tables |
-| `python manage.py createsuperuser` | Django built-in | Create a Django admin panel login |
 | `pixi run setup` | Pixi task | Interactive setup wizard — generates `.env` |
 | `pixi run serve` | Pixi task | Start the development server (runs setup if `.env` is missing) |
 | `pixi run serve-bg` | Pixi task | Start the dev server detached; logs to `dsg/serve.log`, PID in `dsg/serve.pid` |
@@ -456,6 +459,8 @@ All commands are run from the `dsg/` directory.
 | `python manage.py collectstatic` | Django built-in | Collect static files for production |
 | `python manage.py seed_permissions` | Custom | Create `view`, `edit`, `manage`, and `admin` permission types |
 | `python manage.py seed_groups` | Custom | Create default groups (`admin`, `sc`, `team_lead`, `user`) |
-| `python manage.py make_admin EMAIL` | Custom | Promote a user to DatasetGateway admin (user must exist) |
-| `python manage.py import_clio_auth FILE` | Custom | Import clio-store auth data from exported JSON (see [Clio integration](clio-support.md)) |
+| `python manage.py make_admin EMAIL` | Custom | Create or promote a user to DatasetGateway admin; use `--remove` to revoke admin status |
+| `python manage.py import_csv FILE --dataset DS` | Custom | Import a CSV of users and grant `view` on one dataset |
+| `python manage.py import_clio_auth FILE` | Custom | Import clio-store auth data from exported JSON (see [Clio integration](clio-support.md)); `--dry-run` is currently not a no-write preview |
 | `python manage.py import_neuprint_auth FILE --datasets DS [DS ...]` | Custom | Import neuPrint authorized.json (see [neuPrint integration](#neuprint)) |
+| `python manage.py sync_bucket_iam [--dataset DS] [--dry-run]` | Custom | Reconcile GCS bucket IAM with effective user permissions |

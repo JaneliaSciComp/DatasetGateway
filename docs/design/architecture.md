@@ -1,8 +1,14 @@
-# Architecture.md
+---
+doc_status: historical-design
+sync_policy: Design context only; do not assume this is synchronized with current code unless deliberately refreshed.
+last_reviewed: 2026-06-01
+---
+
+# Architecture
 
 ## Overview
 
-DatasetGateway provides a unified authorization layer that enforces terms of service and controls access to datasets across multiple services and tools. 
+DatasetGateway provides a unified authorization layer that enforces terms of service and controls access to datasets across multiple services and tools.
 
 The system thinks of authorization in terms of permissions and grants. A `permission` is an abstract capability that describes what can be done (e.g., `dataset.read`) and lives in code/config. A `grant` is an assignment of permissions to a subject, scoped to an object (e.g., user Alice is granted `dataset.read` on dataset `fish2:v9`) and lives in a database.
 
@@ -426,7 +432,7 @@ Endpoints marked with **ngauth** are required by the [ngauth protocol](https://g
 
 ## Authorization API for Other Systems
 
-See the API endpoints necessary to be a [drop-in replacement for CAVE auth API endpoints](cave-auth-endpoints.md).
+See the API endpoints necessary to be a [drop-in replacement for CAVE auth API endpoints](../cave-auth-endpoints.md).
 
 Downstream systems (CAVE/WebKnossos/neuprint/Clio) can use:
 

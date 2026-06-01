@@ -1,3 +1,9 @@
+---
+doc_status: historical-record
+sync_policy: Preserve as implementation history; update only for deliberate retrospective notes.
+last_reviewed: 2026-06-01
+---
+
 # DatasetGateway Implementation Record
 
 > **Note:** This document was originally written as the build plan before

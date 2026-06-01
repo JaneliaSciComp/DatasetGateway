@@ -12,13 +12,18 @@ DatasetGateway/              ← git root
 ├── CLAUDE.md
 ├── AGENTS.md             ← this file
 ├── .gitignore
-├── docs/                 ← architecture, API reference, manuals
+├── docs/                 ← living docs plus design/history archive
+│   ├── README.md          ← docs index and sync-status policy
 │   ├── admin-manual.md
-│   ├── architecture.md
 │   ├── cave-auth-endpoints.md
 │   ├── clio-support.md
-│   ├── implemented-plan.md
-│   └── user-manual.md
+│   ├── service-accounts.md
+│   ├── user-manual.md
+│   └── design/            ← historical design/implementation records
+│       ├── README.md
+│       ├── architecture.md
+│       ├── implemented-plan.md
+│       └── ngauth-brainstorming.md ← brainstorm/proposal, not synced to code
 └── dsg/          ← Django project (the only Python package)
     ├── pyproject.toml    ← build config, dependencies, pixi config
     ├── pixi.lock
