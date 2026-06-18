@@ -55,6 +55,22 @@ pixi run deploy
 Builds the Docker image, starts the container, runs migrations and seed
 commands. Put a reverse proxy (nginx/caddy) in front for TLS.
 
+### Option C: gunicorn behind an existing nginx (no Docker)
+
+For a host that already has nginx terminating TLS (e.g. an emdata server),
+run gunicorn directly under systemd instead of the dev `runserver`:
+
+```bash
+pixi run serve-prod   # gunicorn, DEBUG=False, WhiteNoise static; binds 127.0.0.1:8200
+```
+
+For a supervised process that restarts on crash/reboot, install the systemd
+unit template at `scripts/datasetgateway.service` (see the header comments).
+Point your nginx `location /` at `http://127.0.0.1:8200` and forward
+`X-Forwarded-Proto $scheme` so Django's `SECURE_PROXY_SSL_HEADER` sees the
+original HTTPS scheme. WhiteNoise serves `/static/` from within gunicorn, so
+nginx needs no `location /static/` block.
+
 The Django admin is at `/admin/`.
 
 ### Google OAuth setup
@@ -161,6 +177,25 @@ The SQLite database and static files are stored in Docker volumes
 (`dsg-data` and `dsg-static`) so they survive container
 restarts. If you need PostgreSQL or Redis, swap the `DATABASES` / `CACHES`
 settings and add services to `docker-compose.yml`.
+
+### Without Docker (gunicorn + systemd)
+
+On a host with its own nginx, skip Docker and run gunicorn under systemd
+(see Option C above and `scripts/datasetgateway.service`). Production
+prerequisites are the same either way:
+
+- `DJANGO_DEBUG=False` — enables Secure cookies, HSTS, and generic error
+  pages; Django then refuses to start unless `DJANGO_SECRET_KEY` and
+  `DJANGO_ALLOWED_HOSTS` are set.
+- `DJANGO_SECRET_KEY` — a strong random secret used to sign sessions, CSRF
+  tokens, and password-reset/signed values. Generate one with
+  `python -c "import secrets; print(secrets.token_urlsafe(64))"` and keep it
+  out of source control.
+- `collectstatic` runs automatically in `serve-prod.sh`; WhiteNoise serves the
+  result, so the admin UI is styled without `runserver`'s DEBUG-only static.
+- Keep `GUNICORN_WORKERS=1` while `CACHES` is the per-process `LocMemCache`
+  (the permission cache is not shared across workers); raise it only after
+  moving to a shared cache backend.
 
 ## Environment variables
 

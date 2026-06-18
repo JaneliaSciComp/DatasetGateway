@@ -1,0 +1,46 @@
+# systemd unit for DatasetGateway (gunicorn, production).
+#
+# This replaces the hand-launched `nohup python manage.py runserver` with a
+# supervised gunicorn process that restarts on crash and on host reboot.
+#
+# Install (as root, adjust the placeholders <...> for your host):
+#   1. cp scripts/datasetgateway.service /etc/systemd/system/datasetgateway.service
+#   2. edit User=, WorkingDirectory=, EnvironmentFile=, and the pixi path below
+#   3. systemctl daemon-reload
+#   4. systemctl enable --now datasetgateway
+#   5. systemctl status datasetgateway   # verify
+#   6. journalctl -u datasetgateway -f    # logs (gunicorn logs to stdout/stderr)
+#
+# To deploy a new version:
+#   git pull && pixi install && pixi run python manage.py migrate
+#   systemctl restart datasetgateway      # graceful: SIGTERM to gunicorn master
+#
+# Note: gunicorn handles SIGTERM gracefully (drains workers), so
+# `systemctl stop|restart` is the clean shutdown — no need for kill -9.
+
+[Unit]
+Description=DatasetGateway (Django authorization service, gunicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=<dsg-user>
+Group=<dsg-group>
+# Directory containing manage.py / gunicorn.conf.py / .env (the dsg/ package dir).
+WorkingDirectory=<path-to>/DatasetGateway/dsg
+# systemd loads these KEY=VALUE pairs into the environment. Must include
+# DJANGO_DEBUG=False, DJANGO_SECRET_KEY, DJANGO_ALLOWED_HOSTS, DSG_ORIGIN, etc.
+EnvironmentFile=<path-to>/DatasetGateway/dsg/.env
+# serve-prod.sh sources .env again, runs collectstatic, and execs gunicorn bound
+# to 127.0.0.1:${DSG_PORT:-8200} with GUNICORN_WORKERS=1 (see the script).
+# Use the absolute path to the pixi binary; `pixi run` resolves the env + task.
+ExecStart=<path-to-pixi>/pixi run serve-prod
+Restart=always
+RestartSec=3
+# Give gunicorn time to drain in-flight requests on stop/restart.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

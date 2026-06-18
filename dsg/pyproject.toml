@@ -18,6 +18,7 @@ dependencies = [
     "google-auth-oauthlib>=1.0",
     "google-cloud-storage>=2.0",
     "gunicorn>=22.0",
+    "whitenoise>=6.7",
     "scim2-filter-parser>=0.5",
     "markdown>=3.5",
     "tzdata>=2024.1",
@@ -53,6 +54,10 @@ description = "Run the development server (runs setup if .env is missing)"
 [tool.pixi.tasks.serve-bg]
 cmd = "bash scripts/serve.sh --detach"
 description = "Run the development server detached; logs to dsg/serve.log, PID in dsg/serve.pid"
+
+[tool.pixi.tasks.serve-prod]
+cmd = "bash scripts/serve-prod.sh"
+description = "Run the production WSGI server (gunicorn, DEBUG=False, WhiteNoise static). Sources .env; launched by systemd in production."
 
 [tool.pixi.tasks.deploy]
 cmd = "python scripts/deploy.py"

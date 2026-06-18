@@ -50,6 +50,11 @@ SITE_ID = 1
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise serves collected static files (incl. the Django admin's CSS/JS)
+    # straight from gunicorn, so the app is self-contained in production where
+    # Django itself refuses to serve /static/ (DEBUG=False). Must sit directly
+    # after SecurityMiddleware and before everything else. See STORAGES below.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "core.cookie_middleware.DSGTokenCookieMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -103,6 +108,19 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# In production (DEBUG=False) Django does not serve static files; `collectstatic`
+# gathers them into STATIC_ROOT and WhiteNoise (above) serves them from gunicorn.
+# CompressedManifestStaticFilesStorage adds gzip/brotli + content-hashed
+# filenames (far-future caching, cache-busting on change). Run
+# `python manage.py collectstatic --noinput` after each deploy so the manifest
+# (staticfiles/staticfiles.json) is current. If a template ever references a
+# static file that wasn't collected, the manifest backend raises at request
+# time — drop "Manifest" to use whitenoise.storage.CompressedStaticFilesStorage.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
