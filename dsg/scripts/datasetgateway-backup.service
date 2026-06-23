@@ -1,0 +1,43 @@
+# systemd unit that takes one DatasetGateway backup (oneshot).
+#
+# This is the *trigger target* for datasetgateway-backup.timer (hourly). It runs
+# `manage.py backup_db`, which snapshots the SQLite DB, encrypts the bundle to
+# the admin age recipients, ships it to nearline, and prunes old bundles. An
+# in-process scheduler is deliberately avoided: gunicorn runs multiple workers,
+# so an in-app thread would double-fire / need leader election. systemd is the
+# single, external trigger.
+#
+# Install (as root, adjust the placeholders <...> for your host):
+#   1. cp scripts/datasetgateway-backup.service /etc/systemd/system/
+#   2. cp scripts/datasetgateway-backup.timer   /etc/systemd/system/
+#   3. edit User=, WorkingDirectory=, EnvironmentFile=, and the pixi path below
+#      (match the values in datasetgateway.service)
+#   4. provision encryption + dirs:
+#        - /etc/dsg/age-recipients.txt   (admin public keys; see docs/backups.md)
+#        - DSG_BACKUP_STAGING_DIR + DSG_BACKUP_DIR exist and are writable
+#      `age` must be on PATH (deploy prerequisite).
+#   5. systemctl daemon-reload
+#   6. systemctl enable --now datasetgateway-backup.timer
+#   7. systemctl start datasetgateway-backup.service   # one manual run to verify
+#   8. journalctl -u datasetgateway-backup -f          # logs / failures
+#
+# A failed run exits non-zero and is visible in `journalctl -u datasetgateway-backup`
+# and `systemctl status datasetgateway-backup`.
+
+[Unit]
+Description=DatasetGateway encrypted SQLite backup to nearline (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=<dsg-user>
+Group=<dsg-group>
+# Directory containing manage.py / pyproject.toml / .env (the dsg/ package dir).
+WorkingDirectory=<path-to>/DatasetGateway/dsg
+# DSG_BACKUP_* knobs (and DJANGO_*) are loaded from here; see .env.example.
+EnvironmentFile=<path-to>/DatasetGateway/dsg/.env
+# Use the absolute path to the pixi binary; `pixi run backup` resolves env + task.
+ExecStart=<path-to-pixi>/pixi run backup
+# Backups are I/O heavy on shared storage; do not let one run pile onto the next.
+TimeoutStartSec=1800

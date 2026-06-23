@@ -36,6 +36,8 @@ is expected to track code changes.
   notes.
 - [Service accounts](service-accounts.md) - current non-human identity model,
   token behavior, and web/admin workflows.
+- [Backups & restore](backups.md) - encrypted tiered SQLite backups to nearline,
+  admin keypair setup, and the tested restore runbook.
 
 ## Proposals (under review)
 

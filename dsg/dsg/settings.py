@@ -239,3 +239,45 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+
+
+# --- Backup / restore (see core/backup.py, core/management/commands/backup_db.py) ---
+# The SQLite DB holds live bearer tokens + PII, so backups are encrypted to
+# offline admin public keys before they leave the host. `backup_db` stages all
+# heavy work on fast local NVMe and ships only a verified, encrypted artifact to
+# the slow nearline mount. See docs/backups.md for the keypair + restore runbook.
+
+# Fast local scratch where snapshots are taken and bundles assembled/encrypted.
+DSG_BACKUP_STAGING_DIR = os.environ.get("DSG_BACKUP_STAGING_DIR", "/var/tmp/dsg-backups")
+
+# Slow nearline mount that receives only the finished encrypted bundle + sidecar.
+DSG_BACKUP_DIR = os.environ.get("DSG_BACKUP_DIR", "/shared/flyem/dsg")
+
+# GFS / tiered retention: keep the newest bundle within each of the N most-recent
+# hourly / daily / weekly buckets; everything else is pruned (oldest-out).
+DSG_BACKUP_KEEP_HOURLY = int(os.environ.get("DSG_BACKUP_KEEP_HOURLY", "24"))
+DSG_BACKUP_KEEP_DAILY = int(os.environ.get("DSG_BACKUP_KEEP_DAILY", "14"))
+DSG_BACKUP_KEEP_WEEKLY = int(os.environ.get("DSG_BACKUP_KEEP_WEEKLY", "8"))
+
+# When true the bundle also includes .env and secrets/client_credentials.json so
+# a restore fully reconstructs the host. The snapshot DB itself always carries
+# live tokens, so backup_db refuses to run unencrypted when this is on.
+DSG_BACKUP_INCLUDE_SECRETS = os.environ.get(
+    "DSG_BACKUP_INCLUDE_SECRETS", "true"
+).lower() in ("true", "1", "yes")
+
+# Default encryption path: `age -R <recipients-file>` over the whole gzip. The
+# recipients file holds admin *public* keys only — a host compromise cannot
+# decrypt past backups.
+DSG_BACKUP_AGE_RECIPIENTS_FILE = os.environ.get(
+    "DSG_BACKUP_AGE_RECIPIENTS_FILE", "/etc/dsg/age-recipients.txt"
+)
+
+# Restore-side age identity (private key) file, used by `restore_db` to decrypt.
+DSG_BACKUP_AGE_IDENTITY_FILE = os.environ.get("DSG_BACKUP_AGE_IDENTITY_FILE", "")
+
+# Pluggable overrides: a shell command reading stdin and writing stdout. When set
+# these take precedence over the age defaults (e.g. drop in GPG). Encrypt is used
+# by backup_db; decrypt by restore_db.
+DSG_BACKUP_ENCRYPT_CMD = os.environ.get("DSG_BACKUP_ENCRYPT_CMD", "")
+DSG_BACKUP_DECRYPT_CMD = os.environ.get("DSG_BACKUP_DECRYPT_CMD", "")

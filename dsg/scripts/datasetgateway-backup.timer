@@ -1,0 +1,26 @@
+# systemd timer firing the DatasetGateway backup hourly.
+#
+# Pairs with datasetgateway-backup.service (Type=oneshot). See that unit's header
+# for the full install steps. In short:
+#   systemctl daemon-reload
+#   systemctl enable --now datasetgateway-backup.timer
+#   systemctl list-timers datasetgateway-backup.timer   # confirm next fire
+#
+# Retention (hourly/daily/weekly counts) is configured via DSG_BACKUP_KEEP_*; the
+# command prunes after each successful backup, so the timer just sets cadence.
+
+[Unit]
+Description=Run DatasetGateway backup hourly
+Requires=datasetgateway-backup.service
+
+[Timer]
+# Top of every hour.
+OnCalendar=hourly
+# If the host was off/asleep at the scheduled time, run as soon as it's back.
+Persistent=true
+# Avoid a thundering herd against shared nearline storage if many hosts share it.
+RandomizedDelaySec=120
+Unit=datasetgateway-backup.service
+
+[Install]
+WantedBy=timers.target

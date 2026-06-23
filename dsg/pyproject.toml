@@ -67,6 +67,14 @@ description = "Build and deploy with Docker"
 cmd = "bash scripts/manage.sh make_admin"
 description = "Create or promote a user to admin (replaces createsuperuser)"
 
+[tool.pixi.tasks.backup]
+cmd = "bash scripts/manage.sh backup_db"
+description = "Take an encrypted, tiered SQLite backup to nearline (see docs/backups.md)"
+
+[tool.pixi.tasks.restore]
+cmd = "bash scripts/manage.sh restore_db"
+description = "Verify and (with --apply) restore a backup bundle (see docs/backups.md)"
+
 [tool.pixi.tasks.stop-deploy]
 cmd = "docker compose -f docker-compose.yml down"
 description = "Stop the Docker deployment"
