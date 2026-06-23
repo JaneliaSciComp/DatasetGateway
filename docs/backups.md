@@ -21,6 +21,27 @@ backup hourly.
 > the live DB, but it cannot decrypt past backups — those need an admin private
 > key kept off the host.
 
+## What is `age`?
+
+[`age`](https://age-encryption.org) ("actually good encryption") is the
+command-line file-encryption tool used to lock each backup. The name is just the
+tool's name — it has nothing to do with users' ages or any other data; it is
+purely the encryption machinery wrapped around the bundle. It is a modern,
+deliberately-simple alternative to GPG, chosen in this slice (you can still swap
+in GPG via `DSG_BACKUP_ENCRYPT_CMD` — see below).
+
+It uses **public-key (asymmetric)** encryption, so two kinds of key exist:
+
+- a **public key** (looks like `age1ql3z7...`) — safe to share; used only to
+  *encrypt*. These are what the server holds, in the recipients file.
+- a **private/secret key** (looks like `AGE-SECRET-KEY-1...`) — kept off the
+  server by each admin; the only thing that can *decrypt*.
+
+`age-keygen` creates a matched pair. The server encrypts to every admin's public
+key (`age -R <recipients-file>`) and can never decrypt; an admin later decrypts a
+bundle with their private key (`age -d -i <identity-file>`). That asymmetry is
+why a compromised host cannot read past backups.
+
 ## What a bundle contains
 
 Each backup produces two files in the nearline dir (`DSG_BACKUP_DIR`):
