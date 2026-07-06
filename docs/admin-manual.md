@@ -196,7 +196,9 @@ Each row is a dataset. Key fields:
 **Inline sections on the Dataset detail page:**
 
 - **Dataset buckets** — the GCS buckets associated with this dataset.
-  Used for IAM provisioning and Neuroglancer token issuance.
+  Used for IAM provisioning and Neuroglancer token issuance. Adding,
+  renaming, or deleting a bucket here immediately syncs bucket IAM for
+  the dataset's users (see [Bucket IAM Synchronization](#bucket-iam-synchronization)).
 - **Dataset versions** — the versioned releases. Each version can be
   linked to one or more dataset buckets via the Buckets M2M field.
 - **Grants** — users with `admin` permission on this dataset can manage
@@ -350,6 +352,46 @@ logins. You generally don't need to touch them.
 
 ---
 
+## Bucket IAM Synchronization
+
+DSG grants and revokes per-user GCS bucket IAM (`core/iam.py`) so that a
+user's bucket access always matches the access rule:
+
+```
+(direct Grant OR group permission) AND (no TOS OR TOS accepted)
+```
+
+Global admins are skipped (they use service-account auth, not per-user
+bucket IAM), and service accounts are never added to bucket IAM.
+
+**Every mutation surface syncs inline.** Web-UI grant/TOS/group flows,
+SCIM provisioning, and the Django admin console all converge IAM as part
+of the mutation: editing Grants, Group dataset permissions, TOS
+acceptances, user↔group memberships, Dataset buckets, a dataset's TOS,
+or moving a TOS document between datasets triggers the appropriate
+add/remove calls — including bulk "delete selected" actions, retargeted
+rows (the old user/dataset pair is deprovisioned), and bucket
+renames/moves (the old bucket name is deprovisioned first). GCS calls
+are synchronous best-effort: failures are logged, never raised, so a
+large fan-out (e.g. adding a bucket to a dataset with many users) may
+take a moment but cannot block the save.
+
+**A scheduled reconcile is the backstop.** Because inline calls are
+best-effort (and direct DB/shell edits bypass them), run the reconcile
+command periodically:
+
+```bash
+pixi run iamsync                                    # all datasets
+bash scripts/manage.sh sync_bucket_iam --dry-run    # preview only
+bash scripts/manage.sh sync_bucket_iam --dataset DS # one dataset
+```
+
+For production, install the bundled systemd templates
+`scripts/datasetgateway-iamsync.{service,timer}` (daily at 03:45; see
+the unit headers for install steps, mirroring the backup units).
+
+---
+
 ## Environment Variables Reference
 
 | Variable | Default | Purpose |
@@ -386,7 +428,7 @@ inside a Docker container.
 | `bash scripts/manage.sh import_csv FILE --dataset DS` | Import users from CSV and grant `view` on one dataset. |
 | `bash scripts/manage.sh import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. Note: `--dry-run` is currently not a no-write preview. |
 | `bash scripts/manage.sh import_neuprint_auth FILE --datasets DS [DS ...]` | Import neuPrint `authorized.json`. |
-| `bash scripts/manage.sh sync_bucket_iam [--dataset DS] [--dry-run]` | Reconcile GCS bucket IAM bindings. |
+| `bash scripts/manage.sh sync_bucket_iam [--dataset DS] [--dry-run]` | Reconcile GCS bucket IAM bindings (also `pixi run iamsync`; schedule via `scripts/datasetgateway-iamsync.{service,timer}`). |
 | `pixi run setup` | Interactive setup wizard — generates `.env`. |
 | `pixi run serve` | Start the development server (runs setup if `.env` is missing). |
 | `pixi run serve-bg` | Start the dev server detached; logs to `dsg/serve.log`, PID in `dsg/serve.pid`. |

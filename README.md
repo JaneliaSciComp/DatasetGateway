@@ -196,6 +196,12 @@ prerequisites are the same either way:
 - Keep `GUNICORN_WORKERS=1` while `CACHES` is the per-process `LocMemCache`
   (the permission cache is not shared across workers); raise it only after
   moving to a shared cache backend.
+- Install the scheduled-maintenance systemd timer templates:
+  `scripts/datasetgateway-backup.{service,timer}` (hourly encrypted DB
+  backups; see [docs/backups.md](docs/backups.md)) and
+  `scripts/datasetgateway-iamsync.{service,timer}` (daily GCS bucket-IAM
+  reconcile backstop; see
+  [docs/admin-manual.md](docs/admin-manual.md#bucket-iam-synchronization)).
 
 ## Environment variables
 

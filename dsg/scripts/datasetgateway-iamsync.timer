@@ -1,0 +1,26 @@
+# systemd timer firing the DatasetGateway bucket-IAM reconcile daily.
+#
+# Pairs with datasetgateway-iamsync.service (Type=oneshot). See that unit's
+# header for the full install steps. In short:
+#   systemctl daemon-reload
+#   systemctl enable --now datasetgateway-iamsync.timer
+#   systemctl list-timers datasetgateway-iamsync.timer   # confirm next fire
+#
+# Daily is deliberate: the interactive mutation paths sync IAM inline, so this
+# is only a drift backstop, and GCS setIamPolicy is rate-limited per bucket.
+
+[Unit]
+Description=Run DatasetGateway bucket IAM reconcile daily
+Requires=datasetgateway-iamsync.service
+
+[Timer]
+# Early morning, off the top of the hour to avoid colliding with the hourly backup.
+OnCalendar=*-*-* 03:45:00
+# If the host was off/asleep at the scheduled time, run as soon as it's back.
+Persistent=true
+# Small jitter in case several hosts share GCS rate limits.
+RandomizedDelaySec=120
+Unit=datasetgateway-iamsync.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,44 @@
+# systemd unit that runs one bucket-IAM reconcile pass (oneshot).
+#
+# This is the *trigger target* for datasetgateway-iamsync.timer (daily). It runs
+# `manage.py sync_bucket_iam`, which reconciles GCS bucket IAM bindings against
+# effective user permissions. Interactive mutation paths (web UI, SCIM, Django
+# admin) sync IAM inline; this pass is the backstop for anything that drifted
+# (direct DB/shell edits, failed best-effort GCS calls, admin/user-flag changes
+# outside the hooked paths). An in-process scheduler is deliberately avoided:
+# gunicorn runs multiple workers, so an in-app thread would double-fire / need
+# leader election. systemd is the single, external trigger.
+#
+# Install (as root, adjust the placeholders <...> for your host):
+#   1. cp scripts/datasetgateway-iamsync.service /etc/systemd/system/
+#   2. cp scripts/datasetgateway-iamsync.timer   /etc/systemd/system/
+#   3. edit User=, WorkingDirectory=, EnvironmentFile=, and the pixi path below
+#      (match the values in datasetgateway.service)
+#   4. GCS credentials must be available to the service user (same requirement
+#      as the running gateway; no extra provisioning needed on the same host)
+#   5. systemctl daemon-reload
+#   6. systemctl enable --now datasetgateway-iamsync.timer
+#   7. systemctl start datasetgateway-iamsync.service   # one manual run to verify
+#   8. journalctl -u datasetgateway-iamsync -f          # logs / failures
+#
+# A failed run exits non-zero and is visible in `journalctl -u datasetgateway-iamsync`
+# and `systemctl status datasetgateway-iamsync`.
+
+[Unit]
+Description=DatasetGateway GCS bucket IAM reconcile (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=<dsg-user>
+Group=<dsg-group>
+# Directory containing manage.py / pyproject.toml / .env (the dsg/ package dir).
+WorkingDirectory=<path-to>/DatasetGateway/dsg
+# DJANGO_* settings (and DATABASE_PATH) are loaded from here; see .env.example.
+EnvironmentFile=<path-to>/DatasetGateway/dsg/.env
+# Use the absolute path to the pixi binary; `pixi run iamsync` resolves env + task.
+ExecStart=<path-to-pixi>/pixi run iamsync
+# GCS setIamPolicy calls are rate-limited per bucket; one pass over all datasets
+# should still finish well within this.
+TimeoutStartSec=1800

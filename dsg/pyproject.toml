@@ -71,6 +71,10 @@ description = "Create or promote a user to admin (replaces createsuperuser)"
 cmd = "bash scripts/manage.sh backup_db"
 description = "Take an encrypted, tiered SQLite backup to nearline (see docs/backups.md)"
 
+[tool.pixi.tasks.iamsync]
+cmd = "bash scripts/manage.sh sync_bucket_iam"
+description = "Reconcile GCS bucket IAM bindings with effective permissions (see docs/admin-manual.md)"
+
 [tool.pixi.tasks.restore]
 cmd = "bash scripts/manage.sh restore_db"
 description = "Verify and (with --apply) restore a backup bundle (see docs/backups.md)"
