@@ -2,14 +2,8 @@
 
 from django.core.management.base import BaseCommand
 
-from core.iam import _get_dataset_buckets, _user_has_effective_access
-from core.models import (
-    Dataset,
-    Grant,
-    GroupDatasetPermission,
-    User,
-    UserGroup,
-)
+from core.iam import _get_dataset_buckets, _user_has_effective_access, permission_source_users
+from core.models import Dataset
 
 
 class Command(BaseCommand):
@@ -49,21 +43,8 @@ class Command(BaseCommand):
 
             self.stdout.write(f"\nDataset: {ds.name} ({len(buckets)} bucket(s))")
 
-            # Find all users with any permission source for this dataset
-            user_ids = set(
-                Grant.objects.filter(dataset=ds).values_list("user_id", flat=True)
-            )
-            group_ids = GroupDatasetPermission.objects.filter(
-                dataset=ds
-            ).values_list("group_id", flat=True)
-            group_user_ids = set(
-                UserGroup.objects.filter(
-                    group_id__in=group_ids
-                ).values_list("user_id", flat=True)
-            )
-            user_ids |= group_user_ids
-
-            users = User.objects.filter(pk__in=user_ids)
+            # All users with any permission source for this dataset
+            users = permission_source_users(ds)
 
             for user in users:
                 should_provision = _user_has_effective_access(user, ds)

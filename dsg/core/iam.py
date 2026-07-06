@@ -41,6 +41,68 @@ def sync_user_dataset_iam(user, dataset):
             )
 
 
+def permission_source_users(dataset):
+    """Return users holding any permission source on the dataset.
+
+    A permission source is a direct Grant or membership in a group with a
+    GroupDatasetPermission. Deliberately a superset of the currently-effective
+    users — no TOS gate, no admin exclusion — because deprovisioning must reach
+    users whose IAM is stale precisely *because* they are no longer effective;
+    the per-user rule in sync_user_dataset_iam decides add vs. remove.
+    """
+    from core.models import Grant, GroupDatasetPermission, User, UserGroup
+
+    user_ids = set(
+        Grant.objects.filter(dataset=dataset).values_list("user_id", flat=True)
+    )
+    group_ids = GroupDatasetPermission.objects.filter(
+        dataset=dataset
+    ).values_list("group_id", flat=True)
+    user_ids |= set(
+        UserGroup.objects.filter(
+            group_id__in=group_ids
+        ).values_list("user_id", flat=True)
+    )
+    return User.objects.filter(pk__in=user_ids)
+
+
+def sync_dataset_iam(dataset, users=None):
+    """Sync bucket IAM for every permission-source user of a dataset.
+
+    Pass ``users`` (captured via permission_source_users *before* a mutation
+    that shrinks the permission graph, e.g. deleting a GroupDatasetPermission)
+    so users who just lost their permission source are still deprovisioned.
+    """
+    if users is None:
+        users = permission_source_users(dataset)
+    for user in users:
+        sync_user_dataset_iam(user, dataset)
+
+
+def deprovision_bucket(bucket_name, dataset):
+    """Best-effort removal of a dataset's permission-source users from a bucket.
+
+    Used when a bucket row is deleted, renamed, or moved to another dataset:
+    ``bucket_name`` is the *old* name and ``dataset`` the *old* dataset,
+    captured before the mutation.
+    """
+    from ngauth.gcs import remove_user_from_bucket
+
+    users = list(permission_source_users(dataset))
+    for user in users:
+        try:
+            remove_user_from_bucket(bucket_name, user.email)
+        except Exception:
+            logger.exception(
+                "IAM deprovision failed",
+                extra={"email": user.email, "bucket": bucket_name},
+            )
+    logger.info(
+        "Deprovisioned bucket %s for %d permission-source user(s) of dataset %s",
+        bucket_name, len(users), dataset,
+    )
+
+
 def sync_group_datasets_for_user(user, group):
     """Sync IAM for a user on all datasets the group has GroupDatasetPermission on."""
     from core.models import GroupDatasetPermission
