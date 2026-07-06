@@ -287,12 +287,23 @@ class TOSAcceptView(View):
             return redirect("/auth/login")
 
         tos_doc = get_object_or_404(TOSDocument, pk=tos_id)
-        TOSAcceptance.objects.get_or_create(
+        acceptance, created = TOSAcceptance.objects.get_or_create(
             user=user,
             tos_document=tos_doc,
             defaults={"ip_address": request.META.get("REMOTE_ADDR")},
         )
-        messages.success(request, f"Accepted: {tos_doc.name}")
+        if created:
+            log_audit(user, "tos_accepted", "TOSAcceptance", acceptance.pk, after_state={
+                "user": user.email, "tos_document": tos_doc.name,
+                "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
+            })
+            # Provision bucket IAM for dataset-scoped TOS
+            if tos_doc.dataset:
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(user, tos_doc.dataset)
+            messages.success(request, f"Accepted: {tos_doc.name}")
+        else:
+            messages.info(request, f"You have already accepted: {tos_doc.name}")
         return redirect("web-datasets")
 
 

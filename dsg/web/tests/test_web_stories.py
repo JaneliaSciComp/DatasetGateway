@@ -7,6 +7,7 @@ from django.test import TestCase
 
 from core.models import (
     APIKey,
+    AuditLog,
     Dataset,
     DatasetBucket,
     DatasetVersion,
@@ -1045,6 +1046,60 @@ class TestGroupMembershipIAMSync(_WebTestBase):
                 "member_id": ug.pk,
             })
         mock_remove.assert_called_with("bucket-a", "regular@example.org")
+
+
+@pytest.mark.django_db
+class TestTOSAcceptViewIAM(_WebTestBase):
+    """POST /web/tos/<id>/accept audits and syncs IAM, only on first acceptance."""
+
+    def setUp(self):
+        super().setUp()
+        self.tos = TOSDocument.objects.create(
+            name="Accept TOS", text="Terms.", dataset=self.dataset,
+        )
+        self.dataset.tos = self.tos
+        self.dataset.save()
+        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        Grant.objects.create(
+            user=self.regular_user, dataset=self.dataset, permission=self.view_perm,
+        )
+
+    def test_first_acceptance_audits_and_syncs(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            mock_add.return_value = True
+            resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
+
+        self.assertEqual(resp.status_code, 302)
+        mock_add.assert_called_once_with("bucket-a", "regular@example.org")
+        self.assertEqual(
+            AuditLog.objects.filter(
+                action="tos_accepted", target_type="TOSAcceptance",
+            ).count(), 1,
+        )
+
+    def test_repost_is_a_noop(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            mock_add.return_value = True
+            self.client.post(f"/web/tos/{self.tos.pk}/accept")
+            mock_add.reset_mock()
+            resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
+
+        self.assertEqual(resp.status_code, 302)
+        mock_add.assert_not_called()
+        self.assertEqual(AuditLog.objects.filter(action="tos_accepted").count(), 1)
+        self.assertEqual(
+            TOSAcceptance.objects.filter(
+                user=self.regular_user, tos_document=self.tos,
+            ).count(), 1,
+        )
 
 
 @pytest.mark.django_db

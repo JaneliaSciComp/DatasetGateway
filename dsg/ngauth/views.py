@@ -16,6 +16,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
+from core.audit import log_audit
 from core.models import APIKey, TOSAcceptance, TOSDocument, User
 
 from . import gcs, tokens
@@ -141,11 +142,17 @@ class ActivateView(View):
         if tos_id:
             try:
                 tos_doc = TOSDocument.objects.select_related("dataset").get(pk=tos_id)
-                TOSAcceptance.objects.get_or_create(
+                acceptance, created = TOSAcceptance.objects.get_or_create(
                     user=user,
                     tos_document=tos_doc,
                     defaults={"ip_address": request.META.get("REMOTE_ADDR")},
                 )
+                if created:
+                    log_audit(user, "tos_accepted", "TOSAcceptance", acceptance.pk,
+                              after_state={
+                                  "user": user.email, "tos_document": tos_doc.name,
+                                  "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
+                              })
             except TOSDocument.DoesNotExist:
                 return JsonResponse({"error": "TOS document not found"}, status=404)
 
