@@ -11,6 +11,7 @@ from .iam import (
     sync_dataset_iam,
     sync_group_datasets_for_user,
     sync_user_dataset_iam,
+    sync_user_iam,
 )
 from .models import (
     Affiliation,
@@ -60,6 +61,15 @@ class UserAdmin(admin.ModelAdmin):
     readonly_fields = ("password",)
     exclude = ("password",)
     inlines = [AffiliationInline, UserGroupInline, APIKeyInline]
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        # is_active/admin flip the access rule's outcome for every dataset the
+        # user (and their user-type service accounts) holds a source on.
+        if {"is_active", "admin"} & set(form.changed_data):
+            sync_user_iam(obj)
+            for sa in obj.service_accounts.all():
+                sync_user_iam(sa)
 
     def save_related(self, request, form, formsets, change):
         old_groups = set()

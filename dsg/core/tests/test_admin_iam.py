@@ -531,6 +531,92 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
 
 
 @pytest.mark.django_db
+class TestUserFlagAdminIAM(_AdminTestBase):
+    """is_active/admin flips via UserAdmin.save_model fan out per-user IAM,
+    including the user's user-type service accounts."""
+
+    def setUp(self):
+        super().setUp()
+        self.ma = UserAdmin(User, django_admin.site)
+        self.ds_a = Dataset.objects.create(name="ds-a")
+        DatasetBucket.objects.create(dataset=self.ds_a, name="bucket-a")
+        self.user = User.objects.create(email="user@example.org")
+        Grant.objects.create(user=self.user, dataset=self.ds_a, permission=self.view_perm)
+        self.ds_b = Dataset.objects.create(name="ds-b")
+        DatasetBucket.objects.create(dataset=self.ds_b, name="bucket-b")
+        self.sa_user = User.objects.create(email="robot@example.org", parent=self.user)
+        Grant.objects.create(user=self.sa_user, dataset=self.ds_b, permission=self.view_perm)
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_disable_removes_user_and_sa_iam(self, mock_remove, mock_add):
+        mock_remove.return_value = True
+        # is_active checkbox omitted → False
+        self._save_via_admin(self.ma, {
+            "email": self.user.email, "name": self.user.name,
+        }, instance=self.user)
+        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {
+            ("bucket-a", "user@example.org"),
+            ("bucket-b", "robot@example.org"),
+        })
+        mock_add.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_reenable_readds_user_and_sa_iam(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        self.user.is_active = False
+        self.user.save()
+        self._save_via_admin(self.ma, {
+            "email": self.user.email, "name": self.user.name, "is_active": "on",
+        }, instance=self.user)
+        added = {(c.args[0], c.args[1]) for c in mock_add.call_args_list}
+        self.assertEqual(added, {
+            ("bucket-a", "user@example.org"),
+            ("bucket-b", "robot@example.org"),
+        })
+        mock_remove.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_promote_to_admin_removes_per_user_iam(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        mock_remove.return_value = True
+        self._save_via_admin(self.ma, {
+            "email": self.user.email, "name": self.user.name,
+            "is_active": "on", "admin": "on",
+        }, instance=self.user)
+        # Admins are never provisioned per-user; the SA resync is a no-op add
+        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {("bucket-a", "user@example.org")})
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_demote_from_admin_readds_per_user_iam(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        self.user.admin = True
+        self.user.save()
+        self._save_via_admin(self.ma, {
+            "email": self.user.email, "name": self.user.name, "is_active": "on",
+        }, instance=self.user)  # admin checkbox omitted → False
+        self.assertIn(
+            ("bucket-a", "user@example.org"),
+            {(c.args[0], c.args[1]) for c in mock_add.call_args_list},
+        )
+        mock_remove.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_unrelated_change_does_not_sync(self, mock_remove, mock_add):
+        self._save_via_admin(self.ma, {
+            "email": self.user.email, "name": "New Name", "is_active": "on",
+        }, instance=self.user)
+        mock_add.assert_not_called()
+        mock_remove.assert_not_called()
+
+
+@pytest.mark.django_db
 class TestMembershipAdminIAM(_AdminTestBase):
     """User↔group membership changes via UserAdmin/GroupAdmin save_related."""
 

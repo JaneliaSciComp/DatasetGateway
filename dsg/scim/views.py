@@ -229,6 +229,11 @@ class UserDetailView(SCIMBaseView):
         after = {k: getattr(user, k) for k in fields}
         log_audit(request.user, "user_updated", "User", user.pk,
                   before_state=before, after_state=after)
+        if any(before.get(k) != after.get(k) for k in ("is_active", "admin")):
+            from core.iam import sync_user_iam
+            sync_user_iam(user)
+            for sa in user.service_accounts.all():
+                sync_user_iam(sa)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def patch(self, request, scim_id):
@@ -292,6 +297,11 @@ class UserDetailView(SCIMBaseView):
         if before != after:
             log_audit(request.user, "user_updated", "User", user.pk,
                       before_state=before, after_state=after)
+        if any(before[k] != after[k] for k in ("is_active", "admin")):
+            from core.iam import sync_user_iam
+            sync_user_iam(user)
+            for sa in user.service_accounts.all():
+                sync_user_iam(sa)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def delete(self, request, scim_id):

@@ -1,11 +1,23 @@
 """Integration tests for SCIM 2.0 CRUD endpoints."""
 
+from unittest.mock import patch
+
 import pytest
 from django.core.cache import cache
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from core.models import APIKey, Dataset, Group, ServiceTable, User, UserGroup
+from core.models import (
+    APIKey,
+    Dataset,
+    DatasetBucket,
+    Grant,
+    Group,
+    Permission,
+    ServiceTable,
+    User,
+    UserGroup,
+)
 
 
 @pytest.mark.django_db
@@ -253,6 +265,116 @@ class TestSCIMUserCRUD(TestCase):
             "/auth/scim/v2/Users/nonexistent-id", **self._auth()
         )
         self.assertEqual(resp.status_code, 404)
+
+
+@pytest.mark.django_db
+class TestSCIMUserFlagIAM(TestCase):
+    """SCIM is_active/admin flips fan out per-user bucket IAM inline,
+    including the user's user-type service accounts."""
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.admin = User.objects.create(
+            email="admin@example.org", name="admin", admin=True
+        )
+        self.api_key = APIKey.objects.create(user=self.admin, key="scim-tok")
+
+        from scim.utils import generate_scim_id
+        self.view_perm, _ = Permission.objects.get_or_create(name="view")
+        self.ds_a = Dataset.objects.create(name="ds-a")
+        DatasetBucket.objects.create(dataset=self.ds_a, name="bucket-a")
+        self.user = User.objects.create(email="user@example.org", name="user")
+        self.user.scim_id = generate_scim_id(self.user.pk, "User")
+        self.user.save(update_fields=["scim_id"])
+        Grant.objects.create(user=self.user, dataset=self.ds_a, permission=self.view_perm)
+        self.ds_b = Dataset.objects.create(name="ds-b")
+        DatasetBucket.objects.create(dataset=self.ds_b, name="bucket-b")
+        self.sa_user = User.objects.create(email="robot@example.org", parent=self.user)
+        Grant.objects.create(user=self.sa_user, dataset=self.ds_b, permission=self.view_perm)
+
+    def _auth(self):
+        return {"HTTP_AUTHORIZATION": f"Bearer {self.api_key.key}"}
+
+    def _patch_active(self, value):
+        return self.client.patch(
+            f"/auth/scim/v2/Users/{self.user.scim_id}",
+            {
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {"op": "replace", "path": "active", "value": value}
+                ],
+            },
+            format="json",
+            **self._auth(),
+        )
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_patch_active_false_removes_user_and_sa_iam(self, mock_remove, mock_add):
+        mock_remove.return_value = True
+        resp = self._patch_active(False)
+        self.assertEqual(resp.status_code, 200)
+        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {
+            ("bucket-a", "user@example.org"),
+            ("bucket-b", "robot@example.org"),
+        })
+        mock_add.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_patch_active_true_readds_user_and_sa_iam(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        self.user.is_active = False
+        self.user.save()
+        resp = self._patch_active(True)
+        self.assertEqual(resp.status_code, 200)
+        added = {(c.args[0], c.args[1]) for c in mock_add.call_args_list}
+        self.assertEqual(added, {
+            ("bucket-a", "user@example.org"),
+            ("bucket-b", "robot@example.org"),
+        })
+        mock_remove.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_put_admin_flip_resyncs(self, mock_remove, mock_add):
+        from scim.serializers import USER_EXTENSION
+        mock_add.return_value = True
+        mock_remove.return_value = True
+        resp = self.client.put(
+            f"/auth/scim/v2/Users/{self.user.scim_id}",
+            {
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User", USER_EXTENSION],
+                "userName": self.user.email,
+                USER_EXTENSION: {"admin": True},
+            },
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        # Promoted admins are never provisioned per-user
+        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {("bucket-a", "user@example.org")})
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_patch_unrelated_change_does_not_sync(self, mock_remove, mock_add):
+        resp = self.client.patch(
+            f"/auth/scim/v2/Users/{self.user.scim_id}",
+            {
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [
+                    {"op": "replace", "path": "displayName", "value": "Renamed"}
+                ],
+            },
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        mock_add.assert_not_called()
+        mock_remove.assert_not_called()
 
 
 @pytest.mark.django_db
