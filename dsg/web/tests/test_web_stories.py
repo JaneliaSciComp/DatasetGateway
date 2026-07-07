@@ -1050,7 +1050,7 @@ class TestGroupMembershipIAMSync(_WebTestBase):
 
 @pytest.mark.django_db
 class TestTOSAcceptViewIAM(_WebTestBase):
-    """POST /web/tos/<id>/accept audits and syncs IAM, only on first acceptance."""
+    """POST /web/tos/<id>/accept audits once and retries dataset IAM sync."""
 
     def setUp(self):
         super().setUp()
@@ -1081,19 +1081,22 @@ class TestTOSAcceptViewIAM(_WebTestBase):
             ).count(), 1,
         )
 
-    def test_repost_is_a_noop(self):
+    def test_repost_retries_iam_but_does_not_duplicate_audit(self):
         from unittest.mock import patch
 
         self._login(self.regular_key)
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = True
+            mock_add.side_effect = [False, True]
             self.client.post(f"/web/tos/{self.tos.pk}/accept")
-            mock_add.reset_mock()
             resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
 
         self.assertEqual(resp.status_code, 302)
-        mock_add.assert_not_called()
+        self.assertEqual(mock_add.call_count, 2)
+        self.assertEqual(
+            [call.args for call in mock_add.call_args_list],
+            [("bucket-a", "regular@example.org"), ("bucket-a", "regular@example.org")],
+        )
         self.assertEqual(AuditLog.objects.filter(action="tos_accepted").count(), 1)
         self.assertEqual(
             TOSAcceptance.objects.filter(

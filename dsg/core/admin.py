@@ -363,6 +363,13 @@ class TOSDocumentAdmin(admin.ModelAdmin):
             obj.dataset.tos = obj
             obj.dataset.save(update_fields=["tos"])
             flipped = True
+        if (
+            retargeted
+            and old_dataset is not None
+            and old_dataset.tos_id == obj.pk
+        ):
+            old_dataset.tos = None
+            old_dataset.save(update_fields=["tos"])
         # Resync here only — the auto-set bypasses DatasetModelAdmin.save_model,
         # so there is no double-fire.
         if retargeted or flipped:

@@ -303,13 +303,14 @@ class TOSAcceptView(View):
                 "user": user.email, "tos_document": tos_doc.name,
                 "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
             })
-            # Provision bucket IAM for dataset-scoped TOS
-            if tos_doc.dataset:
-                from core.iam import sync_user_dataset_iam
-                sync_user_dataset_iam(user, tos_doc.dataset)
             messages.success(request, f"Accepted: {tos_doc.name}")
         else:
             messages.info(request, f"You have already accepted: {tos_doc.name}")
+        # Provision/repair bucket IAM for dataset-scoped TOS. This remains
+        # best-effort, but must retry after a prior failed acceptance sync.
+        if tos_doc.dataset:
+            from core.iam import sync_user_dataset_iam
+            sync_user_dataset_iam(user, tos_doc.dataset)
         return redirect("web-datasets")
 
 

@@ -504,7 +504,6 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
         )
         self.dataset.tos = tos
         self.dataset.save()
-        TOSAcceptance.objects.create(user=self.user, tos_document=tos)
         other_ds = Dataset.objects.create(name="ds2")
         DatasetBucket.objects.create(dataset=other_ds, name="bucket-b")
         other_user = User.objects.create(email="otheruser@example.org")
@@ -516,6 +515,8 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
             "effective_date_0": "2026-01-01", "effective_date_1": "00:00:00",
         }, instance=tos)
 
+        self.dataset.refresh_from_db()
+        self.assertIsNone(self.dataset.tos_id)
         # New dataset picked up the gate via auto-set; its user hasn't accepted
         other_ds.refresh_from_db()
         self.assertEqual(other_ds.tos_id, tos.pk)
@@ -523,7 +524,8 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
             ("bucket-b", "otheruser@example.org"),
             {(c.args[0], c.args[1]) for c in mock_remove.call_args_list},
         )
-        # Old dataset resynced too (its user accepted → stays provisioned)
+        # Old dataset resynced after the stale gate was cleared, so its user
+        # provisions despite never accepting the moved document.
         self.assertIn(
             ("bucket-a", "user@example.org"),
             {(c.args[0], c.args[1]) for c in mock_add.call_args_list},

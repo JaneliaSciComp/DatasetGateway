@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 
 from core.models import (
@@ -81,6 +82,25 @@ class TestSyncBucketIAMCommand(TestCase):
         mock_remove.assert_not_called()
         assert "[DRY RUN] ADD accepted@example.org -> bucket-a" in out
         assert "(dry run)" in out
+
+    @patch("ngauth.gcs.check_storage_permission")
+    @patch("ngauth.gcs.add_user_to_bucket", return_value=False)
+    @patch("ngauth.gcs.remove_user_from_bucket", return_value=False)
+    def test_failed_gcs_calls_report_and_exit_nonzero(
+        self, mock_remove, mock_add, mock_check,
+    ):
+        mock_check.side_effect = lambda email, bucket: email == "pending@example.org"
+        out = StringIO()
+
+        with self.assertRaises(CommandError) as ctx:
+            call_command("sync_bucket_iam", stdout=out)
+
+        mock_add.assert_called_once_with("bucket-a", "accepted@example.org")
+        mock_remove.assert_called_once_with("bucket-a", "pending@example.org")
+        assert "ADD accepted@example.org -> bucket-a" in out.getvalue()
+        assert "REMOVE pending@example.org -> bucket-a" in out.getvalue()
+        assert "Failures: 2" in out.getvalue()
+        assert "2 failed operation" in str(ctx.exception)
 
     @patch("ngauth.gcs.check_storage_permission", return_value=False)
     @patch("ngauth.gcs.add_user_to_bucket")

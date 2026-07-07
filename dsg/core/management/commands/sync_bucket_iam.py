@@ -1,6 +1,6 @@
 """Bulk reconciliation of GCS bucket IAM against effective permissions."""
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 
 from core.iam import _get_dataset_buckets, _user_has_effective_access, permission_source_users
 from core.models import Dataset
@@ -35,6 +35,7 @@ class Command(BaseCommand):
 
         total_added = 0
         total_removed = 0
+        total_failed = 0
 
         for ds in datasets:
             buckets = _get_dataset_buckets(ds)
@@ -56,12 +57,16 @@ class Command(BaseCommand):
                         action = "ADD"
                         total_added += 1
                         if not dry_run:
-                            add_user_to_bucket(bucket, user.email)
+                            success = add_user_to_bucket(bucket, user.email)
+                            if not success:
+                                total_failed += 1
                     elif not should_provision and has_access:
                         action = "REMOVE"
                         total_removed += 1
                         if not dry_run:
-                            remove_user_from_bucket(bucket, user.email)
+                            success = remove_user_from_bucket(bucket, user.email)
+                            if not success:
+                                total_failed += 1
                     else:
                         continue
 
@@ -70,9 +75,14 @@ class Command(BaseCommand):
                         f"  {prefix}{action} {user.email} -> {bucket}"
                     )
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"\nDone. Added: {total_added}, Removed: {total_removed}"
-                + (" (dry run)" if dry_run else "")
+        summary = f"\nDone. Added: {total_added}, Removed: {total_removed}, Failures: {total_failed}"
+        if dry_run:
+            summary += " (dry run)"
+
+        if total_failed:
+            self.stdout.write(self.style.ERROR(summary))
+            raise CommandError(
+                f"Bucket IAM sync completed with {total_failed} failed operation(s)."
             )
-        )
+
+        self.stdout.write(self.style.SUCCESS(summary))
