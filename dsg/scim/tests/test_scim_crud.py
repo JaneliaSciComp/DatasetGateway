@@ -97,6 +97,40 @@ class TestSCIMNonAdmin(TestCase):
 
 
 @pytest.mark.django_db
+class TestSCIMAdminServiceAccountEnabledGate(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.parent = User.objects.create(
+            email="parent@example.org", name="parent",
+        )
+        self.robot = User.objects.create(
+            email="robot@example.org", name="robot", admin=True, parent=self.parent,
+        )
+        self.api_key = APIKey.objects.create(user=self.robot, key="robot-admin-tok")
+
+    def _auth(self):
+        return {"HTTP_AUTHORIZATION": f"Bearer {self.api_key.key}"}
+
+    def _get_config(self):
+        return self.client.get("/auth/scim/v2/ServiceProviderConfig", **self._auth())
+
+    def test_admin_user_type_service_account_requires_enabled_parent(self):
+        resp = self._get_config()
+        self.assertEqual(resp.status_code, 200)
+
+        self.parent.is_active = False
+        self.parent.save()
+        resp = self._get_config()
+        self.assertEqual(resp.status_code, 401)
+
+        self.parent.is_active = True
+        self.parent.save()
+        resp = self._get_config()
+        self.assertEqual(resp.status_code, 200)
+
+
+@pytest.mark.django_db
 class TestSCIMUserCRUD(TestCase):
     def setUp(self):
         cache.clear()

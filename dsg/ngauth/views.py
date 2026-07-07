@@ -267,8 +267,21 @@ class GCSTokenView(View):
                 {"error": "Invalid authentication token"}, status=401, headers=headers
             )
 
+        try:
+            user = User.objects.select_related("parent").get(email=user_token.user_id)
+        except User.DoesNotExist:
+            return JsonResponse(
+                {"error": "Invalid authentication token"}, status=401, headers=headers
+            )
+        if not user.is_enabled:
+            if user.is_active:
+                error = "Parent user account is disabled"
+            else:
+                error = "User account is disabled"
+            return JsonResponse({"error": error}, status=401, headers=headers)
+
         # Get GCS token
-        gcs_token = gcs.get_gcs_token_for_user(user_token.user_id, bucket)
+        gcs_token = gcs.get_gcs_token_for_user(user.email, bucket)
         if not gcs_token:
             return JsonResponse(
                 {"error": "Access denied"}, status=403, headers=headers
