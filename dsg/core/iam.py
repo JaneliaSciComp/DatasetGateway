@@ -4,7 +4,9 @@ Provides a single source of truth for whether a user should have bucket-level
 IAM access to a dataset's GCS buckets, and syncs that state.
 
 Access rule:
-    should_provision = has_permission(grant OR group_perm) AND tos_satisfied(no TOS OR accepted)
+    should_provision = enabled(is_active AND parent active if any)
+                       AND has_permission(grant OR group_perm)
+                       AND tos_satisfied(no TOS OR accepted)
 
 Global admins are skipped — they access buckets via service-account auth tokens,
 not per-user bucket IAM.
@@ -79,6 +81,39 @@ def sync_dataset_iam(dataset, users=None):
         sync_user_dataset_iam(user, dataset)
 
 
+def permission_source_datasets(user):
+    """Return datasets where the user holds any permission source.
+
+    Transpose of permission_source_users: a direct Grant or a membership in a
+    group with a GroupDatasetPermission. Deliberately ungated by the effective
+    rule for the same reason — deprovisioning must reach datasets where the
+    user's IAM is stale. Enumerated from DSG's own tables only; live bucket
+    policy is never read (bucket membership is a superset of DSG state).
+    """
+    from core.models import Dataset, Grant, GroupDatasetPermission, UserGroup
+
+    dataset_ids = set(
+        Grant.objects.filter(user=user).values_list("dataset_id", flat=True)
+    )
+    group_ids = UserGroup.objects.filter(user=user).values_list("group_id", flat=True)
+    dataset_ids |= set(
+        GroupDatasetPermission.objects.filter(
+            group_id__in=group_ids
+        ).values_list("dataset_id", flat=True)
+    )
+    return Dataset.objects.filter(pk__in=dataset_ids)
+
+
+def sync_user_iam(user):
+    """Sync bucket IAM for every permission-source dataset of a user.
+
+    Use when a user-level flag (is_active, admin) flips the rule's outcome
+    across all their datasets at once.
+    """
+    for dataset in permission_source_datasets(user):
+        sync_user_dataset_iam(user, dataset)
+
+
 def deprovision_bucket(bucket_name, dataset):
     """Best-effort removal of a dataset's permission-source users from a bucket.
 
@@ -126,6 +161,11 @@ def _user_has_effective_access(user, dataset):
     Returns False for global admins (they don't need per-user bucket IAM).
     """
     if user.admin:
+        return False
+
+    # Disabled means disabled, including robots: a user-type service account
+    # fails while its parent is disabled (User.is_enabled).
+    if not user.is_enabled:
         return False
 
     from core.models import Grant, GroupDatasetPermission, TOSAcceptance, UserGroup

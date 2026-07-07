@@ -58,6 +58,20 @@ class TestSyncBucketIAMCommand(TestCase):
         mock_remove.assert_called_once_with("bucket-a", "pending@example.org")
         assert "REMOVE pending@example.org -> bucket-a" in out
 
+    @patch("ngauth.gcs.check_storage_permission", return_value=True)
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_disabled_user_converges_to_remove(self, mock_remove, mock_add, mock_check):
+        # A disabled user with a grant and live bucket access must show as
+        # REMOVE — the rule change flows through without any command change.
+        self.accepted.is_active = False
+        self.accepted.save()
+        out = self._run()
+        removed = {c.args[1] for c in mock_remove.call_args_list}
+        assert "accepted@example.org" in removed
+        assert "REMOVE accepted@example.org -> bucket-a" in out
+        mock_add.assert_not_called()
+
     @patch("ngauth.gcs.check_storage_permission", return_value=False)
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")

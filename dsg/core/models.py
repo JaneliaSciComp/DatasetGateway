@@ -90,6 +90,14 @@ class User(AbstractBaseUser):
         return self.parent_id is not None
 
     @property
+    def is_enabled(self):
+        """Disabled means disabled, including robots: a user-type service
+        account is dead while its parent is disabled. Single home for the
+        rule — consumed by the IAM access rule, DRF auth, and both cookie
+        helpers."""
+        return self.is_active and (self.parent_id is None or self.parent.is_active)
+
+    @property
     def public_name(self):
         return self.display_name or self.name or self.email.split("@")[0]
 
@@ -476,6 +484,11 @@ class ServiceAccount(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def is_enabled(self):
+        # No parent to inherit a disable from — mirrors User.is_enabled.
+        return self.is_active
 
     @property
     def email(self):

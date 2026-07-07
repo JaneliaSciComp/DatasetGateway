@@ -93,6 +93,35 @@ class TestUserHasEffectiveAccess(TestCase):
         TOSAcceptance.objects.create(user=self.user, tos_document=tos)
         self.assertTrue(_user_has_effective_access(sa, self.dataset))
 
+    def test_disabled_user_returns_false(self):
+        from core.iam import _user_has_effective_access
+        Grant.objects.create(user=self.user, dataset=self.dataset, permission=self.view_perm)
+        self.user.is_active = False
+        self.user.save()
+        self.assertFalse(_user_has_effective_access(self.user, self.dataset))
+
+    def test_disabled_service_account_user_returns_false(self):
+        from core.iam import _user_has_effective_access
+        sa = User.objects.create(email="sa@example.org", parent=self.user, is_active=False)
+        Grant.objects.create(user=sa, dataset=self.dataset, permission=self.view_perm)
+        self.assertFalse(_user_has_effective_access(sa, self.dataset))
+
+    def test_disabled_parent_gates_service_account(self):
+        from core.iam import _user_has_effective_access
+        sa = User.objects.create(email="sa@example.org", parent=self.user)
+        Grant.objects.create(user=sa, dataset=self.dataset, permission=self.view_perm)
+        self.assertTrue(_user_has_effective_access(sa, self.dataset))
+        # Disabling the parent kills the robot too
+        self.user.is_active = False
+        self.user.save()
+        sa.refresh_from_db()
+        self.assertFalse(_user_has_effective_access(sa, self.dataset))
+        # Re-enabling restores it
+        self.user.is_active = True
+        self.user.save()
+        sa.refresh_from_db()
+        self.assertTrue(_user_has_effective_access(sa, self.dataset))
+
 
 @pytest.mark.django_db
 class TestSyncUserDatasetIAM(TestCase):
@@ -238,6 +267,108 @@ class TestPermissionSourceUsers(TestCase):
         other_user = User.objects.create(email="elsewhere@example.org")
         Grant.objects.create(user=other_user, dataset=other_ds, permission=self.view_perm)
         self.assertNotIn("elsewhere@example.org", self._emails())
+
+
+@pytest.mark.django_db
+class TestPermissionSourceDatasets(TestCase):
+    def setUp(self):
+        self.view_perm, _ = Permission.objects.get_or_create(name="view")
+        self.user = User.objects.create(email="user@example.org")
+        self.granted_ds = Dataset.objects.create(name="ds-granted")
+        Grant.objects.create(user=self.user, dataset=self.granted_ds, permission=self.view_perm)
+        self.group = Group.objects.create(name="lab")
+        UserGroup.objects.create(user=self.user, group=self.group)
+        self.group_ds = Dataset.objects.create(name="ds-group")
+        GroupDatasetPermission.objects.create(
+            group=self.group, dataset=self.group_ds, permission=self.view_perm,
+        )
+
+    def _names(self):
+        from core.iam import permission_source_datasets
+        return {ds.name for ds in permission_source_datasets(self.user)}
+
+    def test_includes_granted_and_group_datasets(self):
+        self.assertEqual(self._names(), {"ds-granted", "ds-group"})
+
+    def test_no_rule_gate(self):
+        # Disabled/TOS-pending users must still enumerate their datasets —
+        # deprovisioning has to reach the stale IAM.
+        tos = TOSDocument.objects.create(name="TOS", text="Terms", dataset=self.granted_ds)
+        self.granted_ds.tos = tos
+        self.granted_ds.save()
+        self.user.is_active = False
+        self.user.save()
+        self.assertEqual(self._names(), {"ds-granted", "ds-group"})
+
+    def test_excludes_unrelated_datasets(self):
+        Dataset.objects.create(name="ds-other")
+        self.assertNotIn("ds-other", self._names())
+
+    def test_excludes_other_users_sources(self):
+        other = User.objects.create(email="other@example.org")
+        other_ds = Dataset.objects.create(name="ds-elsewhere")
+        Grant.objects.create(user=other, dataset=other_ds, permission=self.view_perm)
+        self.assertNotIn("ds-elsewhere", self._names())
+
+
+@pytest.mark.django_db
+class TestSyncUserIAM(TestCase):
+    def setUp(self):
+        self.view_perm, _ = Permission.objects.get_or_create(name="view")
+        self.user = User.objects.create(email="user@example.org")
+        self.ds_a = Dataset.objects.create(name="ds-a")
+        DatasetBucket.objects.create(dataset=self.ds_a, name="bucket-a")
+        Grant.objects.create(user=self.user, dataset=self.ds_a, permission=self.view_perm)
+        self.group = Group.objects.create(name="lab")
+        UserGroup.objects.create(user=self.user, group=self.group)
+        self.ds_b = Dataset.objects.create(name="ds-b")
+        DatasetBucket.objects.create(dataset=self.ds_b, name="bucket-b")
+        GroupDatasetPermission.objects.create(
+            group=self.group, dataset=self.ds_b, permission=self.view_perm,
+        )
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_enabled_user_provisioned_everywhere(self, mock_remove, mock_add):
+        from core.iam import sync_user_iam
+        mock_add.return_value = True
+
+        sync_user_iam(self.user)
+
+        added = {c.args[0] for c in mock_add.call_args_list}
+        self.assertEqual(added, {"bucket-a", "bucket-b"})
+        mock_remove.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_disabled_user_deprovisioned_everywhere(self, mock_remove, mock_add):
+        from core.iam import sync_user_iam
+        mock_remove.return_value = True
+        self.user.is_active = False
+        self.user.save()
+
+        sync_user_iam(self.user)
+
+        removed = {c.args[0] for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {"bucket-a", "bucket-b"})
+        mock_add.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_disabled_parent_deprovisions_service_account(self, mock_remove, mock_add):
+        from core.iam import sync_user_iam
+        mock_remove.return_value = True
+        sa = User.objects.create(email="sa@example.org", parent=self.user)
+        Grant.objects.create(user=sa, dataset=self.ds_a, permission=self.view_perm)
+        self.user.is_active = False
+        self.user.save()
+        sa.refresh_from_db()
+
+        sync_user_iam(sa)
+
+        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {("bucket-a", "sa@example.org")})
+        mock_add.assert_not_called()
 
 
 @pytest.mark.django_db
