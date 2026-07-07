@@ -358,7 +358,8 @@ DSG grants and revokes per-user GCS bucket IAM (`core/iam.py`) so that a
 user's bucket access always matches the access rule:
 
 ```
-(direct Grant OR group permission) AND (no TOS OR TOS accepted)
+user enabled (active, and an active parent for user-type service accounts)
+AND (direct Grant OR group permission) AND (no TOS OR TOS accepted)
 ```
 
 Global admins are skipped (they use service-account auth, not per-user
@@ -371,10 +372,20 @@ acceptances, user↔group memberships, Dataset buckets, a dataset's TOS,
 or moving a TOS document between datasets triggers the appropriate
 add/remove calls — including bulk "delete selected" actions, retargeted
 rows (the old user/dataset pair is deprovisioned), and bucket
-renames/moves (the old bucket name is deprovisioned first). GCS calls
-are synchronous best-effort: failures are logged, never raised, so a
-large fan-out (e.g. adding a bucket to a dataset with many users) may
+renames/moves (the old bucket name is deprovisioned first). Flipping a
+user's **Active** or **Admin** flag (Django admin or SCIM `active`)
+resyncs every dataset where they hold a permission source — disabling a
+user removes their bucket IAM everywhere, including their user-type
+service accounts', and also cuts off their tokens, web login, and ngauth
+endpoints; re-enabling re-adds IAM wherever the full rule passes. GCS
+calls are synchronous best-effort: failures are logged, never raised, so
+a large fan-out (e.g. adding a bucket to a dataset with many users) may
 take a moment but cannot block the save.
+
+DSG only ever adds or removes users it enumerates from its own tables:
+bucket IAM is treated as a **superset** of DSG state, so members it
+cannot derive from its own tables (e.g. hand-added collaborators) are
+never touched, and no sync path scans bucket policy to decide removals.
 
 **A scheduled reconcile is the backstop.** Because inline calls are
 best-effort (and direct DB/shell edits bypass them), run the reconcile
