@@ -363,7 +363,9 @@ AND (direct Grant OR group permission) AND (no TOS OR TOS accepted)
 ```
 
 Global admins are skipped (they use service-account auth, not per-user
-bucket IAM), and service accounts are never added to bucket IAM.
+bucket IAM). `ServiceAccount`-model accounts (organization robots) are
+never added to bucket IAM; user-type service accounts (`User` rows with a
+parent) carry their own bucket IAM and follow their parent's enabled state.
 
 **Every mutation surface syncs inline.** Web-UI grant/TOS/group flows,
 SCIM provisioning, and the Django admin console all converge IAM as part
@@ -387,9 +389,8 @@ bucket IAM is treated as a **superset** of DSG state, so members it
 cannot derive from its own tables (e.g. hand-added collaborators) are
 never touched, and no sync path scans bucket policy to decide removals.
 
-**A scheduled reconcile is the backstop.** Because inline calls are
-best-effort (and direct DB/shell edits bypass them), run the reconcile
-command periodically:
+**A scheduled reconcile is the backstop for DSG-visible rows.** Because
+inline calls are best-effort, run the reconcile command periodically:
 
 ```bash
 pixi run iamsync                                    # all datasets
@@ -400,6 +401,22 @@ bash scripts/manage.sh sync_bucket_iam --dataset DS # one dataset
 For production, install the bundled systemd templates
 `scripts/datasetgateway-iamsync.{service,timer}` (daily at 03:45; see
 the unit headers for install steps, mirroring the backup units).
+
+The reconcile command walks users currently enumerable from DSG tables
+(direct Grants or memberships in groups with dataset permissions) and
+re-converges those users against the current rule. It does not scan bucket
+policy. If a Grant, membership, bucket, or TOS row is deleted out-of-band
+with SQL or a shell, DSG may no longer enumerate the affected user, so the
+reconcile cannot remove their stale bucket IAM. Remove such bindings
+manually with the Google Cloud console or:
+
+```bash
+gcloud storage buckets remove-iam-policy-binding gs://BUCKET \
+  --member=user:EMAIL --role=roles/storage.objectViewer
+```
+
+Alternatively, recreate the missing row and delete it through a hooked DSG
+surface (web UI, Django admin, or SCIM) so the normal remove path runs.
 
 ---
 
