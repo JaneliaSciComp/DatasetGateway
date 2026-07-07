@@ -1512,3 +1512,61 @@ class TestTOSServiceCheck(_WebTestBase):
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, redirect_url)
+
+
+# ──────────────────────────────────────────────────────────────
+# Disabled users
+# ──────────────────────────────────────────────────────────────
+
+
+@pytest.mark.django_db
+class TestDisabledUserStories(_WebTestBase):
+    """A disabled user's live dsg_token cookie is treated as logged out."""
+
+    def test_disabled_user_cookie_redirects_to_login(self):
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 200)
+
+        self.regular_user.is_active = False
+        self.regular_user.save()
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/auth/login", resp.url)
+
+    def test_disabled_user_session_treated_as_logged_out(self):
+        session = self.client.session
+        session["user_email"] = self.regular_user.email
+        session.save()
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 200)
+
+        self.regular_user.is_active = False
+        self.regular_user.save()
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn("/auth/login", resp.url)
+
+    def test_disabled_parent_sa_cookie_treated_as_logged_out(self):
+        sa_user = User.objects.create(email="robot@example.org", parent=self.regular_user)
+        sa_key = APIKey.objects.create(user=sa_user, key="tok-web-robot")
+        self._login(sa_key)
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 200)
+
+        self.regular_user.is_active = False
+        self.regular_user.save()
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 302)
+
+    def test_reenabled_user_cookie_works_again(self):
+        self.regular_user.is_active = False
+        self.regular_user.save()
+        self._login(self.regular_key)
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 302)
+
+        self.regular_user.is_active = True
+        self.regular_user.save()
+        resp = self.client.get("/web/datasets")
+        self.assertEqual(resp.status_code, 200)

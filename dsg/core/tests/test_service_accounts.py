@@ -89,6 +89,63 @@ class TestSAAuthentication(TestCase):
 
 
 @pytest.mark.django_db
+class TestDisabledPrincipalAuthentication(TestCase):
+    """is_enabled gates token auth: disabled users and user-type service
+    accounts under a disabled parent are rejected, even on a warm cache."""
+
+    def setUp(self):
+        cache.clear()
+        self.rf = RequestFactory()
+        self.auth = TokenAuthentication()
+        self.parent = User.objects.create(email="parent@example.org", name="parent")
+        self.parent_key = APIKey.objects.create(user=self.parent, key="tok-parent")
+        self.sa_user = User.objects.create(email="robot@example.org", parent=self.parent)
+        self.sa_key = APIKey.objects.create(user=self.sa_user, key="tok-robot")
+
+    def _request_with_bearer(self, key):
+        request = self.rf.get("/", HTTP_AUTHORIZATION=f"Bearer {key}")
+        request.query_params = {}
+        return request
+
+    def test_disabled_user_rejected(self):
+        self.parent.is_active = False
+        self.parent.save()
+        with self.assertRaises(AuthenticationFailed):
+            self.auth.authenticate(self._request_with_bearer("tok-parent"))
+
+    def test_sa_user_with_enabled_parent_authenticates(self):
+        principal, _ = self.auth.authenticate(self._request_with_bearer("tok-robot"))
+        self.assertEqual(principal.pk, self.sa_user.pk)
+
+    def test_sa_user_with_disabled_parent_rejected(self):
+        self.parent.is_active = False
+        self.parent.save()
+        with self.assertRaises(AuthenticationFailed) as ctx:
+            self.auth.authenticate(self._request_with_bearer("tok-robot"))
+        self.assertIn("Parent", str(ctx.exception))
+
+    def test_disable_takes_effect_on_warm_cache(self):
+        # First authenticate warms the permission cache...
+        self.auth.authenticate(self._request_with_bearer("tok-robot"))
+        # ...but the is_enabled rejection runs before the cache path, so a
+        # disabled parent must still 401 the next request.
+        self.parent.is_active = False
+        self.parent.save()
+        with self.assertRaises(AuthenticationFailed):
+            self.auth.authenticate(self._request_with_bearer("tok-robot"))
+
+    def test_reenabled_parent_restores_auth(self):
+        self.parent.is_active = False
+        self.parent.save()
+        with self.assertRaises(AuthenticationFailed):
+            self.auth.authenticate(self._request_with_bearer("tok-robot"))
+        self.parent.is_active = True
+        self.parent.save()
+        principal, _ = self.auth.authenticate(self._request_with_bearer("tok-robot"))
+        self.assertEqual(principal.pk, self.sa_user.pk)
+
+
+@pytest.mark.django_db
 class TestSAPermissionCache(TestCase):
     def setUp(self):
         cache.clear()

@@ -74,15 +74,20 @@ def _get_web_user(request):
     repair a stale session entry rather than trust it, which prevents browsers
     that have been logged into multiple Google accounts from acting on the
     wrong user.
+
+    Both resolution paths treat a not-enabled user (disabled, or a user-type
+    service account under a disabled parent) as logged out.
     """
     token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
     if token:
         try:
-            api_key = APIKey.objects.select_related("user").get(key=token)
+            api_key = APIKey.objects.select_related("user__parent").get(key=token)
             cookie_user = api_key.user
         except APIKey.DoesNotExist:
             cookie_user = None
         if cookie_user:
+            if not cookie_user.is_enabled:
+                return None
             if request.session.get("user_email") != cookie_user.email:
                 request.session["user_email"] = cookie_user.email
             return cookie_user
@@ -90,9 +95,10 @@ def _get_web_user(request):
     email = request.session.get("user_email")
     if email:
         try:
-            return User.objects.get(email=email)
+            user = User.objects.select_related("parent").get(email=email)
         except User.DoesNotExist:
             return None
+        return user if user.is_enabled else None
 
     return None
 
