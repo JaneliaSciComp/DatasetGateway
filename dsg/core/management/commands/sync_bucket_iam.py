@@ -2,7 +2,7 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
-from core.iam import _get_dataset_buckets, _user_has_effective_access, permission_source_users
+from core.iam import _get_dataset_buckets, permission_source_users, provisioned_buckets
 from core.models import Dataset
 
 
@@ -48,9 +48,10 @@ class Command(BaseCommand):
             users = permission_source_users(ds)
 
             for user in users:
-                should_provision = _user_has_effective_access(user, ds)
+                provisioned = provisioned_buckets(user, ds)
 
                 for bucket in buckets:
+                    should_provision = bucket in provisioned
                     has_access = check_storage_permission(user.email, bucket)
 
                     if should_provision and not has_access:

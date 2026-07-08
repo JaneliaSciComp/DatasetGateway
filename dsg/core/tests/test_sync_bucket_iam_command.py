@@ -11,6 +11,7 @@ from django.test import TestCase
 from core.models import (
     Dataset,
     DatasetBucket,
+    DatasetVersion,
     Grant,
     Permission,
     TOSAcceptance,
@@ -114,6 +115,34 @@ class TestSyncBucketIAMCommand(TestCase):
         self._run("--dataset", "ds1")
         called_buckets = {c.args[0] for c in mock_add.call_args_list}
         assert called_buckets == {"bucket-a"}
+
+    @patch("ngauth.gcs.check_storage_permission")
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_version_scoped_grant_reconciles_per_bucket(
+        self, mock_remove, mock_add, mock_check
+    ):
+        versioned = Dataset.objects.create(name="versioned")
+        bucket_a = DatasetBucket.objects.create(dataset=versioned, name="version-bucket-a")
+        bucket_b = DatasetBucket.objects.create(dataset=versioned, name="version-bucket-b")
+        dv1 = DatasetVersion.objects.create(
+            dataset=versioned, version="v1", branch="main", ordinal=1
+        )
+        dv1.buckets.add(bucket_a)
+        dv2 = DatasetVersion.objects.create(
+            dataset=versioned, version="v2", branch="main", ordinal=2
+        )
+        dv2.buckets.add(bucket_b)
+        user = User.objects.create(email="versioned@example.org")
+        Grant.objects.create(
+            user=user, dataset=versioned, dataset_version=dv1, permission=self.view_perm
+        )
+        mock_check.side_effect = lambda email, bucket: bucket == "version-bucket-b"
+
+        self._run("--dataset", "versioned")
+
+        mock_add.assert_called_once_with("version-bucket-a", "versioned@example.org")
+        mock_remove.assert_called_once_with("version-bucket-b", "versioned@example.org")
 
     def test_unknown_dataset_errors(self):
         out = StringIO()

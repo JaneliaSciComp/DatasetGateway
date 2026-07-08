@@ -4,15 +4,20 @@ Provides a single source of truth for whether a user should have bucket-level
 IAM access to a dataset's GCS buckets, and syncs that state.
 
 Access rule:
-    should_provision = enabled(is_active AND parent active if any)
-                       AND has_permission(grant OR group_perm)
-                       AND tos_satisfied(no TOS OR accepted)
+    provisioned_buckets = eligible principal
+                          AND qualifying grants/group permissions
+                          AND dataset/version TOS satisfied
 
 Global admins are skipped — they access buckets via service-account auth tokens,
 not per-user bucket IAM.
 """
 
 import logging
+
+from django.db.models import Q
+from django.utils import timezone
+
+from core.authz import VIEW_PERMISSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +33,10 @@ def sync_user_dataset_iam(user, dataset):
     if not buckets:
         return
 
-    should_provision = _user_has_effective_access(user, dataset)
+    provisioned = provisioned_buckets(user, dataset)
 
     for bucket in buckets:
+        should_provision = bucket in provisioned
         try:
             if should_provision:
                 add_user_to_bucket(bucket, user.email)
@@ -155,43 +161,41 @@ def sync_group_datasets_for_user(user, group):
         sync_user_dataset_iam(user, dataset)
 
 
+def provisioned_buckets(user, dataset):
+    """Return bucket names the user should hold for a dataset."""
+    if user.admin or not user.is_enabled:
+        return set()
+    if not _dataset_tos_accepted(user, dataset):
+        return set()
+
+    from core.models import Grant, GroupDatasetPermission, UserGroup
+
+    bucket_names = set()
+    grants = (
+        Grant.objects.filter(user=user, dataset=dataset)
+        .select_related("permission", "dataset_version", "service")
+        .prefetch_related("buckets")
+    )
+    for grant in grants:
+        bucket_names |= _grant_bucket_contribution(grant, dataset)
+
+    group_ids = UserGroup.objects.filter(user=user).values_list("group_id", flat=True)
+    group_permissions = GroupDatasetPermission.objects.filter(
+        group_id__in=group_ids, dataset=dataset
+    ).select_related("permission", "service")
+    for group_permission in group_permissions:
+        bucket_names |= _group_permission_bucket_contribution(group_permission, dataset)
+
+    return bucket_names - _version_tos_blocked_bucket_names(user, dataset)
+
+
 def _user_has_effective_access(user, dataset):
-    """Return True if user should be provisioned on the dataset's buckets.
+    """Return True if user should be provisioned on any dataset bucket.
 
-    Returns False for global admins (they don't need per-user bucket IAM).
+    Private compatibility helper for older callers/tests; the authoritative
+    provisioning unit is now ``(user, bucket)`` via ``provisioned_buckets``.
     """
-    if user.admin:
-        return False
-
-    # Disabled means disabled, including robots: a user-type service account
-    # fails while its parent is disabled (User.is_enabled).
-    if not user.is_enabled:
-        return False
-
-    from core.models import Grant, GroupDatasetPermission, TOSAcceptance, UserGroup
-
-    # Check direct grants
-    has_grant = Grant.objects.filter(user=user, dataset=dataset).exists()
-
-    # Check group-based permissions
-    has_group_perm = False
-    if not has_grant:
-        user_group_ids = UserGroup.objects.filter(user=user).values_list("group_id", flat=True)
-        has_group_perm = GroupDatasetPermission.objects.filter(
-            group_id__in=user_group_ids, dataset=dataset
-        ).exists()
-
-    if not has_grant and not has_group_perm:
-        return False
-
-    # Check TOS requirement
-    tos_doc = dataset.tos
-    if not tos_doc:
-        return True
-
-    # Check if user (or parent for service accounts) accepted TOS
-    check_user = user.parent if user.is_service_account else user
-    return TOSAcceptance.objects.filter(user=check_user, tos_document=tos_doc).exists()
+    return bool(provisioned_buckets(user, dataset))
 
 
 def _get_dataset_buckets(dataset):
@@ -201,3 +205,88 @@ def _get_dataset_buckets(dataset):
     return list(
         DatasetBucket.objects.filter(dataset=dataset).values_list("name", flat=True)
     )
+
+
+def _grant_bucket_contribution(grant, dataset):
+    explicit = list(grant.buckets.all())
+    if explicit:
+        return {bucket.name for bucket in explicit}
+    return _qualifying_grant_reach(grant, dataset)
+
+
+def _group_permission_bucket_contribution(group_permission, dataset):
+    return _qualifying_grant_reach(group_permission, dataset)
+
+
+def _qualifying_grant_reach(row, dataset):
+    if row.service_id is not None or row.permission.name not in VIEW_PERMISSIONS:
+        return set()
+
+    row_version = getattr(row, "dataset_version", None)
+    if row_version is None:
+        return set(_get_dataset_buckets(dataset))
+
+    if row_version.ordinal is None:
+        return set(row_version.buckets.values_list("name", flat=True))
+
+    from core.models import DatasetVersion
+
+    return set(
+        DatasetVersion.objects.filter(
+            dataset=dataset,
+            branch=row_version.branch,
+            ordinal__isnull=False,
+            ordinal__lte=row_version.ordinal,
+        )
+        .filter(buckets__isnull=False)
+        .values_list("buckets__name", flat=True)
+    )
+
+
+def _dataset_tos_accepted(user, dataset):
+    if not dataset.tos_id:
+        return True
+    from core.models import TOSAcceptance
+
+    check_user = _tos_check_user(user)
+    return TOSAcceptance.objects.filter(user=check_user, tos_document=dataset.tos).exists()
+
+
+def _version_tos_blocked_bucket_names(user, dataset):
+    blocked_version_ids = _blocked_version_tos_ids(user, dataset)
+    if not blocked_version_ids:
+        return set()
+
+    from core.models import DatasetBucket
+
+    blocked_bucket_names = set()
+    buckets = DatasetBucket.objects.filter(dataset=dataset).prefetch_related("versions")
+    for bucket in buckets:
+        version_ids = {version.pk for version in bucket.versions.all()}
+        if version_ids and version_ids <= blocked_version_ids:
+            blocked_bucket_names.add(bucket.name)
+    return blocked_bucket_names
+
+
+def _blocked_version_tos_ids(user, dataset):
+    from core.models import TOSAcceptance, TOSDocument
+
+    check_user = _tos_check_user(user)
+    accepted_ids = TOSAcceptance.objects.filter(user=check_user).values_list(
+        "tos_document_id", flat=True
+    )
+    now = timezone.now()
+    blocked = TOSDocument.objects.filter(
+        dataset_version__dataset=dataset,
+        dataset_version__isnull=False,
+        service__isnull=True,
+        effective_date__lte=now,
+    ).filter(Q(retired_date__isnull=True) | Q(retired_date__gt=now))
+    blocked = blocked.exclude(pk__in=accepted_ids)
+    return set(blocked.values_list("dataset_version_id", flat=True))
+
+
+def _tos_check_user(user):
+    if getattr(user, "parent_id", None) is not None:
+        return user.parent
+    return user

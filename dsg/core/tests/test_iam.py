@@ -13,6 +13,7 @@ from core.models import (
     Group,
     GroupDatasetPermission,
     Permission,
+    Service,
     TOSAcceptance,
     TOSDocument,
     User,
@@ -26,6 +27,7 @@ class TestUserHasEffectiveAccess(TestCase):
         self.view_perm, _ = Permission.objects.get_or_create(name="view")
         self.user = User.objects.create(email="user@example.org", name="User")
         self.dataset = Dataset.objects.create(name="ds1")
+        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
 
     def test_no_grant_no_group_returns_false(self):
         from core.iam import _user_has_effective_access
@@ -132,15 +134,15 @@ class TestSyncUserDatasetIAM(TestCase):
         self.bucket_a = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         self.bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
         self.dv1 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1",
+            dataset=self.dataset, version="v1", branch="main", ordinal=1,
         )
         self.dv1.buckets.add(self.bucket_a)
         self.dv2 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v2",
+            dataset=self.dataset, version="v2", branch="main", ordinal=2,
         )
         self.dv2.buckets.add(self.bucket_b)
         DatasetVersion.objects.create(
-            dataset=self.dataset, version="v3",
+            dataset=self.dataset, version="v3", branch="main", ordinal=3,
         )
 
     @patch("ngauth.gcs.add_user_to_bucket")
@@ -214,6 +216,124 @@ class TestSyncUserDatasetIAM(TestCase):
         ds_no_buckets = Dataset.objects.create(name="ds-empty")
         sync_user_dataset_iam(self.user, ds_no_buckets)
         mock_add.assert_not_called()
+        mock_remove.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_version_grant_reaches_same_branch_ordinal_and_removes_complement(
+        self, mock_remove, mock_add
+    ):
+        from core.iam import sync_user_dataset_iam
+        Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            dataset_version=self.dv1,
+            permission=self.view_perm,
+        )
+        mock_add.return_value = True
+        mock_remove.return_value = True
+
+        sync_user_dataset_iam(self.user, self.dataset)
+
+        mock_add.assert_called_once_with("bucket-a", "user@example.org")
+        mock_remove.assert_called_once_with("bucket-b", "user@example.org")
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_ordinal_less_anchor_grant_reaches_only_anchor_buckets(
+        self, mock_remove, mock_add
+    ):
+        from core.iam import sync_user_dataset_iam
+        bucket_c = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-c")
+        unranked = DatasetVersion.objects.create(
+            dataset=self.dataset, version="unranked", branch="main"
+        )
+        unranked.buckets.add(bucket_c)
+        Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            dataset_version=unranked,
+            permission=self.view_perm,
+        )
+        mock_add.return_value = True
+        mock_remove.return_value = True
+
+        sync_user_dataset_iam(self.user, self.dataset)
+
+        mock_add.assert_called_once_with("bucket-c", "user@example.org")
+        removed = {c.args[0] for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {"bucket-a", "bucket-b"})
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_explicit_buckets_override_service_filter(self, mock_remove, mock_add):
+        from core.iam import sync_user_dataset_iam
+        service = Service.objects.create(name="svc")
+        grant = Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            service=service,
+            permission=self.view_perm,
+        )
+        grant.buckets.add(self.bucket_b)
+        mock_add.return_value = True
+        mock_remove.return_value = True
+
+        sync_user_dataset_iam(self.user, self.dataset)
+
+        mock_add.assert_called_once_with("bucket-b", "user@example.org")
+        mock_remove.assert_called_once_with("bucket-a", "user@example.org")
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_service_scoped_and_named_role_grants_do_not_provision(
+        self, mock_remove, mock_add
+    ):
+        from core.iam import permission_source_users, sync_user_dataset_iam
+        service = Service.objects.create(name="svc")
+        named_perm, _ = Permission.objects.get_or_create(name="annotation_editor")
+        Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            service=service,
+            permission=self.view_perm,
+        )
+        Grant.objects.create(user=self.user, dataset=self.dataset, permission=named_perm)
+        mock_remove.return_value = True
+
+        sync_user_dataset_iam(self.user, self.dataset)
+
+        removed = {c.args[0] for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {"bucket-a", "bucket-b"})
+        mock_add.assert_not_called()
+        self.assertIn(self.user, list(permission_source_users(self.dataset)))
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_version_tos_blocks_only_all_blocked_anchor_buckets(self, mock_remove, mock_add):
+        from core.iam import sync_user_dataset_iam
+        loose_bucket = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-loose")
+        Grant.objects.create(user=self.user, dataset=self.dataset, permission=self.view_perm)
+        version_tos = TOSDocument.objects.create(
+            name="v1 TOS", text="Terms", dataset_version=self.dv1
+        )
+        mock_add.return_value = True
+        mock_remove.return_value = True
+
+        sync_user_dataset_iam(self.user, self.dataset)
+
+        added = {c.args[0] for c in mock_add.call_args_list}
+        self.assertEqual(added, {"bucket-b", "bucket-loose"})
+        mock_remove.assert_called_once_with("bucket-a", "user@example.org")
+
+        mock_add.reset_mock()
+        mock_remove.reset_mock()
+        TOSAcceptance.objects.create(user=self.user, tos_document=version_tos)
+
+        sync_user_dataset_iam(self.user, self.dataset)
+
+        added = {c.args[0] for c in mock_add.call_args_list}
+        self.assertEqual(added, {"bucket-a", "bucket-b", "bucket-loose"})
         mock_remove.assert_not_called()
 
 
