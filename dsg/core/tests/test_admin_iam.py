@@ -17,6 +17,7 @@ from django.test import RequestFactory, TestCase
 from core.admin import (
     DatasetBucketAdmin,
     DatasetModelAdmin,
+    DatasetVersionAdmin,
     GrantAdmin,
     GroupAdmin,
     GroupDatasetPermissionAdmin,
@@ -28,10 +29,12 @@ from core.models import (
     AuditLog,
     Dataset,
     DatasetBucket,
+    DatasetVersion,
     Grant,
     Group,
     GroupDatasetPermission,
     Permission,
+    Service,
     TOSAcceptance,
     TOSDocument,
     User,
@@ -63,8 +66,32 @@ class TestGrantAdminIAM(_AdminTestBase):
         super().setUp()
         self.ma = GrantAdmin(Grant, django_admin.site)
         self.dataset = Dataset.objects.create(name="ds1")
-        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        self.bucket_a = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         self.user = User.objects.create(email="user@example.org")
+        self.service = Service.objects.create(name="svc")
+
+    def _save_grant_m2m_via_admin(self, grant, bucket_ids, mock_remove=None, mock_add=None):
+        FormClass = self.ma.get_form(self.request, obj=grant, change=True)
+        form = FormClass(data={
+            "user": grant.user_id,
+            "dataset": grant.dataset_id,
+            "dataset_version": grant.dataset_version_id or "",
+            "service": grant.service_id or "",
+            "permission": grant.permission_id,
+            "group": grant.group_id or "",
+            "granted_by": grant.granted_by_id or "",
+            "source": grant.source,
+            "buckets": [str(pk) for pk in bucket_ids],
+        }, instance=grant)
+        self.assertTrue(form.is_valid(), form.errors)
+        obj = form.save(commit=False)
+        self.ma.save_model(self.request, obj, form, change=True)
+        if mock_remove:
+            mock_remove.reset_mock()
+        if mock_add:
+            mock_add.reset_mock()
+        self.ma.save_related(self.request, form, [], change=True)
+        return obj
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
@@ -118,6 +145,68 @@ class TestGrantAdminIAM(_AdminTestBase):
         )
         self.ma.delete_model(self.request, grant)
         mock_remove.assert_called_once_with("bucket-a", "user@example.org")
+        mock_add.assert_not_called()
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_bucket_attach_resyncs_after_m2m_save(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        mock_remove.return_value = True
+        grant = Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            service=self.service,
+            permission=self.view_perm,
+        )
+        bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+
+        self._save_grant_m2m_via_admin(
+            grant, [bucket_b.pk], mock_remove=mock_remove, mock_add=mock_add
+        )
+
+        mock_add.assert_called_once_with("bucket-b", "user@example.org")
+        mock_remove.assert_called_once_with("bucket-a", "user@example.org")
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_bucket_change_resyncs_after_m2m_save(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        mock_remove.return_value = True
+        grant = Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            service=self.service,
+            permission=self.view_perm,
+        )
+        bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+        grant.buckets.add(bucket_b)
+
+        self._save_grant_m2m_via_admin(
+            grant, [self.bucket_a.pk], mock_remove=mock_remove, mock_add=mock_add
+        )
+
+        mock_add.assert_called_once_with("bucket-a", "user@example.org")
+        mock_remove.assert_called_once_with("bucket-b", "user@example.org")
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_bucket_clear_resyncs_after_m2m_save(self, mock_remove, mock_add):
+        mock_remove.return_value = True
+        grant = Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            service=self.service,
+            permission=self.view_perm,
+        )
+        bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+        grant.buckets.add(bucket_b)
+
+        self._save_grant_m2m_via_admin(
+            grant, [], mock_remove=mock_remove, mock_add=mock_add
+        )
+
+        removed = {c.args[0] for c in mock_remove.call_args_list}
+        self.assertEqual(removed, {"bucket-a", "bucket-b"})
         mock_add.assert_not_called()
 
     @patch("ngauth.gcs.add_user_to_bucket")
@@ -471,6 +560,57 @@ class TestDatasetModelAdminIAM(_AdminTestBase):
 
 
 @pytest.mark.django_db
+class TestDatasetVersionAdminIAM(_AdminTestBase):
+    def setUp(self):
+        super().setUp()
+        self.ma = DatasetVersionAdmin(DatasetVersion, django_admin.site)
+        self.dataset = Dataset.objects.create(name="ds1")
+        self.bucket_a = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        self.bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+        self.version = DatasetVersion.objects.create(dataset=self.dataset, version="v1")
+        self.version.buckets.add(self.bucket_a)
+        self.user = User.objects.create(email="user@example.org")
+        Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            dataset_version=self.version,
+            permission=self.view_perm,
+        )
+
+    def _save_version_buckets_via_admin(self, bucket_ids, mock_remove=None, mock_add=None):
+        FormClass = self.ma.get_form(self.request, obj=self.version, change=True)
+        form = FormClass(data={
+            "dataset": self.dataset.pk,
+            "version": self.version.version,
+            "branch": self.version.branch,
+            "ordinal": "",
+            "prefix": self.version.prefix,
+            "buckets": [str(pk) for pk in bucket_ids],
+        }, instance=self.version)
+        self.assertTrue(form.is_valid(), form.errors)
+        obj = form.save(commit=False)
+        self.ma.save_model(self.request, obj, form, change=True)
+        if mock_remove:
+            mock_remove.reset_mock()
+        if mock_add:
+            mock_add.reset_mock()
+        self.ma.save_related(self.request, form, [], change=True)
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_bucket_change_resyncs_dataset_after_m2m_save(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        mock_remove.return_value = True
+
+        self._save_version_buckets_via_admin(
+            [self.bucket_b.pk], mock_remove=mock_remove, mock_add=mock_add
+        )
+
+        mock_add.assert_called_once_with("bucket-b", "user@example.org")
+        mock_remove.assert_called_once_with("bucket-a", "user@example.org")
+
+
+@pytest.mark.django_db
 class TestTOSDocumentAdminIAM(_AdminTestBase):
     def setUp(self):
         super().setUp()
@@ -530,6 +670,76 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
             ("bucket-a", "user@example.org"),
             {(c.args[0], c.args[1]) for c in mock_add.call_args_list},
         )
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_version_tos_retarget_resyncs_dataset(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        mock_remove.return_value = True
+        bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+        v1 = DatasetVersion.objects.create(dataset=self.dataset, version="v1")
+        v1.buckets.add(DatasetBucket.objects.get(dataset=self.dataset, name="bucket-a"))
+        v2 = DatasetVersion.objects.create(dataset=self.dataset, version="v2")
+        v2.buckets.add(bucket_b)
+        tos = TOSDocument.objects.create(
+            name="Version TOS",
+            text="Terms",
+            dataset_version=v1,
+            invite_token="tok-version-retarget",
+        )
+
+        self._save_via_admin(self.ma, {
+            "name": "Version TOS",
+            "text": "Terms",
+            "dataset": "",
+            "dataset_version": v2.pk,
+            "service": "",
+            "invite_token": "tok-version-retarget",
+            "effective_date_0": "2026-01-01",
+            "effective_date_1": "00:00:00",
+        }, instance=tos)
+
+        self.assertIn(
+            ("bucket-a", "user@example.org"),
+            {(c.args[0], c.args[1]) for c in mock_add.call_args_list},
+        )
+        self.assertIn(
+            ("bucket-b", "user@example.org"),
+            {(c.args[0], c.args[1]) for c in mock_remove.call_args_list},
+        )
+
+    @patch("ngauth.gcs.add_user_to_bucket")
+    @patch("ngauth.gcs.remove_user_from_bucket")
+    def test_version_tos_retired_date_edit_resyncs_dataset(self, mock_remove, mock_add):
+        mock_add.return_value = True
+        bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+        v1 = DatasetVersion.objects.create(dataset=self.dataset, version="v1")
+        v1.buckets.add(DatasetBucket.objects.get(dataset=self.dataset, name="bucket-a"))
+        v2 = DatasetVersion.objects.create(dataset=self.dataset, version="v2")
+        v2.buckets.add(bucket_b)
+        tos = TOSDocument.objects.create(
+            name="Version TOS",
+            text="Terms",
+            dataset_version=v1,
+            invite_token="tok-version-retire",
+        )
+
+        self._save_via_admin(self.ma, {
+            "name": "Version TOS",
+            "text": "Terms",
+            "dataset": "",
+            "dataset_version": v1.pk,
+            "service": "",
+            "invite_token": "tok-version-retire",
+            "effective_date_0": "2026-01-01",
+            "effective_date_1": "00:00:00",
+            "retired_date_0": "2026-01-02",
+            "retired_date_1": "00:00:00",
+        }, instance=tos)
+
+        added = {c.args[0] for c in mock_add.call_args_list}
+        self.assertEqual(added, {"bucket-a", "bucket-b"})
+        mock_remove.assert_not_called()
 
 
 @pytest.mark.django_db

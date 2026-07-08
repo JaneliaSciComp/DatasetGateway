@@ -354,12 +354,16 @@ logins. You generally don't need to touch them.
 
 ## Bucket IAM Synchronization
 
-DSG grants and revokes per-user GCS bucket IAM (`core/iam.py`) so that a
-user's bucket access always matches the access rule:
+DSG grants and revokes per-user GCS bucket IAM (`core/iam.py`) at
+`(user, bucket)` grain. A user is provisioned on a bucket only when the
+bucket is in the union of that user's qualifying DSG permission sources for
+the dataset, after TOS gates are applied:
 
 ```
 user enabled (active, and an active parent for user-type service accounts)
-AND (direct Grant OR group permission) AND (no TOS OR TOS accepted)
+AND dataset TOS accepted, if any
+AND bucket reached by a qualifying Grant or Group dataset permission
+AND no unaccepted active version TOS blocks that bucket
 ```
 
 Global admins are skipped (they use service-account auth, not per-user
@@ -367,22 +371,65 @@ bucket IAM). `ServiceAccount`-model accounts (organization robots) are
 never added to bucket IAM; user-type service accounts (`User` rows with a
 parent) carry their own bucket IAM and follow their parent's enabled state.
 
+Only DSG permissions that GCS can safely express are qualifying bucket-IAM
+sources:
+
+- A direct `Grant` with explicitly attached buckets provisions exactly
+  those buckets. This is the escape hatch for rare service-scoped or
+  role-scoped cases that really need bucket access.
+- Otherwise, a direct `Grant` qualifies only when its permission is one of
+  `view`, `edit`, `manage`, or `admin` and its `service` is blank. A
+  dataset-grain grant reaches all dataset buckets. A version-scoped grant
+  reaches registered anchors on the same branch with `ordinal <=` the
+  grant anchor's ordinal; if the grant anchor has no ordinal, it reaches
+  only that anchor's own buckets.
+- A `Group dataset permission` qualifies only when its permission is one of
+  `view`, `edit`, `manage`, or `admin` and its `service` is blank. Group
+  permissions are dataset-grain and reach all dataset buckets.
+- Service-scoped grants without explicit buckets and named-role grants such
+  as `annotation_editor` provision no bucket IAM. They are capability
+  statements for the native decision API, not GCS policy inputs.
+
+Version-scoped TOS documents gate bucket IAM per bucket. An active
+version-scoped, non-service TOS blocks an anchor until the user (or parent,
+for user-type service accounts) accepts it. A bucket attached to anchors is
+excluded only when all of its anchor attachments are blocked; a bucket with
+no anchor attachment is never blocked by version TOS. Service-scoped TOS
+documents do not affect bucket IAM because GCS cannot express the service
+scope.
+
 **Every mutation surface syncs inline.** Web-UI grant/TOS/group flows,
 SCIM provisioning, and the Django admin console all converge IAM as part
 of the mutation: editing Grants, Group dataset permissions, TOS
-acceptances, user↔group memberships, Dataset buckets, a dataset's TOS,
-or moving a TOS document between datasets triggers the appropriate
-add/remove calls — including bulk "delete selected" actions, retargeted
-rows (the old user/dataset pair is deprovisioned), and bucket
-renames/moves (the old bucket name is deprovisioned first). Flipping a
-user's **Active** or **Admin** flag (Django admin or SCIM `active`)
-resyncs every dataset where they hold a permission source — disabling a
-user removes their bucket IAM everywhere, including their user-type
-service accounts', and also cuts off their tokens, web login, and ngauth
-endpoints; re-enabling re-adds IAM wherever the full rule passes. GCS
+acceptances, user↔group memberships, Dataset buckets, DatasetVersion bucket
+attachments, a dataset's TOS, grant bucket attachments, or moving/editing a
+TOS document between datasets or versions triggers the appropriate
+add/remove calls, including bulk "delete selected" actions, retargeted rows
+(the old user/dataset pair is deprovisioned), and bucket renames/moves (the
+old bucket name is deprovisioned first). Flipping a user's **Active** or
+**Admin** flag (Django admin or SCIM `active`) resyncs every dataset where
+they hold a permission source — disabling a user removes their bucket IAM
+everywhere, including their user-type service accounts', and also cuts off
+their tokens, web login, and ngauth endpoints; re-enabling re-adds IAM
+wherever the full rule passes. GCS
 calls are synchronous best-effort: failures are logged, never raised, so
 a large fan-out (e.g. adding a bucket to a dataset with many users) may
 take a moment but cannot block the save.
+
+**Required preflight before enabling this migration in production:** run the
+version-grant audit and choose a remediation for every row it reports:
+
+```bash
+pixi run python manage.py audit_version_grants
+```
+
+The command lists version-scoped `Grant` rows and `DatasetVersion` anchors
+that are public or referenced by grants/TOS documents. For each row, choose
+one of four remediations before rollout: convert the grant to dataset-grain,
+attach explicit buckets to the grant, set the anchor's `branch` and
+`ordinal`, or accept the narrowed reach. This is migration-visible because
+old version-scoped grants used to provision every dataset bucket; after this
+change, they provision only the anchor reach described above.
 
 DSG only ever adds or removes users it enumerates from its own tables:
 bucket IAM is treated as a **superset** of DSG state, so members it

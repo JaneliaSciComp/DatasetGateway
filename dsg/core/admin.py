@@ -212,16 +212,21 @@ class DatasetBucketAdmin(admin.ModelAdmin):
 
 @admin.register(DatasetVersion)
 class DatasetVersionAdmin(admin.ModelAdmin):
-    list_display = ("id", "dataset", "version", "is_public")
+    list_display = ("id", "dataset", "version", "branch", "ordinal", "is_public")
     list_filter = ("is_public",)
     search_fields = ("dataset__name", "version")
     filter_horizontal = ("buckets",)
 
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        if "buckets" in form.changed_data:
+            sync_dataset_iam(form.instance.dataset)
+
 
 @admin.register(GroupDatasetPermission)
 class GroupDatasetPermissionAdmin(admin.ModelAdmin):
-    list_display = ("id", "group", "dataset", "permission")
-    list_filter = ("permission",)
+    list_display = ("id", "group", "dataset", "service", "permission")
+    list_filter = ("permission", "service")
 
     def save_model(self, request, obj, form, change):
         old = None
@@ -274,9 +279,10 @@ class GroupDatasetPermissionAdmin(admin.ModelAdmin):
 
 @admin.register(Grant)
 class GrantAdmin(admin.ModelAdmin):
-    list_display = ("id", "user", "dataset", "dataset_version", "permission", "granted_by", "source")
-    list_filter = ("permission", "source")
+    list_display = ("id", "user", "dataset", "dataset_version", "service", "permission", "granted_by", "source")
+    list_filter = ("permission", "service", "source")
     search_fields = ("user__email", "dataset__name")
+    filter_horizontal = ("buckets",)
 
     def save_model(self, request, obj, form, change):
         old = None
@@ -301,6 +307,11 @@ class GrantAdmin(admin.ModelAdmin):
             sync_user_dataset_iam(old.user, old.dataset)
         sync_user_dataset_iam(obj.user, obj.dataset)
 
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        if "buckets" in form.changed_data:
+            sync_user_dataset_iam(form.instance.user, form.instance.dataset)
+
     def delete_model(self, request, obj):
         before = {
             "user": str(obj.user), "dataset": str(obj.dataset),
@@ -324,7 +335,7 @@ class PublicRootInline(admin.TabularInline):
 
 @admin.register(Service)
 class ServiceAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "display_name", "base_url")
+    list_display = ("id", "name", "display_name", "base_url", "version_eval_mode")
     search_fields = ("name", "display_name")
 
 
@@ -342,15 +353,29 @@ class TOSDocumentAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         old_dataset = None
+        old_version_dataset = None
         retargeted = False
+        version_tos_changed = False
         if change:
             # Fetch the DB row: moving the doc between datasets (or flipping
             # service scope) moves the TOS gate; both datasets must resync.
-            old = TOSDocument.objects.filter(pk=obj.pk).select_related("dataset").first()
+            old = (
+                TOSDocument.objects.filter(pk=obj.pk)
+                .select_related("dataset", "dataset_version__dataset")
+                .first()
+            )
             if old:
                 old_dataset = old.dataset
+                old_version_dataset = old.dataset_version.dataset if old.dataset_version_id else None
                 retargeted = (old.dataset_id != obj.dataset_id
                               or old.service_id != obj.service_id)
+                version_tos_changed = (
+                    old.dataset_version_id != obj.dataset_version_id
+                    or "effective_date" in form.changed_data
+                    or "retired_date" in form.changed_data
+                )
+        else:
+            version_tos_changed = obj.dataset_version_id is not None
         super().save_model(request, obj, form, change)
         action = "tos_document_updated" if change else "tos_document_created"
         log_audit(request.user, action, "TOSDocument", obj.pk, after_state={
@@ -378,6 +403,18 @@ class TOSDocumentAdmin(admin.ModelAdmin):
                 targets[old_dataset.pk] = old_dataset
             if obj.dataset_id:
                 targets[obj.dataset_id] = obj.dataset
+            if version_tos_changed and old_version_dataset is not None:
+                targets[old_version_dataset.pk] = old_version_dataset
+            if version_tos_changed and obj.dataset_version_id:
+                targets[obj.dataset_version.dataset_id] = obj.dataset_version.dataset
+            for ds in targets.values():
+                sync_dataset_iam(ds)
+        elif version_tos_changed:
+            targets = {}
+            if old_version_dataset is not None:
+                targets[old_version_dataset.pk] = old_version_dataset
+            if obj.dataset_version_id:
+                targets[obj.dataset_version.dataset_id] = obj.dataset_version.dataset
             for ds in targets.values():
                 sync_dataset_iam(ds)
 
@@ -453,6 +490,6 @@ class ServiceAccountTokenAdmin(admin.ModelAdmin):
 
 @admin.register(ServiceAccountGrant)
 class ServiceAccountGrantAdmin(admin.ModelAdmin):
-    list_display = ("id", "service_account", "dataset", "dataset_version", "permission", "granted_by")
-    list_filter = ("permission",)
+    list_display = ("id", "service_account", "dataset", "dataset_version", "service", "permission", "granted_by")
+    list_filter = ("permission", "service")
     search_fields = ("service_account__name", "dataset__name")
