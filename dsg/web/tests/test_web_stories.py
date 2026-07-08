@@ -1419,6 +1419,41 @@ class TestTOSServiceCheck(_WebTestBase):
             user=self.regular_user, tos_document=self.svc_tos
         ).exists())
 
+    def test_repost_retries_iam_but_does_not_duplicate_audit(self):
+        from unittest.mock import patch
+
+        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        self._login(self.regular_key)
+
+        session = self.client.session
+        session["tos_check_ids"] = [self.general_tos.pk]
+        session["tos_check_next"] = "/return/"
+        session.save()
+
+        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            mock_add.side_effect = [False, True]
+            self.client.post("/web/tos/service-check/")
+
+            session = self.client.session
+            session["tos_check_ids"] = [self.general_tos.pk]
+            session["tos_check_next"] = "/return/"
+            session.save()
+            resp = self.client.post("/web/tos/service-check/")
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(mock_add.call_count, 2)
+        self.assertEqual(
+            [call.args for call in mock_add.call_args_list],
+            [("bucket-a", "regular@example.org"), ("bucket-a", "regular@example.org")],
+        )
+        self.assertEqual(AuditLog.objects.filter(action="tos_accepted").count(), 1)
+        self.assertEqual(
+            TOSAcceptance.objects.filter(
+                user=self.regular_user, tos_document=self.general_tos,
+            ).count(), 1,
+        )
+
     def test_query_param_mode(self):
         """Already-authenticated user can be directed with query params."""
         self._login(self.regular_key)

@@ -8,12 +8,12 @@ from django.contrib.auth import logout as auth_logout
 from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
-from django.utils import timezone
 from django.views import View
 
 logger = logging.getLogger(__name__)
 
 from core.audit import log_audit
+from core.authz import pending_tos, resolve_dataset_reference
 from core.models import (
     APIKey,
     Dataset,
@@ -870,40 +870,26 @@ class TOSServiceCheckView(View):
         if not tos_ids:
             service = request.GET.get("service")
             dataset_name = request.GET.get("dataset")
+            version = request.GET.get("version")
             next_url = request.GET.get("next", next_url)
 
-            if service and dataset_name:
-                from django.db.models import Q
-
+            if dataset_name:
                 user = _get_web_user(request)
                 if user:
-                    try:
-                        ds = Dataset.objects.get(name=dataset_name)
-                    except Dataset.DoesNotExist:
+                    resolved = resolve_dataset_reference(
+                        service, dataset_name, client_version=version
+                    )
+                    if not resolved.found:
                         return [], next_url
 
-                    tos_user_id = user.parent_id if user.is_service_account else user.pk
-                    accepted = set(
-                        TOSAcceptance.objects.filter(user_id=tos_user_id).values_list(
-                            "tos_document_id", flat=True
+                    tos_ids = [
+                        doc.pk for doc in pending_tos(
+                            user,
+                            resolved.target.dataset,
+                            service_name=service,
+                            anchor=resolved.target,
                         )
-                    )
-                    now = timezone.now()
-                    pending = []
-                    if ds.tos_id and ds.tos_id not in accepted:
-                        pending.append(ds.tos_id)
-                    svc_ids = list(
-                        TOSDocument.objects.filter(
-                            service__name=service,
-                            dataset=ds,
-                            effective_date__lte=now,
-                        )
-                        .filter(Q(retired_date__isnull=True) | Q(retired_date__gt=now))
-                        .exclude(pk__in=accepted)
-                        .values_list("pk", flat=True)
-                    )
-                    pending.extend(svc_ids)
-                    tos_ids = pending
+                    ]
 
         return tos_ids or [], next_url
 
@@ -952,9 +938,32 @@ class TOSServiceCheckView(View):
 
         for tos_id in tos_ids:
             try:
-                tos_doc = TOSDocument.objects.select_related("dataset").get(pk=tos_id)
+                tos_doc = TOSDocument.objects.select_related(
+                    "dataset", "dataset_version__dataset", "service"
+                ).get(pk=tos_id)
             except TOSDocument.DoesNotExist:
                 continue
+
+            dataset = tos_doc.dataset
+            if dataset is None and tos_doc.dataset_version_id:
+                dataset = tos_doc.dataset_version.dataset
+
+            if dataset and dataset.access_mode == Dataset.ACCESS_PUBLIC:
+                view_perm, _ = Permission.objects.get_or_create(name="view")
+                grant, grant_created = Grant.objects.get_or_create(
+                    user=user,
+                    dataset=dataset,
+                    permission=view_perm,
+                    dataset_version=None,
+                    defaults={"source": Grant.SOURCE_SELF_SERVICE},
+                )
+                if grant_created:
+                    log_audit(user, "grant_created", "Grant", grant.pk, after_state={
+                        "user": user.email,
+                        "dataset": dataset.name,
+                        "permission": "view",
+                        "source": Grant.SOURCE_SELF_SERVICE,
+                    })
 
             acceptance, created = TOSAcceptance.objects.get_or_create(
                 user=user,
@@ -968,9 +977,9 @@ class TOSServiceCheckView(View):
                     "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
                     "service": tos_doc.service.name if tos_doc.service_id else None,
                 })
-                if tos_doc.dataset:
-                    from core.iam import sync_user_dataset_iam
-                    sync_user_dataset_iam(user, tos_doc.dataset)
+            if dataset:
+                from core.iam import sync_user_dataset_iam
+                sync_user_dataset_iam(user, dataset)
 
         # Clean up session
         request.session.pop("tos_check_ids", None)

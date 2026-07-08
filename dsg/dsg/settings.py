@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
     "core",
+    "native_api",
     "cave_api",
     "auth_api",
     "ngauth",
@@ -125,6 +126,25 @@ STORAGES = {
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 AUTH_USER_MODEL = "core.User"
+
+DSG_LOG_LEVEL = os.environ.get("DSG_LOG_LEVEL", "WARNING").upper()
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "dsg.authz": {
+            "handlers": ["console"],
+            "level": DSG_LOG_LEVEL,
+            "propagate": False,
+        },
+    },
+}
 
 # django-allauth configuration
 AUTHENTICATION_BACKENDS = [

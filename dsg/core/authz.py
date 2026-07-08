@@ -2,8 +2,11 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from urllib.parse import urlencode
 
+from django.urls import reverse
 from django.db.models import Q
+from django.utils import timezone
 
 from core.models import (
     Dataset,
@@ -14,6 +17,8 @@ from core.models import (
     Service,
     ServiceAccount,
     ServiceAccountGrant,
+    TOSAcceptance,
+    TOSDocument,
     UserGroup,
 )
 
@@ -164,6 +169,101 @@ def expand_permission(permission_name, read_only=False):
     if read_only:
         permissions.discard("edit")
     return permissions
+
+
+def pending_tos(user, dataset, service_name=None, anchor=None):
+    """Return active TOS documents the principal still needs to accept.
+
+    Human-style service accounts store acceptance on the parent User. Dedicated
+    ServiceAccount principals do not participate in TOS.
+    """
+    if isinstance(user, ServiceAccount):
+        return []
+
+    check_user_id = user.parent_id if getattr(user, "parent_id", None) else user.pk
+    accepted_ids = set(
+        TOSAcceptance.objects.filter(user_id=check_user_id).values_list(
+            "tos_document_id", flat=True
+        )
+    )
+    now = timezone.now()
+    docs = []
+    seen = set()
+
+    def add_doc(doc):
+        if doc is None or doc.pk in seen or doc.pk in accepted_ids or not doc.is_active:
+            return
+        seen.add(doc.pk)
+        docs.append(doc)
+
+    if dataset.tos_id:
+        add_doc(dataset.tos)
+
+    active_filter = Q(effective_date__lte=now) & (
+        Q(retired_date__isnull=True) | Q(retired_date__gt=now)
+    )
+
+    if service_name:
+        service_docs = (
+            TOSDocument.objects.filter(
+                active_filter,
+                service__name=service_name,
+                dataset=dataset,
+                dataset_version__isnull=True,
+            )
+            .exclude(pk__in=accepted_ids)
+            .select_related("dataset", "dataset_version", "service")
+            .order_by("pk")
+        )
+        for doc in service_docs:
+            add_doc(doc)
+
+    anchor_version = getattr(anchor, "dataset_version", None)
+    if anchor_version is not None:
+        version_filter = Q(service__isnull=True)
+        if service_name:
+            version_filter |= Q(service__name=service_name)
+        version_docs = (
+            TOSDocument.objects.filter(
+                active_filter,
+                version_filter,
+                dataset_version=anchor_version,
+            )
+            .exclude(pk__in=accepted_ids)
+            .select_related("dataset", "dataset_version", "service")
+            .order_by("pk")
+        )
+        for doc in version_docs:
+            add_doc(doc)
+
+    return docs
+
+
+def build_tos_url(request, service_name, dataset, anchor, return_url, pending_documents=None):
+    """Build an opaque absolute service-check URL for a pending TOS decision."""
+    params = {"dataset": dataset.name, "next": return_url or "/"}
+    if service_name:
+        params["service"] = service_name
+
+    docs = list(pending_documents or [])
+    has_version_tos = any(doc.dataset_version_id for doc in docs)
+    if not docs and getattr(anchor, "dataset_version", None) is not None:
+        now = timezone.now()
+        version_filter = Q(service__isnull=True)
+        if service_name:
+            version_filter |= Q(service__name=service_name)
+        has_version_tos = TOSDocument.objects.filter(
+            Q(effective_date__lte=now)
+            & (Q(retired_date__isnull=True) | Q(retired_date__gt=now)),
+            version_filter,
+            dataset_version=anchor.dataset_version,
+        ).exists()
+
+    if has_version_tos and getattr(anchor, "dataset_version", None) is not None:
+        params["version"] = anchor.dataset_version.version
+
+    path = reverse("web-tos-service-check")
+    return request.build_absolute_uri(f"{path}?{urlencode(params)}")
 
 
 def _coerce_service(service):
