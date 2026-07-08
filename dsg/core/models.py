@@ -6,6 +6,7 @@ Ported from CAVE's SQLAlchemy models with extensions from Architecture.md.
 import secrets
 
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -213,6 +214,8 @@ class DatasetVersion(models.Model):
 
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="versions")
     version = models.CharField(max_length=255)
+    branch = models.CharField(max_length=255, default="main")
+    ordinal = models.BigIntegerField(null=True, blank=True)
     buckets = models.ManyToManyField("DatasetBucket", blank=True, related_name="versions")
     prefix = models.CharField(max_length=512, blank=True, default="")
     is_public = models.BooleanField(default=False)
@@ -220,9 +223,62 @@ class DatasetVersion(models.Model):
     class Meta:
         db_table = "dataset_version"
         unique_together = [("dataset", "version")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dataset", "branch", "ordinal"],
+                condition=models.Q(ordinal__isnull=False),
+                name="uniq_dataset_version_dataset_branch_ordinal",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.dataset.name}:{self.version}"
+
+
+class DatasetAlias(models.Model):
+    """Service-local dataset/version vocabulary mapped to canonical DSG anchors."""
+
+    service = models.ForeignKey("Service", on_delete=models.CASCADE, related_name="dataset_aliases")
+    client_name = models.CharField(max_length=255)
+    client_version = models.CharField(max_length=255, null=True, blank=True)
+    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="aliases")
+    dataset_version = models.ForeignKey(
+        DatasetVersion, on_delete=models.CASCADE, null=True, blank=True, related_name="aliases"
+    )
+
+    class Meta:
+        db_table = "dataset_alias"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["service", "client_name", "client_version"],
+                name="uniq_dataset_alias_service_name_version",
+            ),
+            models.UniqueConstraint(
+                fields=["service", "client_name"],
+                condition=models.Q(client_version__isnull=True),
+                name="uniq_dataset_alias_service_name_null_version",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.client_version == "":
+            raise ValidationError({"client_version": "Use NULL for name-level aliases."})
+        if bool(self.client_version) != bool(self.dataset_version_id):
+            raise ValidationError(
+                "Version aliases must set both client_version and dataset_version; "
+                "name-level aliases must set neither."
+            )
+        if (
+            self.dataset_version_id
+            and self.dataset_id
+            and self.dataset_version.dataset_id != self.dataset_id
+        ):
+            raise ValidationError({"dataset_version": "Dataset version must belong to dataset."})
+
+    def __str__(self):
+        version = f":{self.client_version}" if self.client_version is not None else ""
+        return f"{self.service}:{self.client_name}{version} -> {self.dataset}"
 
 
 
@@ -235,11 +291,25 @@ class GroupDatasetPermission(models.Model):
     dataset = models.ForeignKey(
         Dataset, on_delete=models.CASCADE, related_name="group_permissions"
     )
+    service = models.ForeignKey(
+        "Service", on_delete=models.CASCADE, null=True, blank=True, related_name="group_permissions"
+    )
     permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
 
     class Meta:
         db_table = "group_dataset_permission"
-        unique_together = [("group", "dataset", "permission")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["group", "dataset", "permission"],
+                condition=models.Q(service__isnull=True),
+                name="uniq_group_dataset_permission_null_service",
+            ),
+            models.UniqueConstraint(
+                fields=["group", "dataset", "service", "permission"],
+                condition=models.Q(service__isnull=False),
+                name="uniq_group_dataset_permission_service",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.group} -> {self.dataset}: {self.permission}"
@@ -260,6 +330,9 @@ class Grant(models.Model):
     dataset_version = models.ForeignKey(
         DatasetVersion, on_delete=models.CASCADE, null=True, blank=True, related_name="grants"
     )
+    service = models.ForeignKey(
+        "Service", on_delete=models.CASCADE, null=True, blank=True, related_name="grants"
+    )
     permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
     group = models.ForeignKey(
         Group, on_delete=models.CASCADE, null=True, blank=True, related_name="grants"
@@ -271,6 +344,7 @@ class Grant(models.Model):
         max_length=20, choices=SOURCE_CHOICES, default=SOURCE_MANUAL
     )
     created = models.DateTimeField(auto_now_add=True)
+    buckets = models.ManyToManyField(DatasetBucket, blank=True, related_name="grants")
 
     class Meta:
         db_table = "grant"
@@ -283,9 +357,19 @@ class Grant(models.Model):
 class Service(models.Model):
     """A named service that can have its own TOS requirements per dataset."""
 
+    VERSION_EVAL_LINEAR = "linear"
+    VERSION_EVAL_DAG = "dag"
+    VERSION_EVAL_MODE_CHOICES = [
+        (VERSION_EVAL_LINEAR, "Linear"),
+        (VERSION_EVAL_DAG, "DAG"),
+    ]
+
     name = models.SlugField(max_length=255, unique=True)
     display_name = models.CharField(max_length=255, blank=True, default="")
     base_url = models.URLField(blank=True, default="")
+    version_eval_mode = models.CharField(
+        max_length=10, choices=VERSION_EVAL_MODE_CHOICES, default=VERSION_EVAL_LINEAR
+    )
 
     class Meta:
         db_table = "service"
@@ -566,6 +650,13 @@ class ServiceAccountGrant(models.Model):
         blank=True,
         related_name="service_account_grants",
     )
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="service_account_grants",
+    )
     permission = models.ForeignKey(Permission, on_delete=models.CASCADE)
     granted_by = models.ForeignKey(
         User,
@@ -578,7 +669,28 @@ class ServiceAccountGrant(models.Model):
 
     class Meta:
         db_table = "service_account_grant"
-        unique_together = [("service_account", "dataset", "dataset_version", "permission")]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["service_account", "dataset", "permission"],
+                condition=models.Q(service__isnull=True, dataset_version__isnull=True),
+                name="uniq_sa_grant_dataset_null_service_null_version",
+            ),
+            models.UniqueConstraint(
+                fields=["service_account", "dataset", "dataset_version", "permission"],
+                condition=models.Q(service__isnull=True, dataset_version__isnull=False),
+                name="uniq_sa_grant_dataset_null_service_version",
+            ),
+            models.UniqueConstraint(
+                fields=["service_account", "dataset", "service", "permission"],
+                condition=models.Q(service__isnull=False, dataset_version__isnull=True),
+                name="uniq_sa_grant_dataset_service_null_version",
+            ),
+            models.UniqueConstraint(
+                fields=["service_account", "dataset", "dataset_version", "service", "permission"],
+                condition=models.Q(service__isnull=False, dataset_version__isnull=False),
+                name="uniq_sa_grant_dataset_service_version",
+            ),
+        ]
 
     def __str__(self):
         scope = f":{self.dataset_version.version}" if self.dataset_version else ""
