@@ -169,8 +169,9 @@ class ActivateView(View):
             sync_user_dataset_iam(user, tos_doc.dataset)
         elif bucket:
             # Legacy fallback: add user to specific bucket
-            success = gcs.add_user_to_bucket(bucket, user_email)
-            if not success:
+            from core.iam import provision_binding
+            result = provision_binding(bucket, user_email)
+            if result == "failed":
                 return JsonResponse(
                     {"error": "Failed to provision bucket access"}, status=500
                 )

@@ -209,6 +209,30 @@ class DatasetBucket(models.Model):
         return self.name
 
 
+class BucketIAMBinding(models.Model):
+    """DSG-owned GCS bucket IAM binding provenance ledger."""
+
+    bucket_name = models.CharField(max_length=255)
+    email = models.EmailField(max_length=254)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "bucket_iam_binding"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["bucket_name", "email"],
+                name="uniq_bucket_iam_binding_bucket_email",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["bucket_name"], name="bucket_iam_bucket_idx"),
+            models.Index(fields=["email"], name="bucket_iam_email_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.email} -> {self.bucket_name}"
+
+
 class DatasetVersion(models.Model):
     """A versioned release of a dataset."""
 

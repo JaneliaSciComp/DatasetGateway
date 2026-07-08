@@ -27,6 +27,7 @@ from core.admin import (
 )
 from core.models import (
     AuditLog,
+    BucketIAMBinding,
     Dataset,
     DatasetBucket,
     DatasetVersion,
@@ -58,6 +59,9 @@ class _AdminTestBase(TestCase):
         obj = form.save(commit=False)
         model_admin.save_model(self.request, obj, form, change)
         return obj
+
+    def _own(self, bucket_name, email):
+        return BucketIAMBinding.objects.create(bucket_name=bucket_name, email=email)
 
 
 @pytest.mark.django_db
@@ -96,7 +100,7 @@ class TestGrantAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_create_provisions(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         self._save_via_admin(self.ma, {
             "user": self.user.pk, "dataset": self.dataset.pk,
             "permission": self.view_perm.pk, "source": "manual",
@@ -106,12 +110,13 @@ class TestGrantAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_retarget_user_deprovisions_old_pair(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         other = User.objects.create(email="other@example.org")
         grant = Grant.objects.create(
             user=self.user, dataset=self.dataset, permission=self.view_perm,
         )
+        self._own("bucket-a", "user@example.org")
         self._save_via_admin(self.ma, {
             "user": other.pk, "dataset": self.dataset.pk,
             "permission": self.view_perm.pk, "source": "manual",
@@ -122,13 +127,14 @@ class TestGrantAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_retarget_dataset_deprovisions_old_pair(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         other_ds = Dataset.objects.create(name="ds2")
         DatasetBucket.objects.create(dataset=other_ds, name="bucket-b")
         grant = Grant.objects.create(
             user=self.user, dataset=self.dataset, permission=self.view_perm,
         )
+        self._own("bucket-a", "user@example.org")
         self._save_via_admin(self.ma, {
             "user": self.user.pk, "dataset": other_ds.pk,
             "permission": self.view_perm.pk, "source": "manual",
@@ -143,6 +149,7 @@ class TestGrantAdminIAM(_AdminTestBase):
         grant = Grant.objects.create(
             user=self.user, dataset=self.dataset, permission=self.view_perm,
         )
+        self._own("bucket-a", "user@example.org")
         self.ma.delete_model(self.request, grant)
         mock_remove.assert_called_once_with("bucket-a", "user@example.org")
         mock_add.assert_not_called()
@@ -150,7 +157,7 @@ class TestGrantAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_bucket_attach_resyncs_after_m2m_save(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         grant = Grant.objects.create(
             user=self.user,
@@ -159,9 +166,10 @@ class TestGrantAdminIAM(_AdminTestBase):
             permission=self.view_perm,
         )
         bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+        self._own("bucket-a", "user@example.org")
 
         self._save_grant_m2m_via_admin(
-            grant, [bucket_b.pk], mock_remove=mock_remove, mock_add=mock_add
+            grant, [bucket_b.pk], mock_add=mock_add
         )
 
         mock_add.assert_called_once_with("bucket-b", "user@example.org")
@@ -170,7 +178,7 @@ class TestGrantAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_bucket_change_resyncs_after_m2m_save(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         grant = Grant.objects.create(
             user=self.user,
@@ -180,6 +188,7 @@ class TestGrantAdminIAM(_AdminTestBase):
         )
         bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
         grant.buckets.add(bucket_b)
+        self._own("bucket-b", "user@example.org")
 
         self._save_grant_m2m_via_admin(
             grant, [self.bucket_a.pk], mock_remove=mock_remove, mock_add=mock_add
@@ -191,6 +200,7 @@ class TestGrantAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_bucket_clear_resyncs_after_m2m_save(self, mock_remove, mock_add):
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         grant = Grant.objects.create(
             user=self.user,
@@ -200,9 +210,11 @@ class TestGrantAdminIAM(_AdminTestBase):
         )
         bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
         grant.buckets.add(bucket_b)
+        self._own("bucket-a", "user@example.org")
+        self._own("bucket-b", "user@example.org")
 
         self._save_grant_m2m_via_admin(
-            grant, [], mock_remove=mock_remove, mock_add=mock_add
+            grant, [], mock_add=mock_add
         )
 
         removed = {c.args[0] for c in mock_remove.call_args_list}
@@ -216,6 +228,8 @@ class TestGrantAdminIAM(_AdminTestBase):
         other = User.objects.create(email="other@example.org")
         Grant.objects.create(user=self.user, dataset=self.dataset, permission=self.view_perm)
         Grant.objects.create(user=other, dataset=self.dataset, permission=self.view_perm)
+        self._own("bucket-a", "user@example.org")
+        self._own("bucket-a", "other@example.org")
         self.ma.delete_queryset(self.request, Grant.objects.all())
         self.assertEqual(Grant.objects.count(), 0)
         removed = {c.args[1] for c in mock_remove.call_args_list}
@@ -238,7 +252,7 @@ class TestGroupDatasetPermissionAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_create_provisions_members(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         self._save_via_admin(self.ma, {
             "group": self.group.pk, "dataset": self.dataset.pk,
             "permission": self.view_perm.pk,
@@ -252,6 +266,7 @@ class TestGroupDatasetPermissionAdminIAM(_AdminTestBase):
         gdp = GroupDatasetPermission.objects.create(
             group=self.group, dataset=self.dataset, permission=self.view_perm,
         )
+        self._own("bucket-a", "member@example.org")
         self.ma.delete_model(self.request, gdp)
         # The member left the enumeration with the row — pre-capture must
         # still reach them.
@@ -261,7 +276,7 @@ class TestGroupDatasetPermissionAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_group_swap_converges_both_groups_members(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         other_group = Group.objects.create(name="other-lab")
         other_member = User.objects.create(email="othermember@example.org")
@@ -269,6 +284,7 @@ class TestGroupDatasetPermissionAdminIAM(_AdminTestBase):
         gdp = GroupDatasetPermission.objects.create(
             group=self.group, dataset=self.dataset, permission=self.view_perm,
         )
+        self._own("bucket-a", "member@example.org")
         self._save_via_admin(self.ma, {
             "group": other_group.pk, "dataset": self.dataset.pk,
             "permission": self.view_perm.pk,
@@ -281,13 +297,14 @@ class TestGroupDatasetPermissionAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_dataset_swap_converges_both_datasets(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         other_ds = Dataset.objects.create(name="ds2")
         DatasetBucket.objects.create(dataset=other_ds, name="bucket-b")
         gdp = GroupDatasetPermission.objects.create(
             group=self.group, dataset=self.dataset, permission=self.view_perm,
         )
+        self._own("bucket-a", "member@example.org")
         self._save_via_admin(self.ma, {
             "group": self.group.pk, "dataset": other_ds.pk,
             "permission": self.view_perm.pk,
@@ -318,7 +335,7 @@ class TestTOSAcceptanceAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_create_provisions(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         self._save_via_admin(self.ma, {
             "user": self.user.pk, "tos_document": self.tos.pk,
         })
@@ -329,17 +346,19 @@ class TestTOSAcceptanceAdminIAM(_AdminTestBase):
     def test_delete_deprovisions(self, mock_remove, mock_add):
         mock_remove.return_value = True
         acceptance = TOSAcceptance.objects.create(user=self.user, tos_document=self.tos)
+        self._own("bucket-a", "user@example.org")
         self.ma.delete_model(self.request, acceptance)
         mock_remove.assert_called_once_with("bucket-a", "user@example.org")
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_retarget_user_converges_old_pair(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         other = User.objects.create(email="other@example.org")
         Grant.objects.create(user=other, dataset=self.dataset, permission=self.view_perm)
         acceptance = TOSAcceptance.objects.create(user=self.user, tos_document=self.tos)
+        self._own("bucket-a", "user@example.org")
         self._save_via_admin(self.ma, {
             "user": other.pk, "tos_document": self.tos.pk,
         }, instance=acceptance)
@@ -355,6 +374,8 @@ class TestTOSAcceptanceAdminIAM(_AdminTestBase):
         Grant.objects.create(user=other, dataset=self.dataset, permission=self.view_perm)
         TOSAcceptance.objects.create(user=self.user, tos_document=self.tos)
         TOSAcceptance.objects.create(user=other, tos_document=self.tos)
+        self._own("bucket-a", "user@example.org")
+        self._own("bucket-a", "other@example.org")
         self.ma.delete_queryset(self.request, TOSAcceptance.objects.all())
         self.assertEqual(TOSAcceptance.objects.count(), 0)
         removed = {c.args[1] for c in mock_remove.call_args_list}
@@ -379,25 +400,23 @@ class TestDatasetBucketAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_create_provisions_effective_users(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         self._save_via_admin(self.ma, {
             "dataset": self.dataset.pk, "name": "bucket-new",
         })
         added = {(c.args[0], c.args[1]) for c in mock_add.call_args_list}
         self.assertEqual(added, {("bucket-new", "accepted@example.org")})
-        # The TOS-pending user is enumerated but lands on the remove side
-        self.assertIn(
-            ("bucket-new", "pending@example.org"),
-            {(c.args[0], c.args[1]) for c in mock_remove.call_args_list},
-        )
+        mock_remove.assert_not_called()
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_rename_deprovisions_old_name(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         bucket = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-old")
+        self._own("bucket-old", "accepted@example.org")
+        self._own("bucket-old", "pending@example.org")
         self._save_via_admin(self.ma, {
             "dataset": self.dataset.pk, "name": "bucket-renamed",
         }, instance=bucket)
@@ -412,12 +431,14 @@ class TestDatasetBucketAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_move_to_other_dataset_deprovisions_old_users(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         other_ds = Dataset.objects.create(name="ds2")
         other_user = User.objects.create(email="otheruser@example.org")
         Grant.objects.create(user=other_user, dataset=other_ds, permission=self.view_perm)
         bucket = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        self._own("bucket-a", "accepted@example.org")
+        self._own("bucket-a", "pending@example.org")
         self._save_via_admin(self.ma, {
             "dataset": other_ds.pk, "name": "bucket-a",
         }, instance=bucket)
@@ -436,6 +457,8 @@ class TestDatasetBucketAdminIAM(_AdminTestBase):
     def test_delete_deprovisions_old_name(self, mock_remove, mock_add):
         mock_remove.return_value = True
         bucket = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        self._own("bucket-a", "accepted@example.org")
+        self._own("bucket-a", "pending@example.org")
         self.ma.delete_model(self.request, bucket)
         removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
         self.assertEqual(removed, {
@@ -450,6 +473,8 @@ class TestDatasetBucketAdminIAM(_AdminTestBase):
         mock_remove.return_value = True
         DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
+        self._own("bucket-a", "accepted@example.org")
+        self._own("bucket-b", "accepted@example.org")
         self.ma.delete_queryset(self.request, DatasetBucket.objects.all())
         self.assertEqual(DatasetBucket.objects.count(), 0)
         removed_buckets = {c.args[0] for c in mock_remove.call_args_list}
@@ -471,6 +496,7 @@ class TestDatasetModelAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_setting_tos_resyncs_dataset(self, mock_remove, mock_add):
         mock_remove.return_value = True
+        self._own("bucket-a", "user@example.org")
         self._save_via_admin(self.ma, {
             "name": "ds1", "description": "", "access_mode": Dataset.ACCESS_CLOSED,
             "tos": self.tos.pk,
@@ -481,7 +507,7 @@ class TestDatasetModelAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_clearing_tos_resyncs_dataset(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         self.dataset.tos = self.tos
         self.dataset.save()
         self._save_via_admin(self.ma, {
@@ -502,7 +528,7 @@ class TestDatasetModelAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_inline_add_provisions(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         formset = self._bucket_formset({
             "buckets-TOTAL_FORMS": "1", "buckets-INITIAL_FORMS": "0",
             "buckets-MIN_NUM_FORMS": "0", "buckets-MAX_NUM_FORMS": "1000",
@@ -519,9 +545,10 @@ class TestDatasetModelAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_inline_rename_deprovisions_old_name(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         bucket = DatasetBucket.objects.get(name="bucket-a")
+        self._own("bucket-a", "user@example.org")
         formset = self._bucket_formset({
             "buckets-TOTAL_FORMS": "1", "buckets-INITIAL_FORMS": "1",
             "buckets-MIN_NUM_FORMS": "0", "buckets-MAX_NUM_FORMS": "1000",
@@ -545,6 +572,7 @@ class TestDatasetModelAdminIAM(_AdminTestBase):
     def test_inline_delete_deprovisions(self, mock_remove, mock_add):
         mock_remove.return_value = True
         bucket = DatasetBucket.objects.get(name="bucket-a")
+        self._own("bucket-a", "user@example.org")
         formset = self._bucket_formset({
             "buckets-TOTAL_FORMS": "1", "buckets-INITIAL_FORMS": "1",
             "buckets-MIN_NUM_FORMS": "0", "buckets-MAX_NUM_FORMS": "1000",
@@ -599,8 +627,9 @@ class TestDatasetVersionAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_bucket_change_resyncs_dataset_after_m2m_save(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
+        self._own("bucket-a", "user@example.org")
 
         self._save_version_buckets_via_admin(
             [self.bucket_b.pk], mock_remove=mock_remove, mock_add=mock_add
@@ -624,6 +653,7 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_autoset_flip_resyncs_dataset(self, mock_remove, mock_add):
         mock_remove.return_value = True
+        self._own("bucket-a", "user@example.org")
         # New general TOS doc auto-sets Dataset.tos → user is now TOS-pending
         self._save_via_admin(self.ma, {
             "name": "TOS", "text": "Terms", "dataset": self.dataset.pk,
@@ -637,7 +667,7 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_move_between_datasets_resyncs_both(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         tos = TOSDocument.objects.create(
             name="TOS", text="Terms", dataset=self.dataset, invite_token="tok-move-1",
@@ -648,6 +678,7 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
         DatasetBucket.objects.create(dataset=other_ds, name="bucket-b")
         other_user = User.objects.create(email="otheruser@example.org")
         Grant.objects.create(user=other_user, dataset=other_ds, permission=self.view_perm)
+        self._own("bucket-b", "otheruser@example.org")
 
         self._save_via_admin(self.ma, {
             "name": "TOS", "text": "Terms", "dataset": other_ds.pk,
@@ -674,7 +705,7 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_version_tos_retarget_resyncs_dataset(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
         v1 = DatasetVersion.objects.create(dataset=self.dataset, version="v1")
@@ -687,6 +718,7 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
             dataset_version=v1,
             invite_token="tok-version-retarget",
         )
+        self._own("bucket-b", "user@example.org")
 
         self._save_via_admin(self.ma, {
             "name": "Version TOS",
@@ -711,7 +743,7 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_version_tos_retired_date_edit_resyncs_dataset(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
         v1 = DatasetVersion.objects.create(dataset=self.dataset, version="v1")
         v1.buckets.add(DatasetBucket.objects.get(dataset=self.dataset, name="bucket-a"))
@@ -763,6 +795,8 @@ class TestUserFlagAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_disable_removes_user_and_sa_iam(self, mock_remove, mock_add):
         mock_remove.return_value = True
+        self._own("bucket-a", "user@example.org")
+        self._own("bucket-b", "robot@example.org")
         # is_active checkbox omitted → False
         self._save_via_admin(self.ma, {
             "email": self.user.email, "name": self.user.name,
@@ -777,7 +811,7 @@ class TestUserFlagAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_reenable_readds_user_and_sa_iam(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         self.user.is_active = False
         self.user.save()
         self._save_via_admin(self.ma, {
@@ -793,8 +827,9 @@ class TestUserFlagAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_promote_to_admin_removes_per_user_iam(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
+        self._own("bucket-a", "user@example.org")
         self._save_via_admin(self.ma, {
             "email": self.user.email, "name": self.user.name,
             "is_active": "on", "admin": "on",
@@ -806,7 +841,7 @@ class TestUserFlagAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_demote_from_admin_readds_per_user_iam(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         self.user.admin = True
         self.user.save()
         self._save_via_admin(self.ma, {
@@ -871,9 +906,10 @@ class TestMembershipAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_user_admin_changed_membership_row_converges_both_groups(
             self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         ug = UserGroup.objects.create(user=self.user, group=self.group_a)
+        self._own("bucket-a", "user@example.org")
         ma, form = self._user_admin_form(self.user)
         formset = self._membership_formset(User, "group", {
             "ug-TOTAL_FORMS": "1", "ug-INITIAL_FORMS": "1",
@@ -892,10 +928,11 @@ class TestMembershipAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_group_admin_changed_membership_row_converges_both_users(
             self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         other = User.objects.create(email="other@example.org")
         ug = UserGroup.objects.create(user=self.user, group=self.group_a)
+        self._own("bucket-a", "user@example.org")
         ma = GroupAdmin(Group, django_admin.site)
         FormClass = ma.get_form(self.request, obj=self.group_a, change=True)
         form = FormClass(data={"name": self.group_a.name}, instance=self.group_a)
@@ -916,7 +953,7 @@ class TestMembershipAdminIAM(_AdminTestBase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_user_admin_added_membership_row_provisions(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         ma, form = self._user_admin_form(self.user)
         formset = self._membership_formset(User, "group", {
             "ug-TOTAL_FORMS": "1", "ug-INITIAL_FORMS": "0",
@@ -933,6 +970,7 @@ class TestMembershipAdminIAM(_AdminTestBase):
     def test_user_admin_removed_membership_row_deprovisions(self, mock_remove, mock_add):
         mock_remove.return_value = True
         ug = UserGroup.objects.create(user=self.user, group=self.group_a)
+        self._own("bucket-a", "user@example.org")
         ma, form = self._user_admin_form(self.user)
         formset = self._membership_formset(User, "group", {
             "ug-TOTAL_FORMS": "1", "ug-INITIAL_FORMS": "1",

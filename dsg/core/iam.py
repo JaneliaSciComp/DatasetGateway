@@ -22,13 +22,98 @@ from core.authz import VIEW_PERMISSIONS
 logger = logging.getLogger(__name__)
 
 
+def provision_binding(bucket_name, email):
+    """Provision a DSG-owned bucket IAM binding and record provenance."""
+    from core.models import BucketIAMBinding
+    from ngauth.gcs import add_user_to_bucket
+
+    row_exists = BucketIAMBinding.objects.filter(
+        bucket_name=bucket_name, email=email,
+    ).exists()
+    try:
+        outcome = add_user_to_bucket(bucket_name, email)
+    except Exception:
+        logger.exception(
+            "IAM provision failed",
+            extra={"email": email, "bucket": bucket_name},
+        )
+        return "failed"
+
+    if row_exists:
+        if outcome == "already_present":
+            return "already-owned"
+        if outcome == "created":
+            return "reasserted"
+        logger.error(
+            "IAM provision failed",
+            extra={"email": email, "bucket": bucket_name, "outcome": outcome},
+        )
+        return "failed"
+
+    if outcome == "created":
+        try:
+            BucketIAMBinding.objects.get_or_create(
+                bucket_name=bucket_name, email=email,
+            )
+        except Exception:
+            logger.exception(
+                "Bucket IAM binding created but ledger write failed",
+                extra={"email": email, "bucket": bucket_name},
+            )
+            return "failed"
+        return "added"
+
+    if outcome == "already_present":
+        return "foreign"
+
+    logger.error(
+        "IAM provision failed",
+        extra={"email": email, "bucket": bucket_name, "outcome": outcome},
+    )
+    return "failed"
+
+
+def deprovision_binding(bucket_name, email):
+    """Remove a bucket IAM binding only when DSG owns it in the ledger."""
+    from core.models import BucketIAMBinding
+    from ngauth.gcs import remove_user_from_bucket
+
+    row = BucketIAMBinding.objects.filter(bucket_name=bucket_name, email=email).first()
+    if row is None:
+        return "skipped-not-owned"
+
+    try:
+        success = remove_user_from_bucket(bucket_name, email)
+    except Exception:
+        logger.exception(
+            "IAM deprovision failed",
+            extra={"email": email, "bucket": bucket_name},
+        )
+        return "failed"
+
+    if not success:
+        logger.error(
+            "IAM deprovision failed",
+            extra={"email": email, "bucket": bucket_name},
+        )
+        return "failed"
+
+    try:
+        row.delete()
+    except Exception:
+        logger.exception(
+            "Bucket IAM binding removed but ledger delete failed",
+            extra={"email": email, "bucket": bucket_name},
+        )
+        return "failed"
+    return "removed"
+
+
 def sync_user_dataset_iam(user, dataset):
     """Sync a user's bucket IAM for all versions of a dataset.
 
     Best-effort: logs errors but does not raise.
     """
-    from ngauth.gcs import add_user_to_bucket, remove_user_from_bucket
-
     buckets = _get_dataset_buckets(dataset)
     if not buckets:
         return
@@ -39,9 +124,18 @@ def sync_user_dataset_iam(user, dataset):
         should_provision = bucket in provisioned
         try:
             if should_provision:
-                add_user_to_bucket(bucket, user.email)
+                result = provision_binding(bucket, user.email)
             else:
-                remove_user_from_bucket(bucket, user.email)
+                result = deprovision_binding(bucket, user.email)
+            if result == "failed":
+                logger.error(
+                    "IAM sync failed",
+                    extra={
+                        "email": user.email,
+                        "bucket": bucket,
+                        "provision": should_provision,
+                    },
+                )
         except Exception:
             logger.exception(
                 "IAM sync failed",
@@ -121,26 +215,30 @@ def sync_user_iam(user):
 
 
 def deprovision_bucket(bucket_name, dataset):
-    """Best-effort removal of a dataset's permission-source users from a bucket.
+    """Best-effort removal of DSG-owned bindings from a bucket.
 
     Used when a bucket row is deleted, renamed, or moved to another dataset:
     ``bucket_name`` is the *old* name and ``dataset`` the *old* dataset,
     captured before the mutation.
     """
-    from ngauth.gcs import remove_user_from_bucket
+    from core.models import BucketIAMBinding
 
-    users = list(permission_source_users(dataset))
-    for user in users:
+    rows = list(
+        BucketIAMBinding.objects.filter(bucket_name=bucket_name).values_list(
+            "email", flat=True,
+        )
+    )
+    for email in rows:
         try:
-            remove_user_from_bucket(bucket_name, user.email)
+            deprovision_binding(bucket_name, email)
         except Exception:
             logger.exception(
                 "IAM deprovision failed",
-                extra={"email": user.email, "bucket": bucket_name},
+                extra={"email": email, "bucket": bucket_name},
             )
     logger.info(
-        "Deprovisioned bucket %s for %d permission-source user(s) of dataset %s",
-        bucket_name, len(users), dataset,
+        "Deprovisioned bucket %s for %d ledger-owned binding(s) of dataset %s",
+        bucket_name, len(rows), dataset,
     )
 
 

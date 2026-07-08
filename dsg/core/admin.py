@@ -17,6 +17,7 @@ from .models import (
     Affiliation,
     APIKey,
     AuditLog,
+    BucketIAMBinding,
     Dataset,
     DatasetBucket,
     DatasetVersion,
@@ -208,6 +209,13 @@ class DatasetBucketAdmin(admin.ModelAdmin):
         # Bulk "delete selected" never calls delete_model; loop the per-object path
         for obj in queryset:
             self.delete_model(request, obj)
+
+
+@admin.register(BucketIAMBinding)
+class BucketIAMBindingAdmin(admin.ModelAdmin):
+    list_display = ("id", "bucket_name", "email", "created")
+    search_fields = ("bucket_name", "email")
+    readonly_fields = ("created",)
 
 
 @admin.register(DatasetVersion)

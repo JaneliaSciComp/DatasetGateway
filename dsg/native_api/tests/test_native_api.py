@@ -12,6 +12,7 @@ from rest_framework.test import APIClient
 from core.models import (
     APIKey,
     AuditLog,
+    BucketIAMBinding,
     Dataset,
     DatasetAlias,
     DatasetBucket,
@@ -235,13 +236,16 @@ class TestNativeAuthorize(TestCase):
 
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = True
+            mock_add.return_value = "created"
             resp = self.client.post("/web/tos/service-check/", {
                 "next": "https://service.example.org/return?x=1",
             })
 
         self.assertEqual(resp.status_code, 302)
         mock_add.assert_called_with("bucket-v1", "user@example.org")
+        self.assertTrue(BucketIAMBinding.objects.filter(
+            bucket_name="bucket-v1", email="user@example.org",
+        ).exists())
         self.assertTrue(TOSAcceptance.objects.filter(
             user=self.user, tos_document=version_tos,
         ).exists())

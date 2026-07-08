@@ -8,6 +8,7 @@ from django.test import TestCase
 from core.models import (
     APIKey,
     AuditLog,
+    BucketIAMBinding,
     Dataset,
     DatasetBucket,
     DatasetVersion,
@@ -942,13 +943,18 @@ class TestTOSLandingBucketIAM(_WebTestBase):
         self._login(self.regular_key)
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = True
+            mock_add.return_value = "created"
             self.client.post("/web/tos/bucket-tok-789/")
 
         called_buckets = sorted(c.args[0] for c in mock_add.call_args_list)
         self.assertEqual(called_buckets, ["bucket-a", "bucket-b"])
         for call in mock_add.call_args_list:
             self.assertEqual(call.args[1], "regular@example.org")
+        rows = set(BucketIAMBinding.objects.values_list("bucket_name", "email"))
+        self.assertEqual(rows, {
+            ("bucket-a", "regular@example.org"),
+            ("bucket-b", "regular@example.org"),
+        })
 
     def test_empty_bucket_skipped(self):
         from unittest.mock import patch
@@ -956,7 +962,7 @@ class TestTOSLandingBucketIAM(_WebTestBase):
         self._login(self.regular_key)
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = True
+            mock_add.return_value = "created"
             self.client.post("/web/tos/bucket-tok-789/")
 
         called_buckets = [c.args[0] for c in mock_add.call_args_list]
@@ -980,7 +986,7 @@ class TestGrantIAMSync(_WebTestBase):
         self._login(self.sc_key)
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = True
+            mock_add.return_value = "created"
             self.client.post(f"/web/grants/{self.dataset.name}", {
                 "action": "grant",
                 "email": "regular@example.org",
@@ -994,6 +1000,9 @@ class TestGrantIAMSync(_WebTestBase):
         g = Grant.objects.create(
             user=self.regular_user, dataset=self.dataset,
             permission=self.view_perm,
+        )
+        BucketIAMBinding.objects.create(
+            bucket_name="bucket-a", email="regular@example.org",
         )
         self._login(self.sc_key)
         with patch("ngauth.gcs.add_user_to_bucket"), \
@@ -1026,7 +1035,7 @@ class TestGroupMembershipIAMSync(_WebTestBase):
         self._login(self.group_admin_a_key)
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = True
+            mock_add.return_value = "created"
             self.client.post(f"/web/group/{self.group_a.name}/", {
                 "action": "add_member",
                 "email": "new@example.org",
@@ -1037,6 +1046,9 @@ class TestGroupMembershipIAMSync(_WebTestBase):
         from unittest.mock import patch
 
         ug = UserGroup.objects.get(user=self.regular_user, group=self.group_a)
+        BucketIAMBinding.objects.create(
+            bucket_name="bucket-a", email="regular@example.org",
+        )
         self._login(self.group_admin_a_key)
         with patch("ngauth.gcs.add_user_to_bucket"), \
              patch("ngauth.gcs.remove_user_from_bucket") as mock_remove:
@@ -1070,11 +1082,14 @@ class TestTOSAcceptViewIAM(_WebTestBase):
         self._login(self.regular_key)
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = True
+            mock_add.return_value = "created"
             resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
 
         self.assertEqual(resp.status_code, 302)
         mock_add.assert_called_once_with("bucket-a", "regular@example.org")
+        self.assertTrue(BucketIAMBinding.objects.filter(
+            bucket_name="bucket-a", email="regular@example.org",
+        ).exists())
         self.assertEqual(
             AuditLog.objects.filter(
                 action="tos_accepted", target_type="TOSAcceptance",
@@ -1087,7 +1102,7 @@ class TestTOSAcceptViewIAM(_WebTestBase):
         self._login(self.regular_key)
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.side_effect = [False, True]
+            mock_add.side_effect = ["failed", "created"]
             self.client.post(f"/web/tos/{self.tos.pk}/accept")
             resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
 
@@ -1098,6 +1113,9 @@ class TestTOSAcceptViewIAM(_WebTestBase):
             [("bucket-a", "regular@example.org"), ("bucket-a", "regular@example.org")],
         )
         self.assertEqual(AuditLog.objects.filter(action="tos_accepted").count(), 1)
+        self.assertTrue(BucketIAMBinding.objects.filter(
+            bucket_name="bucket-a", email="regular@example.org",
+        ).exists())
         self.assertEqual(
             TOSAcceptance.objects.filter(
                 user=self.regular_user, tos_document=self.tos,
@@ -1432,7 +1450,7 @@ class TestTOSServiceCheck(_WebTestBase):
 
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.side_effect = [False, True]
+            mock_add.side_effect = ["failed", "created"]
             self.client.post("/web/tos/service-check/")
 
             session = self.client.session

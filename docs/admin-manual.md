@@ -416,6 +416,29 @@ calls are synchronous best-effort: failures are logged, never raised, so
 a large fan-out (e.g. adding a bucket to a dataset with many users) may
 take a moment but cannot block the save.
 
+**DSG removes only bindings it created.** The `BucketIAMBinding` admin table
+is a provenance ledger for GCS `roles/storage.objectViewer` bucket IAM
+bindings that DSG actually created. The invariant is:
+
+```
+removals <= BucketIAMBinding rows <= bindings DSG created
+```
+
+When DSG provisions a user, it first asks GCS to add the member. A
+confirmed create writes a ledger row. If GCS reports that the member was
+already present, DSG treats the access as foreign and records no row. That
+means a hand-added bucket binding is not claimed and will not be removed
+later if the DSG rule says the user should not have access. Failed adds
+write no row.
+
+All removal paths check the ledger first. If no row exists, DSG makes no
+GCS remove call. If a row exists, DSG removes the member from the bucket
+and deletes the row only after confirmed success; failures keep the row so
+the reconcile can retry. Deleting a ledger row manually in the admin is a
+deliberate "disown" operation: DSG will stop removing that binding.
+Adding a ledger row manually is a deliberate "claim" operation: DSG may
+remove that bucket/user pair during a later sync.
+
 **Required preflight before enabling this migration in production:** run the
 version-grant audit and choose a remediation for every row it reports:
 
@@ -431,10 +454,11 @@ attach explicit buckets to the grant, set the anchor's `branch` and
 old version-scoped grants used to provision every dataset bucket; after this
 change, they provision only the anchor reach described above.
 
-DSG only ever adds or removes users it enumerates from its own tables:
-bucket IAM is treated as a **superset** of DSG state, so members it
-cannot derive from its own tables (e.g. hand-added collaborators) are
-never touched, and no sync path scans bucket policy to decide removals.
+DSG only ever adds users it enumerates from its own tables, and it removes
+only ledger-owned rows. Bucket IAM is treated as a **superset** of DSG
+state, so members it cannot derive from its own tables or did not create
+(e.g. hand-added collaborators) are never touched. No sync path scans a
+bucket policy to discover users or decide removals.
 
 **A scheduled reconcile is the backstop for DSG-visible rows.** Because
 inline calls are best-effort, run the reconcile command periodically:
@@ -451,19 +475,56 @@ the unit headers for install steps, mirroring the backup units).
 
 The reconcile command walks users currently enumerable from DSG tables
 (direct Grants or memberships in groups with dataset permissions) and
-re-converges those users against the current rule. It does not scan bucket
-policy. If a Grant, membership, bucket, or TOS row is deleted out-of-band
-with SQL or a shell, DSG may no longer enumerate the affected user, so the
-reconcile cannot remove their stale bucket IAM. Remove such bindings
-manually with the Google Cloud console or:
+probes each derived `(user, bucket)` pair. It does not enumerate bucket IAM
+members. Its report categories are:
+
+- `ADD` — DSG created a missing binding and recorded a ledger row.
+- `REASSERT` — a ledger-owned binding was missing and DSG recreated it.
+- `SATISFIED (foreign)` — access already exists but DSG has no ledger row,
+  so the binding is left unclaimed.
+- `REMOVE` — DSG removed a ledger-owned binding.
+- `SKIP (not DSG-owned)` — access exists but DSG has no ledger row, so no
+  removal is attempted.
+- `PRUNE ledger` — DSG had a row, but a definitive probe showed the
+  binding is gone; the row is removed without a GCS write.
+- `ORPHAN REMOVE` — a ledger row is no longer reachable from the current
+  DSG graph (for example, the user was deleted or a bucket was renamed);
+  DSG removes the owned binding and deletes the row.
+- `PROBE-FAIL` — DSG could not read the pair's state. This counts as a
+  failure in both real and `--dry-run` mode; a dry-run with probe failures
+  exits non-zero because it was not a reliable preview.
+
+`--dry-run` performs no GCS writes and no ledger writes or deletes. It
+still reports planned adds/removes/prunes/orphans and exits non-zero on
+probe failures.
+
+If a binding should be removed but is not ledger-owned, remove it manually
+with the Google Cloud console or:
 
 ```bash
 gcloud storage buckets remove-iam-policy-binding gs://BUCKET \
   --member=user:EMAIL --role=roles/storage.objectViewer
 ```
 
-Alternatively, recreate the missing row and delete it through a hooked DSG
-surface (web UI, Django admin, or SCIM) so the normal remove path runs.
+Alternatively, add a `BucketIAMBinding` row to deliberately claim the pair
+and then delete it through a hooked DSG surface (web UI, Django admin, or
+SCIM) so the normal remove path runs.
+
+**Phase A production deploy checklist:**
+
+1. Apply migrations through `0011_bucketiambinding`.
+2. Pause the scheduled reconcile timer.
+3. Run `audit_version_grants` and complete the chosen remediation for
+   every reported row.
+4. Run `sync_bucket_iam --dry-run` and review `SKIP (not DSG-owned)`,
+   `SATISFIED (foreign)`, `PRUNE ledger`, `ORPHAN REMOVE`, and failure
+   lines.
+5. Run the real reconcile.
+6. Record the audit and reconcile results in the Phase A rollout notes.
+
+The ledger must land before the first production reconcile. It starts empty
+and correct only while DSG has not yet created production bucket IAM
+bindings.
 
 ---
 

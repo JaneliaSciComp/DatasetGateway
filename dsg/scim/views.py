@@ -309,38 +309,31 @@ class UserDetailView(SCIMBaseView):
         if not user:
             return scim_error(404, detail="User not found")
 
-        # Collect buckets user had access to before deletion
-        from core.iam import _get_dataset_buckets, _user_has_effective_access
-        from core.models import Dataset, Grant as GrantModel, GroupDatasetPermission
-        dataset_ids = set(
-            GrantModel.objects.filter(user=user).values_list("dataset_id", flat=True)
+        captured_emails = [user.email] + list(
+            user.service_accounts.values_list("email", flat=True)
         )
-        user_group_ids = UserGroup.objects.filter(user=user).values_list("group_id", flat=True)
-        dataset_ids |= set(
-            GroupDatasetPermission.objects.filter(
-                group_id__in=user_group_ids
-            ).values_list("dataset_id", flat=True)
-        )
-        buckets_to_remove = []
-        for ds in Dataset.objects.filter(pk__in=dataset_ids):
-            buckets_to_remove.extend(_get_dataset_buckets(ds))
 
         log_audit(request.user, "user_deleted", "User", user.pk, before_state={
             "email": user.email, "name": user.name, "admin": user.admin,
         })
-        user_email = user.email
         user.delete()
 
-        # Remove from all buckets after user is deleted
-        from ngauth.gcs import remove_user_from_bucket
-        for bucket in buckets_to_remove:
+        from core.iam import deprovision_binding
+        from core.models import BucketIAMBinding
+
+        rows = list(
+            BucketIAMBinding.objects.filter(email__in=captured_emails).values_list(
+                "bucket_name", "email",
+            )
+        )
+        for bucket, email in rows:
             try:
-                remove_user_from_bucket(bucket, user_email)
+                deprovision_binding(bucket, email)
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception(
                     "Failed to remove deleted user from bucket",
-                    extra={"email": user_email, "bucket": bucket},
+                    extra={"email": email, "bucket": bucket},
                 )
         return Response(status=204)
 

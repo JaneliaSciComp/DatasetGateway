@@ -17,8 +17,12 @@ OBJECT_VIEWER_ROLE = "roles/storage.objectViewer"
 STS_TOKEN_URL = "https://sts.googleapis.com/v1/token"
 
 
-def check_storage_permission(user_email, bucket):
-    """Check if a user has objectViewer access on a bucket via direct IAM check."""
+def probe_storage_permission(user_email, bucket):
+    """Probe direct bucket IAM access.
+
+    Returns True when the member is present, False when definitively absent,
+    and None when the policy could not be read.
+    """
     try:
         from google.cloud import storage
 
@@ -34,7 +38,12 @@ def check_storage_permission(user_email, bucket):
         return False
     except Exception as e:
         logger.error(f"Error checking bucket IAM: {e}", extra={"user": user_email, "bucket": bucket})
-        return False
+        return None
+
+
+def check_storage_permission(user_email, bucket):
+    """Check if a user has objectViewer access on a bucket via direct IAM check."""
+    return probe_storage_permission(user_email, bucket) is True
 
 
 def generate_bounded_access_token(bucket):
@@ -101,7 +110,10 @@ def get_gcs_token_for_user(user_email, bucket):
 
 
 def add_user_to_bucket(bucket_name, user_email):
-    """Add a user to a bucket's IAM policy with objectViewer role."""
+    """Add a user to a bucket's IAM policy with objectViewer role.
+
+    Returns "created", "already_present", or "failed".
+    """
     try:
         from google.cloud import storage
 
@@ -110,14 +122,23 @@ def add_user_to_bucket(bucket_name, user_email):
         policy = bucket.get_iam_policy(requested_policy_version=3)
 
         member = f"user:{user_email}"
+        for binding in policy.bindings:
+            if binding["role"] == OBJECT_VIEWER_ROLE:
+                if member in binding.get("members", set()):
+                    logger.info(
+                        "User already has bucket IAM",
+                        extra={"email": user_email, "bucket": bucket_name},
+                    )
+                    return "already_present"
+
         policy.bindings.append({"role": OBJECT_VIEWER_ROLE, "members": {member}})
         bucket.set_iam_policy(policy)
 
         logger.info("Added user to bucket IAM", extra={"email": user_email, "bucket": bucket_name})
-        return True
+        return "created"
     except Exception as e:
         logger.error(f"Failed to add user to bucket IAM: {e}", extra={"email": user_email, "bucket": bucket_name})
-        return False
+        return "failed"
 
 
 def remove_user_from_bucket(bucket_name, user_email):

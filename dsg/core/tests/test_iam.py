@@ -6,6 +6,7 @@ import pytest
 from django.test import TestCase
 
 from core.models import (
+    BucketIAMBinding,
     Dataset,
     DatasetBucket,
     DatasetVersion,
@@ -145,12 +146,16 @@ class TestSyncUserDatasetIAM(TestCase):
             dataset=self.dataset, version="v3", branch="main", ordinal=3,
         )
 
+    def _own(self, *bucket_names, email="user@example.org"):
+        for bucket_name in bucket_names:
+            BucketIAMBinding.objects.create(bucket_name=bucket_name, email=email)
+
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_provisions_when_has_access(self, mock_remove, mock_add):
         from core.iam import sync_user_dataset_iam
         Grant.objects.create(user=self.user, dataset=self.dataset, permission=self.view_perm)
-        mock_add.return_value = True
+        mock_add.return_value = "created"
 
         sync_user_dataset_iam(self.user, self.dataset)
 
@@ -163,6 +168,7 @@ class TestSyncUserDatasetIAM(TestCase):
     def test_deprovisions_when_no_access(self, mock_remove, mock_add):
         from core.iam import sync_user_dataset_iam
         mock_remove.return_value = True
+        self._own("bucket-a", "bucket-b")
 
         sync_user_dataset_iam(self.user, self.dataset)
 
@@ -172,19 +178,21 @@ class TestSyncUserDatasetIAM(TestCase):
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_deprovisions_when_tos_not_accepted(self, mock_remove, mock_add):
+    def test_foreign_binding_survives_not_provisioned_verdict(self, mock_remove, mock_add):
         from core.iam import sync_user_dataset_iam
         tos = TOSDocument.objects.create(name="TOS", text="Terms", dataset=self.dataset)
         self.dataset.tos = tos
         self.dataset.save()
         Grant.objects.create(user=self.user, dataset=self.dataset, permission=self.view_perm)
         mock_remove.return_value = True
+        self._own("bucket-a")
 
         sync_user_dataset_iam(self.user, self.dataset)
 
         called_buckets = sorted(c.args[0] for c in mock_remove.call_args_list)
-        self.assertEqual(called_buckets, ["bucket-a", "bucket-b"])
+        self.assertEqual(called_buckets, ["bucket-a"])
         mock_add.assert_not_called()
+        self.assertFalse(BucketIAMBinding.objects.filter(bucket_name="bucket-a").exists())
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
@@ -192,6 +200,7 @@ class TestSyncUserDatasetIAM(TestCase):
         from core.iam import sync_user_dataset_iam
         admin = User.objects.create(email="admin@example.org", admin=True)
         mock_remove.return_value = True
+        self._own("bucket-a", "bucket-b", email="admin@example.org")
 
         sync_user_dataset_iam(admin, self.dataset)
 
@@ -230,8 +239,9 @@ class TestSyncUserDatasetIAM(TestCase):
             dataset_version=self.dv1,
             permission=self.view_perm,
         )
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
+        self._own("bucket-b")
 
         sync_user_dataset_iam(self.user, self.dataset)
 
@@ -255,8 +265,9 @@ class TestSyncUserDatasetIAM(TestCase):
             dataset_version=unranked,
             permission=self.view_perm,
         )
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
+        self._own("bucket-a", "bucket-b")
 
         sync_user_dataset_iam(self.user, self.dataset)
 
@@ -276,8 +287,9 @@ class TestSyncUserDatasetIAM(TestCase):
             permission=self.view_perm,
         )
         grant.buckets.add(self.bucket_b)
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
+        self._own("bucket-a")
 
         sync_user_dataset_iam(self.user, self.dataset)
 
@@ -300,6 +312,7 @@ class TestSyncUserDatasetIAM(TestCase):
         )
         Grant.objects.create(user=self.user, dataset=self.dataset, permission=named_perm)
         mock_remove.return_value = True
+        self._own("bucket-a", "bucket-b")
 
         sync_user_dataset_iam(self.user, self.dataset)
 
@@ -317,8 +330,9 @@ class TestSyncUserDatasetIAM(TestCase):
         version_tos = TOSDocument.objects.create(
             name="v1 TOS", text="Terms", dataset_version=self.dv1
         )
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
+        self._own("bucket-a")
 
         sync_user_dataset_iam(self.user, self.dataset)
 
@@ -451,7 +465,7 @@ class TestSyncUserIAM(TestCase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_enabled_user_provisioned_everywhere(self, mock_remove, mock_add):
         from core.iam import sync_user_iam
-        mock_add.return_value = True
+        mock_add.return_value = "created"
 
         sync_user_iam(self.user)
 
@@ -464,6 +478,8 @@ class TestSyncUserIAM(TestCase):
     def test_disabled_user_deprovisioned_everywhere(self, mock_remove, mock_add):
         from core.iam import sync_user_iam
         mock_remove.return_value = True
+        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="user@example.org")
+        BucketIAMBinding.objects.create(bucket_name="bucket-b", email="user@example.org")
         self.user.is_active = False
         self.user.save()
 
@@ -480,6 +496,7 @@ class TestSyncUserIAM(TestCase):
         mock_remove.return_value = True
         sa = User.objects.create(email="sa@example.org", parent=self.user)
         Grant.objects.create(user=sa, dataset=self.ds_a, permission=self.view_perm)
+        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="sa@example.org")
         self.user.is_active = False
         self.user.save()
         sa.refresh_from_db()
@@ -512,8 +529,10 @@ class TestSyncDatasetIAM(TestCase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_rule_decides_direction_per_user(self, mock_remove, mock_add):
         from core.iam import sync_dataset_iam
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
+        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="pending@example.org")
+        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="admin@example.org")
 
         sync_dataset_iam(self.dataset)
 
@@ -531,6 +550,7 @@ class TestSyncDatasetIAM(TestCase):
         # A user who just lost their only permission source is no longer
         # enumerated — pass the pre-mutation capture explicitly.
         Grant.objects.filter(user=self.pending).delete()
+        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="pending@example.org")
         sync_dataset_iam(self.dataset, users=[self.pending])
 
         removed = {c.args[1] for c in mock_remove.call_args_list}
@@ -554,9 +574,15 @@ class TestDeprovisionBucket(TestCase):
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_removes_all_permission_source_users(self, mock_remove, mock_add):
+    def test_removes_all_ledger_owned_bindings(self, mock_remove, mock_add):
         from core.iam import deprovision_bucket
         mock_remove.return_value = True
+        BucketIAMBinding.objects.create(
+            bucket_name="old-bucket", email="accepted@example.org",
+        )
+        BucketIAMBinding.objects.create(
+            bucket_name="old-bucket", email="orphan@example.org",
+        )
 
         # Bucket name deliberately absent from the DB — deprovision targets
         # detached/old names the sync helpers can no longer see.
@@ -565,15 +591,23 @@ class TestDeprovisionBucket(TestCase):
         calls = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
         self.assertEqual(calls, {
             ("old-bucket", "accepted@example.org"),
-            ("old-bucket", "pending@example.org"),
+            ("old-bucket", "orphan@example.org"),
         })
         mock_add.assert_not_called()
+        self.assertFalse(BucketIAMBinding.objects.filter(bucket_name="old-bucket").exists())
 
     @patch("ngauth.gcs.remove_user_from_bucket", side_effect=Exception("GCS error"))
     def test_best_effort_does_not_raise(self, mock_remove):
         from core.iam import deprovision_bucket
+        BucketIAMBinding.objects.create(
+            bucket_name="old-bucket", email="accepted@example.org",
+        )
+        BucketIAMBinding.objects.create(
+            bucket_name="old-bucket", email="pending@example.org",
+        )
         deprovision_bucket("old-bucket", self.dataset)
         self.assertEqual(mock_remove.call_count, 2)
+        self.assertEqual(BucketIAMBinding.objects.filter(bucket_name="old-bucket").count(), 2)
 
 
 @pytest.mark.django_db
@@ -596,7 +630,7 @@ class TestSyncGroupDatasetsForUser(TestCase):
     def test_syncs_all_group_datasets(self, mock_remove, mock_add):
         from core.iam import sync_group_datasets_for_user
         UserGroup.objects.create(user=self.user, group=self.group)
-        mock_add.return_value = True
+        mock_add.return_value = "created"
 
         sync_group_datasets_for_user(self.user, self.group)
 

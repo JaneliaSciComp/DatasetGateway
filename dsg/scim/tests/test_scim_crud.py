@@ -9,6 +9,7 @@ from rest_framework.test import APIClient
 
 from core.models import (
     APIKey,
+    BucketIAMBinding,
     Dataset,
     DatasetBucket,
     Grant,
@@ -282,8 +283,14 @@ class TestSCIMUserCRUD(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(UserGroup.objects.filter(user=user, group=group).exists())
 
-    def test_delete_user(self):
+    @patch("ngauth.gcs.remove_user_from_bucket", return_value=True)
+    def test_delete_user_deprovisions_owned_user_and_service_account_bindings(
+        self, mock_remove,
+    ):
         user = User.objects.create(email="del@example.org", name="del")
+        robot = User.objects.create(email="del-robot@example.org", parent=user)
+        BucketIAMBinding.objects.create(bucket_name="bucket-a", email=user.email)
+        BucketIAMBinding.objects.create(bucket_name="bucket-b", email=robot.email)
         from scim.utils import generate_scim_id
         user.scim_id = generate_scim_id(user.pk, "User")
         user.save(update_fields=["scim_id"])
@@ -293,6 +300,17 @@ class TestSCIMUserCRUD(TestCase):
         )
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(User.objects.filter(pk=user.pk).exists())
+        self.assertFalse(User.objects.filter(pk=robot.pk).exists())
+        self.assertFalse(BucketIAMBinding.objects.filter(email__in=[
+            "del@example.org", "del-robot@example.org",
+        ]).exists())
+        self.assertEqual(
+            {(c.args[0], c.args[1]) for c in mock_remove.call_args_list},
+            {
+                ("bucket-a", "del@example.org"),
+                ("bucket-b", "del-robot@example.org"),
+            },
+        )
 
     def test_get_nonexistent_user(self):
         resp = self.client.get(
@@ -326,6 +344,8 @@ class TestSCIMUserFlagIAM(TestCase):
         DatasetBucket.objects.create(dataset=self.ds_b, name="bucket-b")
         self.sa_user = User.objects.create(email="robot@example.org", parent=self.user)
         Grant.objects.create(user=self.sa_user, dataset=self.ds_b, permission=self.view_perm)
+        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="user@example.org")
+        BucketIAMBinding.objects.create(bucket_name="bucket-b", email="robot@example.org")
 
     def _auth(self):
         return {"HTTP_AUTHORIZATION": f"Bearer {self.api_key.key}"}
@@ -359,7 +379,7 @@ class TestSCIMUserFlagIAM(TestCase):
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_patch_active_true_readds_user_and_sa_iam(self, mock_remove, mock_add):
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         self.user.is_active = False
         self.user.save()
         resp = self._patch_active(True)
@@ -375,7 +395,7 @@ class TestSCIMUserFlagIAM(TestCase):
     @patch("ngauth.gcs.remove_user_from_bucket")
     def test_put_admin_flip_resyncs(self, mock_remove, mock_add):
         from scim.serializers import USER_EXTENSION
-        mock_add.return_value = True
+        mock_add.return_value = "created"
         mock_remove.return_value = True
         resp = self.client.put(
             f"/auth/scim/v2/Users/{self.user.scim_id}",
