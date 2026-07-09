@@ -510,17 +510,70 @@ Alternatively, add a `BucketIAMBinding` row to deliberately claim the pair
 and then delete it through a hooked DSG surface (web UI, Django admin, or
 SCIM) so the normal remove path runs.
 
-**Phase A production deploy checklist:**
+**Phase A production deploy checklist.** Run on the production host from
+the repo's `dsg/` directory; `bash scripts/manage.sh` auto-detects a local
+vs Docker deployment.
 
-1. Apply migrations through `0011_bucketiambinding`.
-2. Pause the scheduled reconcile timer.
-3. Run `audit_version_grants` and complete the chosen remediation for
-   every reported row.
-4. Run `sync_bucket_iam --dry-run` and review `SKIP (not DSG-owned)`,
-   `SATISFIED (foreign)`, `PRUNE ledger`, `ORPHAN REMOVE`, and failure
-   lines.
-5. Run the real reconcile.
-6. Record the audit and reconcile results in the Phase A rollout notes.
+1. Deploy the release containing migrations `0010` and `0011`, then
+   restart the service:
+
+   ```bash
+   sudo systemctl restart datasetgateway    # systemd/gunicorn deployment
+   # or, for Docker:
+   pixi run deploy                          # rebuilds, runs migrations
+   ```
+
+2. Pause the scheduled reconcile so nothing fires before the audit is
+   complete (skip if the iamsync timer was never installed):
+
+   ```bash
+   sudo systemctl disable --now datasetgateway-iamsync.timer
+   systemctl list-timers datasetgateway-iamsync.timer   # confirm: no next fire
+   ```
+
+3. Apply migrations and confirm `0011_bucketiambinding` is applied
+   (`pixi run deploy` already migrated; still confirm):
+
+   ```bash
+   bash scripts/manage.sh migrate
+   bash scripts/manage.sh showmigrations core | tail -3   # expect [X] 0011_bucketiambinding
+   ```
+
+4. Run the version-grant audit and complete one of the four remediations
+   above for every reported row (convert the grant to dataset-grain,
+   attach explicit buckets, set the anchor's `branch`/`ordinal`, or
+   accept the narrowed reach):
+
+   ```bash
+   bash scripts/manage.sh audit_version_grants
+   ```
+
+5. Preview the reconcile and review every `SKIP (not DSG-owned)`,
+   `SATISFIED (foreign)`, `PRUNE ledger`, `ORPHAN REMOVE`, and
+   `PROBE-FAIL` line against the category descriptions above. A non-zero
+   exit means probe failures made the preview incomplete — resolve them
+   and re-run the dry-run before proceeding:
+
+   ```bash
+   bash scripts/manage.sh sync_bucket_iam --dry-run
+   ```
+
+6. Run the real reconcile (the ledger starts empty, so this first run
+   records every binding DSG creates from here on):
+
+   ```bash
+   bash scripts/manage.sh sync_bucket_iam
+   ```
+
+7. Resume the scheduled reconcile:
+
+   ```bash
+   sudo systemctl enable --now datasetgateway-iamsync.timer
+   systemctl list-timers datasetgateway-iamsync.timer   # confirm next fire time
+   ```
+
+8. Record the audit output, remediation decisions, and reconcile summary
+   in the Phase A rollout notes.
 
 The ledger must land before the first production reconcile. It starts empty
 and correct only while DSG has not yet created production bucket IAM
