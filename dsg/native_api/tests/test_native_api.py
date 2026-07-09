@@ -17,6 +17,7 @@ from core.models import (
     DatasetAlias,
     DatasetBucket,
     DatasetVersion,
+    Group,
     Grant,
     Permission,
     Service,
@@ -26,6 +27,7 @@ from core.models import (
     TOSAcceptance,
     TOSDocument,
     User,
+    UserGroup,
 )
 
 
@@ -45,6 +47,8 @@ class TestNativeUser(TestCase):
             picture_url="https://example.org/avatar.png",
         )
         token = APIKey.objects.create(user=user, key="tok-human")
+        group = Group.objects.create(name="researchers")
+        UserGroup.objects.create(user=user, group=group)
 
         resp = self.client.get("/api/dsg/v1/user", **self._auth(token.key))
 
@@ -56,6 +60,7 @@ class TestNativeUser(TestCase):
             "picture_url": "https://example.org/avatar.png",
             "admin": False,
             "service_account": False,
+            "groups": ["researchers"],
         })
 
     def test_user_type_service_account_via_api_key(self):
@@ -67,6 +72,8 @@ class TestNativeUser(TestCase):
             parent=parent,
         )
         token = APIKey.objects.create(user=robot, key="tok-user-sa")
+        group = Group.objects.create(name="robots")
+        UserGroup.objects.create(user=robot, group=group)
 
         resp = self.client.get("/api/dsg/v1/user", **self._auth(token.key))
 
@@ -78,6 +85,7 @@ class TestNativeUser(TestCase):
             "picture_url": "https://example.org/robot.png",
             "admin": False,
             "service_account": True,
+            "groups": ["robots"],
         })
 
     def test_dedicated_service_account_token_shape(self):
@@ -98,6 +106,7 @@ class TestNativeUser(TestCase):
             "picture_url": None,
             "admin": False,
             "service_account": True,
+            "groups": [],
         })
 
     def test_admin_flag(self):
@@ -111,6 +120,42 @@ class TestNativeUser(TestCase):
 
     def test_unauthenticated_returns_401(self):
         resp = self.client.get("/api/dsg/v1/user")
+
+        self.assertEqual(resp.status_code, 401)
+
+
+@pytest.mark.django_db
+class TestNativeGroupMembers(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.user = User.objects.create(email="user@example.org")
+        self.token = APIKey.objects.create(user=self.user, key="tok-native-groups")
+
+    def _auth(self):
+        return {"HTTP_AUTHORIZATION": f"Bearer {self.token.key}"}
+
+    def test_member_emails(self):
+        group = Group.objects.create(name="annotation-team")
+        alice = User.objects.create(email="alice@example.org")
+        bob = User.objects.create(email="bob@example.org")
+        UserGroup.objects.create(user=alice, group=group)
+        UserGroup.objects.create(user=bob, group=group)
+
+        resp = self.client.get(
+            "/api/dsg/v1/groups/annotation-team/members", **self._auth()
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertCountEqual(resp.json(), ["alice@example.org", "bob@example.org"])
+
+    def test_unknown_group_returns_404(self):
+        resp = self.client.get("/api/dsg/v1/groups/missing/members", **self._auth())
+
+        self.assertEqual(resp.status_code, 404)
+
+    def test_unauthenticated_returns_401(self):
+        resp = self.client.get("/api/dsg/v1/groups/annotation-team/members")
 
         self.assertEqual(resp.status_code, 401)
 

@@ -4,6 +4,11 @@ from . import views
 
 urlpatterns = [
     path("user", views.UserView.as_view(), name="native-user"),
+    path(
+        "groups/<str:name>/members",
+        views.GroupMembersView.as_view(),
+        name="native-group-members",
+    ),
     path("authorize", views.AuthorizeView.as_view(), name="native-authorize"),
     path("datasets", views.DatasetsView.as_view(), name="native-datasets"),
     path(

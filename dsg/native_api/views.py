@@ -20,11 +20,13 @@ from core.models import (
     Dataset,
     DatasetAlias,
     DatasetVersion,
+    Group,
     Grant,
     GroupDatasetPermission,
     Service,
     ServiceAccount,
     ServiceAccountGrant,
+    UserGroup,
 )
 
 
@@ -189,6 +191,13 @@ class UserView(APIView):
     def get(self, request):
         principal = request.user
         is_dedicated_service_account = isinstance(principal, ServiceAccount)
+        groups = []
+        if not is_dedicated_service_account:
+            groups = list(
+                UserGroup.objects.filter(user=principal)
+                .select_related("group")
+                .values_list("group__name", flat=True)
+            )
         return Response({
             "id": principal.pk,
             "email": None if is_dedicated_service_account else principal.email,
@@ -200,7 +209,24 @@ class UserView(APIView):
             ),
             "admin": bool(getattr(principal, "admin", False)),
             "service_account": bool(getattr(principal, "is_service_account", False)),
+            "groups": groups,
         })
+
+
+class GroupMembersView(APIView):
+    """GET /api/dsg/v1/groups/<name>/members — member email addresses."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, name):
+        try:
+            group = Group.objects.get(name=name)
+        except Group.DoesNotExist:
+            return Response({"error": "Group not found"}, status=404)
+        emails = list(
+            group.user_groups.select_related("user").values_list("user__email", flat=True)
+        )
+        return Response(emails)
 
 
 class DatasetsView(APIView):
