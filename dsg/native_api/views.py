@@ -181,6 +181,28 @@ class AuthorizeView(APIView):
         )
 
 
+class UserView(APIView):
+    """GET /api/dsg/v1/user — authenticated principal identity."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        principal = request.user
+        is_dedicated_service_account = isinstance(principal, ServiceAccount)
+        return Response({
+            "id": principal.pk,
+            "email": None if is_dedicated_service_account else principal.email,
+            "name": getattr(principal, "name", ""),
+            "picture_url": (
+                None
+                if is_dedicated_service_account
+                else getattr(principal, "picture_url", "")
+            ),
+            "admin": bool(getattr(principal, "admin", False)),
+            "service_account": bool(getattr(principal, "is_service_account", False)),
+        })
+
+
 class DatasetsView(APIView):
     """GET /api/dsg/v1/datasets — list datasets visible to the caller."""
 

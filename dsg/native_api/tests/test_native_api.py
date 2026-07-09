@@ -30,6 +30,92 @@ from core.models import (
 
 
 @pytest.mark.django_db
+class TestNativeUser(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+
+    def _auth(self, key):
+        return {"HTTP_AUTHORIZATION": f"Bearer {key}"}
+
+    def test_human_user_shape(self):
+        user = User.objects.create(
+            email="user@example.org",
+            name="User Example",
+            picture_url="https://example.org/avatar.png",
+        )
+        token = APIKey.objects.create(user=user, key="tok-human")
+
+        resp = self.client.get("/api/dsg/v1/user", **self._auth(token.key))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {
+            "id": user.pk,
+            "email": "user@example.org",
+            "name": "User Example",
+            "picture_url": "https://example.org/avatar.png",
+            "admin": False,
+            "service_account": False,
+        })
+
+    def test_user_type_service_account_via_api_key(self):
+        parent = User.objects.create(email="owner@example.org", name="Owner")
+        robot = User.objects.create(
+            email="robot@example.org",
+            name="Robot",
+            picture_url="https://example.org/robot.png",
+            parent=parent,
+        )
+        token = APIKey.objects.create(user=robot, key="tok-user-sa")
+
+        resp = self.client.get("/api/dsg/v1/user", **self._auth(token.key))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {
+            "id": robot.pk,
+            "email": "robot@example.org",
+            "name": "Robot",
+            "picture_url": "https://example.org/robot.png",
+            "admin": False,
+            "service_account": True,
+        })
+
+    def test_dedicated_service_account_token_shape(self):
+        service_account = ServiceAccount.objects.create(name="pipeline")
+        token = ServiceAccountToken.objects.create(
+            service_account=service_account,
+            key="tok-dedicated-sa",
+            description="native user",
+        )
+
+        resp = self.client.get("/api/dsg/v1/user", **self._auth(token.key))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {
+            "id": service_account.pk,
+            "email": None,
+            "name": "pipeline",
+            "picture_url": None,
+            "admin": False,
+            "service_account": True,
+        })
+
+    def test_admin_flag(self):
+        user = User.objects.create(email="admin@example.org", name="Admin", admin=True)
+        token = APIKey.objects.create(user=user, key="tok-admin-user")
+
+        resp = self.client.get("/api/dsg/v1/user", **self._auth(token.key))
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.json()["admin"])
+
+    def test_unauthenticated_returns_401(self):
+        resp = self.client.get("/api/dsg/v1/user")
+
+        self.assertEqual(resp.status_code, 401)
+
+
+@pytest.mark.django_db
 class TestNativeAuthorize(TestCase):
     def setUp(self):
         cache.clear()

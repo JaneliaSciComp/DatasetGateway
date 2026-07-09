@@ -15,6 +15,7 @@ from django.forms.models import inlineformset_factory
 from django.test import RequestFactory, TestCase
 
 from core.admin import (
+    DatasetAliasAdmin,
     DatasetBucketAdmin,
     DatasetModelAdmin,
     DatasetVersionAdmin,
@@ -29,6 +30,7 @@ from core.models import (
     AuditLog,
     BucketIAMBinding,
     Dataset,
+    DatasetAlias,
     DatasetBucket,
     DatasetVersion,
     Grant,
@@ -62,6 +64,81 @@ class _AdminTestBase(TestCase):
 
     def _own(self, bucket_name, email):
         return BucketIAMBinding.objects.create(bucket_name=bucket_name, email=email)
+
+
+@pytest.mark.django_db
+class TestDatasetAliasAdmin(_AdminTestBase):
+    def setUp(self):
+        super().setUp()
+        self.ma = DatasetAliasAdmin(DatasetAlias, django_admin.site)
+        self.service = Service.objects.create(name="neuprint")
+        self.dataset = Dataset.objects.create(name="canonical")
+        self.other_dataset = Dataset.objects.create(name="other")
+        self.version = DatasetVersion.objects.create(dataset=self.dataset, version="v1")
+        self.other_version = DatasetVersion.objects.create(
+            dataset=self.other_dataset, version="v1"
+        )
+
+    def _form(self, data):
+        FormClass = self.ma.get_form(self.request)
+        return FormClass(data=data)
+
+    def test_admin_configuration(self):
+        self.assertEqual(
+            self.ma.list_display,
+            (
+                "id", "service", "client_name", "client_version", "dataset",
+                "dataset_version",
+            ),
+        )
+        self.assertEqual(self.ma.list_filter, ("service",))
+        self.assertEqual(
+            self.ma.autocomplete_fields,
+            ("service", "dataset", "dataset_version"),
+        )
+        self.assertEqual(
+            self.ma.list_select_related,
+            ("service", "dataset", "dataset_version"),
+        )
+
+    def test_name_level_alias_creation_form_is_valid(self):
+        form = self._form({
+            "service": self.service.pk,
+            "client_name": "client-ds",
+            "client_version": "",
+            "dataset": self.dataset.pk,
+            "dataset_version": "",
+        })
+
+        self.assertTrue(form.is_valid(), form.errors)
+        alias = form.save()
+        self.assertEqual(alias.client_name, "client-ds")
+        self.assertIsNone(alias.client_version)
+        self.assertIsNone(alias.dataset_version)
+
+    def test_version_mismatch_surfaces_as_form_error(self):
+        form = self._form({
+            "service": self.service.pk,
+            "client_name": "client-ds",
+            "client_version": "v1",
+            "dataset": self.dataset.pk,
+            "dataset_version": self.other_version.pk,
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("dataset_version", form.errors)
+
+    def test_null_invariant_violation_surfaces_as_form_error(self):
+        form = self._form({
+            "service": self.service.pk,
+            "client_name": "client-ds",
+            "client_version": "v1",
+            "dataset": self.dataset.pk,
+            "dataset_version": "",
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("__all__", form.errors)
 
 
 @pytest.mark.django_db

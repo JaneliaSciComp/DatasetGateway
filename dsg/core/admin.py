@@ -19,6 +19,7 @@ from .models import (
     AuditLog,
     BucketIAMBinding,
     Dataset,
+    DatasetAlias,
     DatasetBucket,
     DatasetVersion,
     Grant,
@@ -229,6 +230,19 @@ class DatasetVersionAdmin(admin.ModelAdmin):
         super().save_related(request, form, formsets, change)
         if "buckets" in form.changed_data:
             sync_dataset_iam(form.instance.dataset)
+
+
+@admin.register(DatasetAlias)
+class DatasetAliasAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "service", "client_name", "client_version", "dataset", "dataset_version",
+    )
+    list_filter = ("service",)
+    search_fields = (
+        "client_name", "client_version", "dataset__name", "dataset_version__version",
+    )
+    autocomplete_fields = ("service", "dataset", "dataset_version")
+    list_select_related = ("service", "dataset", "dataset_version")
 
 
 @admin.register(GroupDatasetPermission)
