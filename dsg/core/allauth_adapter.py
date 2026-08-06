@@ -5,6 +5,7 @@ Bridges allauth's login/signup flow with DatasetGateway's APIKey token system.
 
 from allauth.account.adapter import DefaultAccountAdapter
 from allauth.socialaccount.adapter import DefaultSocialAccountAdapter
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from .models import APIKey
 
@@ -30,8 +31,17 @@ class AccountAdapter(DefaultAccountAdapter):
         super().logout(request)
 
     def get_login_redirect_url(self, request):
-        """Redirect to the URL stored before OAuth, or the default."""
-        return request.session.pop("oauth_next", "/web/datasets")
+        """Redirect to the URL stored before OAuth, or the default.
+
+        Re-validated at the sink, not only where it is stashed: a session
+        predating that guard (or written by any other code path) could still
+        carry an absolute URL, and this is the point where it becomes a
+        redirect.
+        """
+        next_url = request.session.pop("oauth_next", "")
+        if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts=None):
+            return next_url
+        return "/web/datasets"
 
     def get_logout_redirect_url(self, request):
         """After logout, go back to the datasets page."""

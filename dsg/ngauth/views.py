@@ -7,19 +7,29 @@ plus TOS gating and GCS token issuance.
 import json
 import re
 import time
+from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
 from django.contrib.auth import logout as auth_logout
-from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
+from django.http import (
+    HttpResponse,
+    HttpResponseBadRequest,
+    HttpResponseRedirect,
+    JsonResponse,
+)
 from django.shortcuts import render
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
+from django.utils.http import url_has_allowed_host_and_scheme
 
 from core.audit import log_audit
 from core.models import APIKey, TOSAcceptance, TOSDocument, User
 
 from . import gcs, tokens
+
+# One DNS label: alphanumeric, internal hyphens, 63 chars max.
+_HOSTNAME_LABEL_RE = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?")
 
 
 def _get_session_key():
@@ -46,12 +56,64 @@ def _get_user_from_cookie(request):
     return api_key.user.email
 
 
+def _is_origin_syntax_valid(origin):
+    """Check that a client-supplied origin is a serialized web origin.
+
+    A value that reaches ``postMessage`` as targetOrigin must be exactly
+    ``scheme://host[:port]`` — no credentials, path, query or fragment, and a
+    port the URL parser accepts. A regex alone lets through things like
+    ``:99999`` that make ``postMessage`` throw ``SyntaxError``, which would
+    hang the opener instead of failing cleanly.
+    """
+    if not origin or not isinstance(origin, str):
+        return False
+    if origin != origin.strip() or any(c.isspace() for c in origin):
+        return False
+    try:
+        parsed = urlparse(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.path or parsed.params or parsed.query or parsed.fragment:
+        return False
+    if parsed.username is not None or parsed.password is not None:
+        return False
+    try:
+        port = parsed.port
+    except ValueError:
+        return False
+    if port is not None and not 1 <= port <= 65535:
+        return False
+    hostname = parsed.hostname
+    if not hostname or hostname.endswith("."):
+        return False
+    labels = hostname.split(".")
+    return all(_HOSTNAME_LABEL_RE.fullmatch(label) for label in labels)
+
+
 def _is_origin_allowed(origin):
-    """Check if origin matches allowed pattern."""
+    """Check if origin matches allowed pattern.
+
+    Uses ``fullmatch``: this pattern is the only thing standing between an
+    arbitrary website and a user's GCS buckets, and a natural-looking deployment
+    value such as ``https://clio-dev\\.janelia\\.org`` would otherwise also
+    admit ``https://clio-dev.janelia.org.attacker.example``.
+    """
     if not origin:
         return False
     pattern = getattr(settings, "NGAUTH_ALLOWED_ORIGINS", r"^https?://.*\.neuroglancer\.org$")
-    return re.match(pattern, origin) is not None
+    return re.fullmatch(pattern, origin) is not None
+
+
+def _mint_temporary_user_token(user_email):
+    """Mint the short-lived HMAC token Neuroglancer replays to /gcs_token."""
+    key = _get_session_key()
+    user_token = tokens.UserToken(
+        user_id=user_email,
+        expires=int(time.time()) + tokens.MAX_COOKIE_LIFETIME_SECONDS,
+    )
+    return tokens.encode_user_token(key, tokens.make_temporary_token(user_token))
 
 
 def _cors_headers(request):
@@ -87,22 +149,71 @@ class AuthLoginView(View):
     """GET /auth/login — Initiate OAuth via allauth."""
 
     def get(self, request):
-        # Store post-login redirect target (default: /login for Neuroglancer popup flow)
+        # Store post-login redirect target (default: /login for Neuroglancer popup flow).
+        # Only same-site relative targets are accepted — `next` reaches us from
+        # query strings we do not control, and the allauth adapter redirects to
+        # whatever is stashed here, so an absolute URL would be an open redirect.
         next_url = request.GET.get("next", "")
-        if next_url:
+        if next_url and url_has_allowed_host_and_scheme(next_url, allowed_hosts=None):
             request.session["oauth_next"] = next_url
+        else:
+            # Never let a rejected (or absent) `next` fall through to a value
+            # left in the session by an earlier request.
+            request.session.pop("oauth_next", None)
 
         return HttpResponseRedirect("/accounts/google/login/")
 
 
 class LoginStatusView(View):
-    """GET /login — Login status / ngauth popup flow."""
+    """GET /login — Login status page and the ngauth popup handshake.
+
+    Neuroglancer's ngauth client opens this in a popup as
+    ``/login?origin=<client origin>`` and waits for a ``postMessage`` from this
+    window carrying either ``{"token": …}`` or the literal string
+    ``"badorigin"``; see ``waitForLogin`` in Neuroglancer's
+    ``datasource/ngauth/credentials_provider.ts``. Without an ``origin``
+    parameter this is just a human-readable status page.
+    """
 
     def get(self, request):
+        origin = request.GET.get("origin", "")
+
+        if origin:
+            # Settle the origin before touching the cookie or the database, so a
+            # hostile origin cannot time the response to infer login state.
+            if not _is_origin_syntax_valid(origin):
+                return HttpResponseBadRequest("Invalid origin")
+
+            # Signal a disallowed origin rather than hanging the opener. The
+            # payload is a constant, so this discloses nothing to that origin.
+            if not _is_origin_allowed(origin):
+                return render(request, "ngauth/login_popup.html", {
+                    "origin": origin,
+                    "payload": "badorigin",
+                })
+
+            user_email = _get_user_from_cookie(request)
+            if user_email:
+                return render(request, "ngauth/login_popup.html", {
+                    "origin": origin,
+                    "payload": {"token": _mint_temporary_user_token(user_email)},
+                })
+
+            # Not logged in: come back to this same handshake after OAuth so the
+            # popup can deliver the token without a second round trip.
+            return render(request, "ngauth/login_status.html", {
+                "user_email": None,
+                "logged_in": False,
+                "login_url": "/auth/login?" + urlencode({
+                    "next": "/login?" + urlencode({"origin": origin}),
+                }),
+            })
+
         user_email = _get_user_from_cookie(request)
         return render(request, "ngauth/login_status.html", {
             "user_email": user_email,
             "logged_in": user_email is not None,
+            "login_url": "/auth/login?" + urlencode({"next": "/login"}),
         })
 
 
@@ -195,7 +306,7 @@ class TokenView(View):
         origin = request.META.get("HTTP_ORIGIN")
 
         if origin:
-            if not re.match(r"^https?://[a-zA-Z0-9\-.]+(:\d+)?$", origin):
+            if not _is_origin_syntax_valid(origin):
                 return JsonResponse({"error": "Invalid Origin"}, status=400, headers=headers)
 
             if _is_origin_allowed(origin):
@@ -212,13 +323,7 @@ class TokenView(View):
             return JsonResponse({"error": "Not logged in"}, status=401, headers=headers)
 
         # Create temporary cross-origin HMAC token for Neuroglancer
-        key = _get_session_key()
-        user_token = tokens.UserToken(
-            user_id=user_email,
-            expires=int(time.time()) + tokens.MAX_COOKIE_LIFETIME_SECONDS,
-        )
-        temp_token = tokens.make_temporary_token(user_token)
-        encoded = tokens.encode_user_token(key, temp_token)
+        encoded = _mint_temporary_user_token(user_email)
 
         return HttpResponse(encoded, content_type="text/plain", headers=headers)
 
@@ -242,8 +347,18 @@ class GCSTokenView(View):
     def post(self, request):
         headers = {}
         origin = request.META.get("HTTP_ORIGIN")
+
+        # Neuroglancer's request qualifies as a CORS-simple POST, so the browser
+        # sends it without a preflight and the OPTIONS allowlist check never
+        # runs. Gate the actual POST the same way /token does, or any origin
+        # holding a temporary token could read the downscoped GCS credential.
         if origin:
+            if not _is_origin_syntax_valid(origin):
+                return JsonResponse({"error": "Invalid Origin"}, status=400)
+            if not _is_origin_allowed(origin):
+                return JsonResponse({"error": "Origin not allowed"}, status=403)
             headers["Access-Control-Allow-Origin"] = origin
+            headers["Access-Control-Allow-Credentials"] = "true"
             headers["Vary"] = "origin"
 
         try:
