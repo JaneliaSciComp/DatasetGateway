@@ -92,8 +92,6 @@ class TestUserHasEffectiveAccess(TestCase):
         self.assertFalse(_user_has_effective_access(self.user, self.dataset))
 
 
-
-
 @pytest.mark.django_db
 class TestSyncUserDatasetIAM(TestCase):
     def setUp(self):
