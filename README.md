@@ -218,6 +218,7 @@ prerequisites are the same either way:
 | `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret (overrides `client_credentials.json`). |
 | `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative OAuth client credentials path. Useful when mounting credentials into Docker. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins. |
+| `TOS_RETURN_ALLOWED_ORIGINS` | *(empty)* | Comma-separated exact origins allowed as TOS service-check return targets. |
 | `AUTH_COOKIE_DOMAIN` | *(empty)* | Cookie domain for cross-subdomain auth (e.g., `.example.org`). |
 | `PORT` | `8080` | Port for gunicorn (Docker). |
 | `GUNICORN_WORKERS` | `2` | Number of gunicorn worker processes. |

@@ -223,6 +223,11 @@ SOCIALACCOUNT_PROVIDERS = {
 NGAUTH_ALLOWED_ORIGINS = os.environ.get(
     "NGAUTH_ALLOWED_ORIGINS", r"^https?://.*\.neuroglancer\.org$"
 )
+TOS_RETURN_ALLOWED_ORIGINS = tuple(
+    origin.strip()
+    for origin in os.environ.get("TOS_RETURN_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+)
 
 # Unified auth token cookie (replaces ngauth_login and middle_auth_token)
 AUTH_COOKIE_NAME = "dsg_token"

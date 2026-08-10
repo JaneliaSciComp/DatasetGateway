@@ -240,7 +240,9 @@ def pending_tos(user, dataset, service_name=None, anchor=None):
 
 def build_tos_url(request, service_name, dataset, anchor, return_url, pending_documents=None):
     """Build an opaque absolute service-check URL for a pending TOS decision."""
-    params = {"dataset": dataset.name, "next": return_url or "/"}
+    params = {"dataset": dataset.name}
+    if return_url:
+        params["next"] = return_url
     if service_name:
         params["service"] = service_name
 
@@ -263,6 +265,19 @@ def build_tos_url(request, service_name, dataset, anchor, return_url, pending_do
 
     path = reverse("web-tos-service-check")
     return request.build_absolute_uri(f"{path}?{urlencode(params)}")
+
+
+def user_is_authorized_for_dataset(user, dataset):
+    """Return whether a web user has direct or group-derived dataset access."""
+    if user.admin:
+        return True
+    if Grant.objects.filter(user=user, dataset=dataset).exists():
+        return True
+    group_ids = UserGroup.objects.filter(user=user).values_list("group_id", flat=True)
+    return GroupDatasetPermission.objects.filter(
+        group_id__in=group_ids,
+        dataset=dataset,
+    ).exists()
 
 
 def _coerce_service(service):

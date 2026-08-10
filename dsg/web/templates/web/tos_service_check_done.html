@@ -1,0 +1,12 @@
+{% extends "web/base.html" %}
+{% block title %}{% if accepted %}Terms Accepted{% else %}No Terms Pending{% endif %} — DatasetGateway{% endblock %}
+{% block content %}
+{% if accepted %}
+    <h1>Terms Accepted</h1>
+    <p>Your acceptance has been recorded.</p>
+    <p>Return to your application and retry the request.</p>
+{% else %}
+    <h1>No Terms Pending</h1>
+    <p>There are no active terms waiting for your acceptance.</p>
+{% endif %}
+{% endblock %}

@@ -7,7 +7,7 @@ plus TOS gating and GCS token issuance.
 import json
 import re
 import time
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import logout as auth_logout
@@ -25,11 +25,9 @@ from django.utils.http import url_has_allowed_host_and_scheme
 
 from core.audit import log_audit
 from core.models import APIKey, TOSAcceptance, TOSDocument, User
+from core.origins import is_origin_syntax_valid as _is_origin_syntax_valid
 
 from . import gcs, tokens
-
-# One DNS label: alphanumeric, internal hyphens, 63 chars max.
-_HOSTNAME_LABEL_RE = re.compile(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?")
 
 
 def _get_session_key():
@@ -54,42 +52,6 @@ def _get_user_from_cookie(request):
     if not api_key.user.is_enabled:
         return None
     return api_key.user.email
-
-
-def _is_origin_syntax_valid(origin):
-    """Check that a client-supplied origin is a serialized web origin.
-
-    A value that reaches ``postMessage`` as targetOrigin must be exactly
-    ``scheme://host[:port]`` — no credentials, path, query or fragment, and a
-    port the URL parser accepts. A regex alone lets through things like
-    ``:99999`` that make ``postMessage`` throw ``SyntaxError``, which would
-    hang the opener instead of failing cleanly.
-    """
-    if not origin or not isinstance(origin, str):
-        return False
-    if origin != origin.strip() or any(c.isspace() for c in origin):
-        return False
-    try:
-        parsed = urlparse(origin)
-    except ValueError:
-        return False
-    if parsed.scheme not in ("http", "https"):
-        return False
-    if parsed.path or parsed.params or parsed.query or parsed.fragment:
-        return False
-    if parsed.username is not None or parsed.password is not None:
-        return False
-    try:
-        port = parsed.port
-    except ValueError:
-        return False
-    if port is not None and not 1 <= port <= 65535:
-        return False
-    hostname = parsed.hostname
-    if not hostname or hostname.endswith("."):
-        return False
-    labels = hostname.split(".")
-    return all(_HOSTNAME_LABEL_RE.fullmatch(label) for label in labels)
 
 
 def _is_origin_allowed(origin):

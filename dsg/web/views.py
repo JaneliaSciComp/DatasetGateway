@@ -1,6 +1,8 @@
 """Web UI views — dataset browsing, TOS acceptance, grant management."""
 
 import logging
+import re
+from urllib.parse import urlencode, urlsplit
 
 from django.conf import settings
 from django.contrib import messages
@@ -8,12 +10,17 @@ from django.contrib.auth import logout as auth_logout
 from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
 
 logger = logging.getLogger(__name__)
 
 from core.audit import log_audit
-from core.authz import pending_tos, resolve_dataset_reference
+from core.authz import (
+    pending_tos,
+    resolve_dataset_reference,
+    user_is_authorized_for_dataset,
+)
 from core.models import (
     APIKey,
     Dataset,
@@ -32,6 +39,92 @@ from core.models import (
     User,
     UserGroup,
 )
+from core.origins import is_origin_syntax_valid
+
+
+def _tos_return_origins():
+    """Return the exact TOS return-origin allowlist in normalized form."""
+    configured = getattr(settings, "TOS_RETURN_ALLOWED_ORIGINS", ())
+    if isinstance(configured, str):
+        configured = configured.split(",")
+    return {origin.strip() for origin in configured if origin.strip()}
+
+
+def _candidate_origin(next_url):
+    """Extract the serialized-origin candidate without retaining path data."""
+    try:
+        parsed = urlsplit(next_url)
+    except ValueError:
+        return None, "<invalid>"
+
+    if parsed.scheme:
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        log_host = parsed.netloc.rsplit("@", 1)[-1]
+        return origin, f"{parsed.scheme}://{log_host}"
+    if parsed.netloc:
+        return f"://{parsed.netloc}", f"//{parsed.netloc.rsplit('@', 1)[-1]}"
+    return None, "<relative>"
+
+
+def _validate_tos_next(next_url):
+    """Validate a service-check return target and track its explicitness."""
+    if not next_url:
+        return None, False
+    if not isinstance(next_url, str):
+        logger.warning("Rejected TOS return origin <invalid>")
+        return None, False
+
+    if next_url == next_url.strip() and url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts=None
+    ):
+        return next_url, True
+
+    origin, log_origin = _candidate_origin(next_url)
+    ngauth_pattern = getattr(
+        settings,
+        "NGAUTH_ALLOWED_ORIGINS",
+        r"^https?://.*\.neuroglancer\.org$",
+    )
+    if (
+        next_url == next_url.strip()
+        and origin
+        and is_origin_syntax_valid(origin)
+        and (
+            origin in _tos_return_origins()
+            or re.fullmatch(ngauth_pattern, origin) is not None
+        )
+    ):
+        return next_url, True
+
+    logger.warning("Rejected TOS return origin %s", log_origin)
+    return None, False
+
+
+def _governing_datasets(tos_doc):
+    """Return every dataset linked to a TOS document, without duplicates."""
+    datasets = []
+    seen = set()
+
+    def add(dataset):
+        if dataset is not None and dataset.pk not in seen:
+            seen.add(dataset.pk)
+            datasets.append(dataset)
+
+    add(tos_doc.dataset)
+    if tos_doc.dataset_version_id:
+        add(tos_doc.dataset_version.dataset)
+    for dataset in tos_doc.datasets.all():
+        add(dataset)
+    return datasets
+
+
+def _tos_document_is_authorized(user, tos_doc):
+    """Fail closed if any governing closed dataset is not covered."""
+    return all(
+        dataset.access_mode != Dataset.ACCESS_CLOSED
+        or user_is_authorized_for_dataset(user, dataset)
+        for dataset in _governing_datasets(tos_doc)
+    )
 
 
 def _is_sc_or_admin(user):
@@ -750,14 +843,6 @@ class TOSLandingView(View):
         except TOSDocument.DoesNotExist:
             raise Http404
 
-    def _user_is_authorized(self, user, dataset):
-        """Check if user has Grant or is global admin."""
-        if user.admin:
-            return True
-        if Grant.objects.filter(user=user, dataset=dataset).exists():
-            return True
-        return False
-
     def get(self, request, invite_token):
         user = _get_web_user(request)
         tos_doc = self._get_tos_doc(invite_token)
@@ -779,7 +864,7 @@ class TOSLandingView(View):
             })
 
         if dataset and dataset.access_mode == Dataset.ACCESS_CLOSED:
-            if not self._user_is_authorized(user, dataset):
+            if not user_is_authorized_for_dataset(user, dataset):
                 return render(request, "web/tos_landing_denied.html", {
                     "user": user,
                     "dataset": dataset,
@@ -802,7 +887,7 @@ class TOSLandingView(View):
 
         # Re-check authorization for closed datasets
         if dataset and dataset.access_mode == Dataset.ACCESS_CLOSED:
-            if not self._user_is_authorized(user, dataset):
+            if not user_is_authorized_for_dataset(user, dataset):
                 return render(request, "web/tos_landing_denied.html", {
                     "user": user,
                     "dataset": dataset,
@@ -856,98 +941,158 @@ class TOSServiceCheckView(View):
     users redirected by a service).
     """
 
-    def _load_context(self, request):
-        """Load pending TOS IDs and redirect URL from session, query, or POST params."""
-        tos_ids = request.session.get("tos_check_ids")
-        next_url = request.session.get("tos_check_next", "/")
+    _SESSION_KEYS = (
+        "tos_check_ids",
+        "tos_check_next",
+        "tos_check_has_explicit_next",
+    )
 
-        # POST form may carry the redirect URL from the hidden field
-        if request.method == "POST" and request.POST.get("next"):
-            next_url = request.POST["next"]
+    def _clear_context(self, request):
+        for key in self._SESSION_KEYS:
+            request.session.pop(key, None)
 
-        # Allow query-param override for already-authenticated users
-        if not tos_ids:
-            service = request.GET.get("service")
+    def _store_context(self, request, tos_ids, next_url, has_explicit_next):
+        request.session["tos_check_ids"] = list(tos_ids)
+        request.session["tos_check_has_explicit_next"] = has_explicit_next
+        if has_explicit_next:
+            request.session["tos_check_next"] = next_url
+        else:
+            request.session.pop("tos_check_next", None)
+
+    def _load_context(self, request, user):
+        """Load and validate TOS IDs plus an explicit return target, if any."""
+        tos_ids = request.session.get("tos_check_ids") or []
+
+        session_explicit = request.session.get("tos_check_has_explicit_next")
+        if session_explicit is None:
+            # OAuth callbacks from before the explicitness key existed still
+            # convey intent by the presence of tos_check_next.
+            session_explicit = "tos_check_next" in request.session
+        raw_next = (
+            request.session.get("tos_check_next") if session_explicit else None
+        )
+
+        if request.method == "POST":
+            if "has_explicit_next" in request.POST:
+                raw_next = (
+                    request.POST.get("next")
+                    if request.POST.get("has_explicit_next") == "1"
+                    else None
+                )
+            elif "next" in request.POST:
+                raw_next = request.POST.get("next")
+
+        if "next" in request.GET:
+            raw_next = request.GET.get("next")
+
+        # A named dataset query is authoritative over every stale session value,
+        # including the continuation target.
+        if "dataset" in request.GET:
+            service = request.GET.get("service") or None
             dataset_name = request.GET.get("dataset")
-            version = request.GET.get("version")
-            next_url = request.GET.get("next", next_url)
+            version = request.GET.get("version") or None
+            raw_next = request.GET.get("next") if "next" in request.GET else None
+            tos_ids = []
 
-            if dataset_name:
-                user = _get_web_user(request)
-                if user:
-                    resolved = resolve_dataset_reference(
-                        service, dataset_name, client_version=version
-                    )
-                    if not resolved.found:
-                        return [], next_url
-
+            resolved = resolve_dataset_reference(
+                service, dataset_name, client_version=version
+            )
+            if resolved.found:
+                dataset = resolved.target.dataset
+                if (
+                    dataset.access_mode != Dataset.ACCESS_CLOSED
+                    or user_is_authorized_for_dataset(user, dataset)
+                ):
                     tos_ids = [
-                        doc.pk for doc in pending_tos(
+                        doc.pk
+                        for doc in pending_tos(
                             user,
-                            resolved.target.dataset,
+                            dataset,
                             service_name=service,
                             anchor=resolved.target,
                         )
                     ]
 
-        return tos_ids or [], next_url
+        next_url, has_explicit_next = _validate_tos_next(raw_next)
+        return list(tos_ids), next_url, has_explicit_next
+
+    def _pending_documents(self, user, tos_ids):
+        """Revalidate activity, acceptance, and closed-dataset coverage."""
+        unique_ids = list(dict.fromkeys(tos_ids))
+        docs_by_id = {
+            doc.pk: doc
+            for doc in TOSDocument.objects.filter(pk__in=unique_ids)
+            .select_related("dataset", "dataset_version__dataset", "service")
+            .prefetch_related("datasets")
+        }
+        accepted_ids = set(
+            TOSAcceptance.objects.filter(
+                user=user, tos_document_id__in=unique_ids
+            ).values_list("tos_document_id", flat=True)
+        )
+        return [
+            docs_by_id[tos_id]
+            for tos_id in unique_ids
+            if tos_id in docs_by_id
+            and docs_by_id[tos_id].is_active
+            and tos_id not in accepted_ids
+            and _tos_document_is_authorized(user, docs_by_id[tos_id])
+        ]
+
+    def _finish_without_pending(self, request, user, next_url, has_explicit_next):
+        self._clear_context(request)
+        if has_explicit_next:
+            return redirect(next_url)
+        return render(request, "web/tos_service_check_done.html", {
+            "user": user,
+            "accepted": False,
+        })
 
     def get(self, request):
         user = _get_web_user(request)
         if not user:
-            return redirect("/auth/login?next=/web/tos/service-check/")
+            return redirect(
+                "/auth/login?" + urlencode({"next": request.get_full_path()})
+            )
 
-        tos_ids, next_url = self._load_context(request)
-
-        if not tos_ids:
-            return redirect(next_url)
-
-        tos_docs = TOSDocument.objects.filter(pk__in=tos_ids).select_related("dataset", "service")
-
-        # Check which are already accepted
-        accepted_ids = set(
-            TOSAcceptance.objects.filter(
-                user=user, tos_document_id__in=tos_ids
-            ).values_list("tos_document_id", flat=True)
-        )
-        pending_docs = [d for d in tos_docs if d.pk not in accepted_ids]
+        tos_ids, next_url, has_explicit_next = self._load_context(request, user)
+        pending_docs = self._pending_documents(user, tos_ids)
 
         if not pending_docs:
-            request.session.pop("tos_check_ids", None)
-            request.session.pop("tos_check_next", None)
-            return redirect(next_url)
+            return self._finish_without_pending(
+                request, user, next_url, has_explicit_next
+            )
 
-        # Persist to session so the POST handler can find them
-        # (query-param mode doesn't set session — only the OAuth callback does)
-        request.session["tos_check_ids"] = [d.pk for d in pending_docs]
-        request.session["tos_check_next"] = next_url
+        self._store_context(
+            request,
+            [doc.pk for doc in pending_docs],
+            next_url,
+            has_explicit_next,
+        )
 
         return render(request, "web/tos_service_check.html", {
             "user": user,
             "tos_docs": pending_docs,
             "next_url": next_url,
+            "has_explicit_next": has_explicit_next,
         })
 
     def post(self, request):
         user = _get_web_user(request)
         if not user:
-            return redirect("/auth/login")
+            return redirect(
+                "/auth/login?" + urlencode({"next": request.get_full_path()})
+            )
 
-        tos_ids, next_url = self._load_context(request)
+        tos_ids, next_url, has_explicit_next = self._load_context(request, user)
+        pending_docs = self._pending_documents(user, tos_ids)
+        accepted_count = 0
 
-        for tos_id in tos_ids:
-            try:
-                tos_doc = TOSDocument.objects.select_related(
-                    "dataset", "dataset_version__dataset", "service"
-                ).get(pk=tos_id)
-            except TOSDocument.DoesNotExist:
-                continue
-
-            dataset = tos_doc.dataset
-            if dataset is None and tos_doc.dataset_version_id:
-                dataset = tos_doc.dataset_version.dataset
-
-            if dataset and dataset.access_mode == Dataset.ACCESS_PUBLIC:
+        for tos_doc in pending_docs:
+            governing_datasets = _governing_datasets(tos_doc)
+            for dataset in governing_datasets:
+                if dataset.access_mode != Dataset.ACCESS_PUBLIC:
+                    continue
                 view_perm, _ = Permission.objects.get_or_create(name="view")
                 grant, grant_created = Grant.objects.get_or_create(
                     user=user,
@@ -970,21 +1115,27 @@ class TOSServiceCheckView(View):
                 defaults={"ip_address": request.META.get("REMOTE_ADDR")},
             )
             if created:
+                accepted_count += 1
+                primary_dataset = governing_datasets[0] if governing_datasets else None
                 log_audit(user, "tos_accepted", "TOSAcceptance", acceptance.pk, after_state={
                     "user": user.email,
                     "tos_document": tos_doc.name,
-                    "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
+                    "dataset": primary_dataset.name if primary_dataset else None,
                     "service": tos_doc.service.name if tos_doc.service_id else None,
                 })
-            if dataset:
+            for dataset in governing_datasets:
                 from core.iam import sync_user_dataset_iam
                 sync_user_dataset_iam(user, dataset)
 
-        # Clean up session
-        request.session.pop("tos_check_ids", None)
-        request.session.pop("tos_check_next", None)
+        self._clear_context(request)
 
-        return redirect(next_url)
+        if has_explicit_next:
+            return redirect(next_url)
+        return render(request, "web/tos_service_check_done.html", {
+            "user": user,
+            "accepted": accepted_count > 0,
+            "accepted_count": accepted_count,
+        })
 
 
 class GroupDashboardView(View):

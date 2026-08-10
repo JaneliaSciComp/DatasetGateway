@@ -246,6 +246,12 @@ If a dataset requires TOS acceptance:
 2. Click the TOS link to view the terms
 3. Click "Accept" to record your acceptance
 
+Integrated services may instead send you to `/web/tos/service-check/` with
+all currently pending terms. After acceptance, DatasetGateway returns you to
+the service only when it supplied an approved return URL. If no return URL was
+supplied, or it was not approved by the deployment, the confirmation page asks
+you to return to the application and retry the request.
+
 Until you accept, your permissions for that dataset will not appear in
 API responses (the `/api/v1/user/cache` endpoint filters them out).
 

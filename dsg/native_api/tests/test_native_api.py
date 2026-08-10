@@ -1,6 +1,6 @@
 """Tests for the DSG-native /api/dsg/v1 surface."""
 
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from unittest.mock import patch
 
 import pytest
@@ -279,6 +279,9 @@ class TestNativeAuthorize(TestCase):
         self.assertEqual(no_grant["decision"], "deny")
         self.assertNotIn("anchors", no_grant)
 
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)
+    )
     def test_public_self_service_tos_round_trip_and_public_version_metadata_only(self):
         public = Dataset.objects.create(name="public-ds", access_mode=Dataset.ACCESS_PUBLIC)
         tos = TOSDocument.objects.create(name="Public TOS", text="Terms.", dataset=public)
@@ -319,6 +322,9 @@ class TestNativeAuthorize(TestCase):
         ]).json()["entries"][0]
         self.assertEqual(closed_decision["decision"], "deny")
 
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)
+    )
     def test_version_tos_round_trip_provisions_anchor_bucket(self):
         bucket = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-v1")
         self.v1.buckets.add(bucket)
@@ -360,6 +366,44 @@ class TestNativeAuthorize(TestCase):
             {"name": "canonical", "version": "v1"}
         ]).json()["entries"][0]
         self.assertEqual(second["decision"], "allow")
+
+    def test_omitted_return_url_has_no_next_and_ends_at_confirmation(self):
+        public = Dataset.objects.create(
+            name="public-no-return",
+            access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        tos = TOSDocument.objects.create(
+            name="No Return TOS",
+            text="Terms.",
+            dataset=public,
+        )
+        public.tos = tos
+        public.save()
+
+        response = self.client.post(
+            "/api/dsg/v1/authorize",
+            {"service": "linear", "entries": [{"name": public.name}]},
+            format="json",
+            **self._auth(),
+        )
+        decision = response.json()["entries"][0]
+        self.assertEqual(decision["decision"], "tos_required")
+        self.assertNotIn("next", parse_qs(urlsplit(decision["tos_url"]).query))
+
+        self.client.cookies[settings.AUTH_COOKIE_NAME] = self.api_key.key
+        split_url = urlsplit(decision["tos_url"])
+        get_resp = self.client.get(split_url.path + "?" + split_url.query)
+        self.assertContains(get_resp, "No Return TOS")
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            post_resp = self.client.post(
+                "/web/tos/service-check/",
+                {"has_explicit_next": "0"},
+            )
+
+        self.assertEqual(post_resp.status_code, 200)
+        self.assertContains(post_resp, "Terms Accepted")
+        self.assertContains(post_resp, "Return to your application and retry")
 
     def test_service_account_uses_sa_grants_and_skips_tos(self):
         tos = TOSDocument.objects.create(name="Dataset TOS", text="Terms.", dataset=self.dataset)

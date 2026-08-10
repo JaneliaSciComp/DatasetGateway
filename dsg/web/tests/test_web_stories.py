@@ -3,7 +3,7 @@
 import pytest
 from django.conf import settings
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from core.models import (
     APIKey,
@@ -831,6 +831,24 @@ class TestTOSLandingClosed(_WebTestBase):
             TOSAcceptance.objects.filter(user=self.regular_user, tos_document=self.tos).exists()
         )
 
+    def test_group_derived_permission_can_view_and_accept(self):
+        GroupDatasetPermission.objects.create(
+            group=self.group_b,
+            dataset=self.dataset,
+            permission=self.view_perm,
+        )
+        self._login(self.group_admin_b_key)
+
+        resp = self.client.get("/web/tos/closed-tok-123/")
+        self.assertContains(resp, "Closed TOS")
+        resp = self.client.post("/web/tos/closed-tok-123/")
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertTrue(TOSAcceptance.objects.filter(
+            user=self.group_admin_b,
+            tos_document=self.tos,
+        ).exists())
+
     def test_admin_grant_user_can_accept(self):
         """User with admin grant can accept TOS on closed dataset."""
         self._login(self.sc_key)
@@ -1380,10 +1398,55 @@ class TestTOSServiceCheck(_WebTestBase):
             permission=self.view_perm,
         )
 
+    def _set_tos_session(self, tos_ids, next_url=None):
+        session = self.client.session
+        session["tos_check_ids"] = list(tos_ids)
+        session.pop("tos_check_has_explicit_next", None)
+        if next_url is None:
+            session.pop("tos_check_next", None)
+        else:
+            session["tos_check_next"] = next_url
+        session.save()
+
+    def _assert_logged_out_round_trip(self, method):
+        from urllib.parse import urlencode
+
+        from django.test import RequestFactory
+
+        from core.allauth_adapter import AccountAdapter
+
+        full_path = "/web/tos/service-check/?" + urlencode({
+            "service": "celltyping",
+            "dataset": self.dataset.name,
+            "next": "/ct/?tab=graph",
+        })
+        expected_login = "/auth/login?" + urlencode({"next": full_path})
+
+        resp = getattr(self.client, method)(full_path)
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, expected_login)
+
+        resp = self.client.get(resp.url)
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(self.client.session["oauth_next"], full_path)
+
+        callback = RequestFactory().get("/accounts/google/login/callback/")
+        callback.session = self.client.session
+        self.assertEqual(
+            AccountAdapter().get_login_redirect_url(callback),
+            full_path,
+        )
+
     def test_unauthenticated_redirects_to_login(self):
         resp = self.client.get("/web/tos/service-check/")
         self.assertEqual(resp.status_code, 302)
         self.assertIn("/auth/login", resp.url)
+
+    def test_logged_out_get_preserves_query_through_login(self):
+        self._assert_logged_out_round_trip("get")
+
+    def test_logged_out_post_preserves_query_through_login(self):
+        self._assert_logged_out_round_trip("post")
 
     def test_no_pending_tos_redirects_to_next(self):
         TOSAcceptance.objects.create(user=self.regular_user, tos_document=self.general_tos)
@@ -1437,7 +1500,7 @@ class TestTOSServiceCheck(_WebTestBase):
             user=self.regular_user, tos_document=self.svc_tos
         ).exists())
 
-    def test_repost_retries_iam_but_does_not_duplicate_audit(self):
+    def test_post_drops_already_accepted_session_document(self):
         from unittest.mock import patch
 
         DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
@@ -1450,7 +1513,7 @@ class TestTOSServiceCheck(_WebTestBase):
 
         with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
              patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.side_effect = ["failed", "created"]
+            mock_add.return_value = "failed"
             self.client.post("/web/tos/service-check/")
 
             session = self.client.session
@@ -1460,10 +1523,10 @@ class TestTOSServiceCheck(_WebTestBase):
             resp = self.client.post("/web/tos/service-check/")
 
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(mock_add.call_count, 2)
+        self.assertEqual(mock_add.call_count, 1)
         self.assertEqual(
             [call.args for call in mock_add.call_args_list],
-            [("bucket-a", "regular@example.org"), ("bucket-a", "regular@example.org")],
+            [("bucket-a", "regular@example.org")],
         )
         self.assertEqual(AuditLog.objects.filter(action="tos_accepted").count(), 1)
         self.assertEqual(
@@ -1482,6 +1545,9 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertContains(resp, "General TOS")
         self.assertContains(resp, "CT TOS")
 
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://celltyping.example.com",)
+    )
     def test_query_param_post_redirects_to_next(self):
         """POST after query-param GET redirects to the next URL, not /."""
         from unittest.mock import patch
@@ -1511,6 +1577,9 @@ class TestTOSServiceCheck(_WebTestBase):
             user=self.regular_user, tos_document=self.svc_tos
         ).exists())
 
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://neuprint-test.example.com",)
+    )
     def test_redirect_preserves_query_string(self):
         """Redirect URL with query params (e.g. ?dataset=hemibrain) survives the full TOS flow.
 
@@ -1545,6 +1614,9 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, redirect_url)
 
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://neuprint-test.example.com",)
+    )
     def test_redirect_preserves_query_string_via_form(self):
         """Same as above but simulates the browser POST with the hidden field value."""
         from unittest.mock import patch
@@ -1568,6 +1640,358 @@ class TestTOSServiceCheck(_WebTestBase):
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, redirect_url)
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=(),
+        NGAUTH_ALLOWED_ORIGINS=r"$^",
+    )
+    def test_disallowed_query_next_is_treated_as_absent(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        target = "https://evil.example/steal?token=secret"
+        with self.assertLogs("web.views", level="WARNING") as logs:
+            resp = self.client.get(
+                "/web/tos/service-check/",
+                {
+                    "service": "celltyping",
+                    "dataset": self.dataset.name,
+                    "next": target,
+                },
+            )
+
+        self.assertContains(resp, "General TOS")
+        self.assertNotContains(resp, 'name="next"')
+        self.assertIn("https://evil.example", "\n".join(logs.output))
+        self.assertNotIn("/steal?token=secret", "\n".join(logs.output))
+
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Terms Accepted")
+        self.assertFalse(resp.has_header("Location"))
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=(),
+        NGAUTH_ALLOWED_ORIGINS=r"$^",
+    )
+    def test_disallowed_post_next_is_treated_as_absent(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        self._set_tos_session([self.general_tos.pk])
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post(
+                "/web/tos/service-check/",
+                {"next": "https://evil.example/post-target"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Terms Accepted")
+        self.assertFalse(resp.has_header("Location"))
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=(),
+        NGAUTH_ALLOWED_ORIGINS=r"$^",
+    )
+    def test_disallowed_session_next_is_treated_as_absent(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        self._set_tos_session(
+            [self.general_tos.pk],
+            "https://evil.example/session-target",
+        )
+
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertContains(resp, "General TOS")
+        self.assertNotContains(resp, 'name="next"')
+        self.assertFalse(self.client.session["tos_check_has_explicit_next"])
+
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post(
+                "/web/tos/service-check/",
+                {"has_explicit_next": "0"},
+            )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Terms Accepted")
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://allowed.example",),
+        NGAUTH_ALLOWED_ORIGINS=r"$^",
+    )
+    def test_malformed_absolute_next_origins_are_rejected(self):
+        self._login(self.regular_key)
+        bad_targets = [
+            "https://user:pw@allowed.example/path",
+            " https://allowed.example/path",
+            "https://allowed.example:99999/path",
+            "ftp://allowed.example/path",
+            "https://allowed.example\\@evil.example/path",
+            "https://allowed .example/path",
+        ]
+
+        for target in bad_targets:
+            with self.subTest(target=target):
+                resp = self.client.get(
+                    "/web/tos/service-check/",
+                    {"dataset": self.dataset.name, "next": target},
+                )
+                self.assertEqual(resp.status_code, 200)
+                self.assertContains(resp, "General TOS")
+                self.assertNotContains(resp, 'name="next"')
+                self.assertFalse(
+                    self.client.session["tos_check_has_explicit_next"]
+                )
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://allowed.example/path",),
+        NGAUTH_ALLOWED_ORIGINS=r"$^",
+    )
+    def test_path_bearing_allowlist_entry_is_not_an_origin(self):
+        self._login(self.regular_key)
+        resp = self.client.get(
+            "/web/tos/service-check/",
+            {
+                "dataset": self.dataset.name,
+                "next": "https://allowed.example/path",
+            },
+        )
+
+        self.assertContains(resp, "General TOS")
+        self.assertNotContains(resp, 'name="next"')
+        self.assertFalse(self.client.session["tos_check_has_explicit_next"])
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=(),
+        NGAUTH_ALLOWED_ORIGINS=r"https://ngauth-client\.example",
+    )
+    def test_ngauth_allowed_origin_is_also_a_valid_return(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        target = "https://ngauth-client.example/return?dataset=test"
+        self._set_tos_session([self.general_tos.pk], target)
+
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertContains(resp, "https://ngauth-client.example/return")
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post("/web/tos/service-check/")
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, target)
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://return-only.example",),
+        NGAUTH_ALLOWED_ORIGINS=r"$^",
+    )
+    def test_tos_return_origin_does_not_gain_ngauth_cors(self):
+        resp = self.client.options(
+            "/token",
+            HTTP_ORIGIN="https://return-only.example",
+        )
+        self.assertNotIn("Access-Control-Allow-Origin", resp.headers)
+
+    def test_fresh_dataset_query_replaces_stale_session_context(self):
+        fresh_dataset = Dataset.objects.create(name="fresh-dataset")
+        fresh_tos = TOSDocument.objects.create(
+            name="Fresh TOS",
+            text="Fresh terms.",
+            dataset=fresh_dataset,
+        )
+        fresh_dataset.tos = fresh_tos
+        fresh_dataset.save()
+        Grant.objects.create(
+            user=self.regular_user,
+            dataset=fresh_dataset,
+            permission=self.view_perm,
+        )
+        self._login(self.regular_key)
+        self._set_tos_session([self.general_tos.pk], "/stale/")
+
+        resp = self.client.get(
+            "/web/tos/service-check/",
+            {"dataset": fresh_dataset.name},
+        )
+
+        self.assertContains(resp, "Fresh TOS")
+        self.assertNotContains(resp, "General TOS")
+        self.assertEqual(self.client.session["tos_check_ids"], [fresh_tos.pk])
+        self.assertNotIn("tos_check_next", self.client.session)
+        self.assertFalse(self.client.session["tos_check_has_explicit_next"])
+
+    def test_unauthorized_closed_and_unknown_queries_are_indistinguishable(self):
+        self._login(self.group_admin_b_key)
+
+        closed = self.client.get(
+            "/web/tos/service-check/",
+            {"dataset": self.dataset.name},
+        )
+        unknown = self.client.get(
+            "/web/tos/service-check/",
+            {"dataset": "does-not-exist"},
+        )
+
+        self.assertEqual(closed.status_code, unknown.status_code)
+        # The rotating CSRF mask in the base-template logout form is the one
+        # per-render difference; it carries no dataset-existence signal.
+        import re as _re
+        _csrf = _re.compile(rb'name="csrfmiddlewaretoken" value="[^"]*"')
+        self.assertEqual(
+            _csrf.sub(b'name="csrfmiddlewaretoken" value=""', closed.content),
+            _csrf.sub(b'name="csrfmiddlewaretoken" value=""', unknown.content),
+        )
+        self.assertNotContains(closed, self.dataset.name)
+        self.assertNotContains(closed, "General TOS")
+
+        self._set_tos_session([self.general_tos.pk])
+        denied_post = self.client.post("/web/tos/service-check/")
+        self.assertEqual(denied_post.status_code, 200)
+        self.assertFalse(TOSAcceptance.objects.filter(
+            user=self.group_admin_b,
+            tos_document=self.general_tos,
+        ).exists())
+
+    def test_group_only_coverage_passes_service_check(self):
+        GroupDatasetPermission.objects.create(
+            group=self.group_b,
+            dataset=self.dataset,
+            permission=self.view_perm,
+        )
+        self._login(self.group_admin_b_key)
+
+        resp = self.client.get(
+            "/web/tos/service-check/",
+            {"service": self.svc.name, "dataset": self.dataset.name},
+        )
+        self.assertContains(resp, "General TOS")
+        self.assertContains(resp, "CT TOS")
+        resp = self.client.post("/web/tos/service-check/")
+
+        self.assertContains(resp, "Terms Accepted")
+        self.assertEqual(TOSAcceptance.objects.filter(
+            user=self.group_admin_b,
+            tos_document__in=[self.general_tos, self.svc_tos],
+        ).count(), 2)
+
+    def test_reverse_dataset_tos_relation_is_fail_closed(self):
+        reverse_tos = TOSDocument.objects.create(
+            name="Reverse-only TOS",
+            text="Secret reverse terms.",
+        )
+        Dataset.objects.create(name="reverse-only", tos=reverse_tos)
+        self._login(self.group_admin_b_key)
+
+        self._set_tos_session([reverse_tos.pk])
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertContains(resp, "No Terms Pending")
+        self.assertNotContains(resp, "Reverse-only TOS")
+
+        self._set_tos_session([reverse_tos.pk])
+        resp = self.client.post("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(TOSAcceptance.objects.filter(
+            user=self.group_admin_b,
+            tos_document=reverse_tos,
+        ).exists())
+
+    def test_retired_session_document_is_not_rendered_or_accepted(self):
+        from django.utils import timezone
+
+        self.general_tos.retired_date = timezone.now() - timezone.timedelta(seconds=1)
+        self.general_tos.save()
+        self._login(self.regular_key)
+
+        self._set_tos_session([self.general_tos.pk])
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertContains(resp, "No Terms Pending")
+        self.assertNotContains(resp, "General TOS")
+
+        self._set_tos_session([self.general_tos.pk])
+        resp = self.client.post("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(TOSAcceptance.objects.filter(
+            user=self.regular_user,
+            tos_document=self.general_tos,
+        ).exists())
+
+    def test_document_retired_between_get_and_post_is_not_accepted(self):
+        from django.utils import timezone
+
+        self._login(self.regular_key)
+        self._set_tos_session([self.general_tos.pk])
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertContains(resp, "General TOS")
+
+        self.general_tos.retired_date = timezone.now() - timezone.timedelta(seconds=1)
+        self.general_tos.save()
+        resp = self.client.post(
+            "/web/tos/service-check/",
+            {"has_explicit_next": "0"},
+        )
+
+        self.assertContains(resp, "No Terms Pending")
+        self.assertFalse(TOSAcceptance.objects.filter(
+            user=self.regular_user,
+            tos_document=self.general_tos,
+        ).exists())
+
+    def test_no_next_post_confirms_acceptance_and_creates_public_grant(self):
+        from unittest.mock import patch
+
+        public = Dataset.objects.create(
+            name="public-confirmation",
+            access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        public_tos = TOSDocument.objects.create(
+            name="Public Confirmation TOS",
+            text="Public terms.",
+            dataset=public,
+        )
+        public.tos = public_tos
+        public.save()
+        self._login(self.regular_key)
+        self._set_tos_session([public_tos.pk])
+
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post("/web/tos/service-check/")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Terms Accepted")
+        self.assertContains(resp, "Return to your application and retry")
+        self.assertTrue(TOSAcceptance.objects.filter(
+            user=self.regular_user,
+            tos_document=public_tos,
+        ).exists())
+        grant = Grant.objects.get(
+            user=self.regular_user,
+            dataset=public,
+            permission=self.view_perm,
+        )
+        self.assertEqual(grant.source, Grant.SOURCE_SELF_SERVICE)
+
+    def test_no_pending_without_next_renders_nothing_pending(self):
+        self._login(self.regular_key)
+        resp = self.client.get("/web/tos/service-check/")
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "No Terms Pending")
+
+    def test_explicit_root_next_still_redirects(self):
+        from unittest.mock import patch
+
+        self._login(self.regular_key)
+        self._set_tos_session([self.general_tos.pk], "/")
+        with patch("ngauth.gcs.add_user_to_bucket"), \
+             patch("ngauth.gcs.remove_user_from_bucket"):
+            resp = self.client.post("/web/tos/service-check/")
+
+        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.url, "/")
 
 
 # ──────────────────────────────────────────────────────────────

@@ -47,7 +47,7 @@ class AuthorizeView(APIView):
 
         service_name = request.data.get("service") or None
         service = _service_for_name(service_name)
-        return_url = request.data.get("return_url") or request.build_absolute_uri("/")
+        return_url = request.data.get("return_url")
 
         return Response({
             "entries": [

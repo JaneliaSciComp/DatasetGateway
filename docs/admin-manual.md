@@ -591,6 +591,7 @@ bindings.
 | `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative path to OAuth credentials file. In Docker, mount this file or use `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. |
 | `AUTH_COOKIE_DOMAIN` | (empty) | Set to `.example.org` to share the `dsg_token` cookie across subdomains. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins on ngauth endpoints. |
+| `TOS_RETURN_ALLOWED_ORIGINS` | (empty) | Comma-separated exact HTTP(S) origins allowed as `/web/tos/service-check/` return targets. Origins accepted by `NGAUTH_ALLOWED_ORIGINS` are also valid returns; adding an origin here does not grant ngauth CORS access. |
 | `DSG_ORIGIN` | (empty) | Public origin for CSRF trusted origins (e.g., `https://dataset-gateway.mydomain.org`). |
 | `DSG_PORT` | `8200` | Port for the development server. |
 | `SECURE_SSL_REDIRECT` | `True` (when not DEBUG) | Whether to redirect HTTP to HTTPS. |

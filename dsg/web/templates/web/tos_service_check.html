@@ -22,7 +22,10 @@
 
 <form method="post">
     {% csrf_token %}
-    <input type="hidden" name="next" value="{{ next_url }}">
+    <input type="hidden" name="has_explicit_next" value="{% if has_explicit_next %}1{% else %}0{% endif %}">
+    {% if has_explicit_next %}
+        <input type="hidden" name="next" value="{{ next_url }}">
+    {% endif %}
     <button type="submit" class="btn">I Accept All &amp; Continue</button>
 </form>
 {% endblock %}
