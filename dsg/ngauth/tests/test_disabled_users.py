@@ -53,17 +53,6 @@ class TestDisabledUserNgauth(TestCase):
         resp = self.client.post("/token")
         self.assertEqual(resp.status_code, 401)
 
-    def test_disabled_parent_sa_token_rejected(self):
-        sa_user = User.objects.create(email="robot@example.org", parent=self.user)
-        sa_key = APIKey.objects.create(user=sa_user, key="tok-ng-robot")
-        self.client.cookies[settings.AUTH_COOKIE_NAME] = sa_key.key
-        resp = self.client.post("/token")
-        self.assertEqual(resp.status_code, 200)
-
-        self.user.is_active = False
-        self.user.save()
-        resp = self.client.post("/token")
-        self.assertEqual(resp.status_code, 401)
 
     def test_reenabled_user_token_works_again(self):
         self.user.is_active = False
@@ -88,22 +77,6 @@ class TestDisabledUserNgauth(TestCase):
 
     @patch("ngauth.gcs.get_gcs_token_for_user", return_value="gcs-access-token")
     def test_preminted_gcs_token_rejected_after_user_disabled(self, mock_get_gcs_token):
-        user_token = self._mint_user_token()
-        self.user.is_active = False
-        self.user.save()
-
-        resp = self._post_gcs_token(user_token)
-
-        self.assertEqual(resp.status_code, 401)
-        mock_get_gcs_token.assert_not_called()
-
-    @patch("ngauth.gcs.get_gcs_token_for_user", return_value="gcs-access-token")
-    def test_preminted_gcs_token_rejected_after_sa_parent_disabled(
-        self, mock_get_gcs_token,
-    ):
-        sa_user = User.objects.create(email="robot@example.org", parent=self.user)
-        sa_key = APIKey.objects.create(user=sa_user, key="tok-ng-robot")
-        self.client.cookies[settings.AUTH_COOKIE_NAME] = sa_key.key
         user_token = self._mint_user_token()
         self.user.is_active = False
         self.user.save()

@@ -179,9 +179,12 @@ log_attribution(principal)
 
 ### Service accounts are a separate model, not a kind of User
 
-The codebase already had partial infrastructure for "User row with a
-`parent` FK" service accounts (`User.parent`, `User.is_service_account`).
-We rejected reusing it. The User model is shaped by Google-OAuth identity
+The codebase once had partial infrastructure for "User row with a
+`parent` FK" service accounts (`User.parent`, `User.is_service_account`),
+ported from CAVE middle_auth. We rejected reusing it, and the mechanism
+was removed outright in migration `0012_remove_user_parent`.
+
+The User model is shaped by Google-OAuth identity
 (`google_sub`, `email`, `picture_url`), TOS acceptance, group
 membership, and DSG-service login state — none of which apply to a
 service account. Reusing User would mean nullable fields that "mean N/A"
@@ -199,9 +202,12 @@ Three new models live alongside the user-grant models in
 - `ServiceAccountGrant` — FK to SA, dataset, optional dataset_version,
   permission, granted_by. Mirrors `Grant` for SAs.
 
-The legacy `User.parent` and `User.is_service_account` fields are kept
-for back-compat with any pre-existing parent-linked rows; new service
-accounts never use them.
+`User.parent` is gone. `User.is_service_account` survives only as a
+constant `False`, mirroring `ServiceAccount.is_service_account = True` so
+both principal types duck-type alike; a `User` is never a service account.
+The `/api/v1/user/cache` blob still carries `parent_id` and
+`service_account` keys for CAVE wire compatibility — constant
+`null`/`false` for users, `null`/`true` for dedicated service accounts.
 
 ### `request.user` carries the principal; ServiceAccount duck-types as User
 

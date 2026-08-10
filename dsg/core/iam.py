@@ -346,8 +346,7 @@ def _dataset_tos_accepted(user, dataset):
         return True
     from core.models import TOSAcceptance
 
-    check_user = _tos_check_user(user)
-    return TOSAcceptance.objects.filter(user=check_user, tos_document=dataset.tos).exists()
+    return TOSAcceptance.objects.filter(user=user, tos_document=dataset.tos).exists()
 
 
 def _version_tos_blocked_bucket_names(user, dataset):
@@ -369,8 +368,7 @@ def _version_tos_blocked_bucket_names(user, dataset):
 def _blocked_version_tos_ids(user, dataset):
     from core.models import TOSAcceptance, TOSDocument
 
-    check_user = _tos_check_user(user)
-    accepted_ids = TOSAcceptance.objects.filter(user=check_user).values_list(
+    accepted_ids = TOSAcceptance.objects.filter(user=user).values_list(
         "tos_document_id", flat=True
     )
     now = timezone.now()
@@ -383,8 +381,3 @@ def _blocked_version_tos_ids(user, dataset):
     blocked = blocked.exclude(pk__in=accepted_ids)
     return set(blocked.values_list("dataset_version_id", flat=True))
 
-
-def _tos_check_user(user):
-    if getattr(user, "parent_id", None) is not None:
-        return user.parent
-    return user

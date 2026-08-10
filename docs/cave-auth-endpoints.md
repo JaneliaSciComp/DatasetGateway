@@ -83,7 +83,7 @@ The single most important endpoint. Every `@auth_required` and `@auth_requires_p
 ```
 
 Field notes:
-- `parent_id` / `service_account` — new DatasetGateway service accounts are separate `ServiceAccount` rows and return `service_account: true`, `parent_id: null`; legacy parent-linked `User` rows can still return a non-null `parent_id`
+- `parent_id` / `service_account` — DatasetGateway service accounts are separate `ServiceAccount` rows and return `service_account: true`, `parent_id: null`; `User` rows always return `service_account: false`, `parent_id: null`. `parent_id` is retained in the blob for wire compatibility only — it is now constant `null` for every principal (the user-type/parent-linked service account mechanism was removed)
 - `permissions` — legacy v1 format mapping dataset name to a numeric level (0=none, 1=view, 2=edit); the max level across all permissions for that dataset
 - `permissions_v2` — permissions filtered by TOS acceptance
 - `permissions_v2_ignore_tos` — permissions regardless of TOS acceptance

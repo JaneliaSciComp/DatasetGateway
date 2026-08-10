@@ -40,15 +40,15 @@ def _get_session_key():
 def _get_user_from_cookie(request):
     """Extract user email from dsg_token cookie (APIKey lookup).
 
-    A not-enabled user (disabled, or a user-type service account under a
-    disabled parent) resolves to None — their live cookie must stop working
-    on every ngauth endpoint, including /token → /gcs_token minting.
+    A not-enabled (disabled) user resolves to None — their live cookie must
+    stop working on every ngauth endpoint, including /token → /gcs_token
+    minting.
     """
     cookie_value = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
     if not cookie_value:
         return None
     try:
-        api_key = APIKey.objects.select_related("user__parent").get(key=cookie_value)
+        api_key = APIKey.objects.select_related("user").get(key=cookie_value)
     except APIKey.DoesNotExist:
         return None
     if not api_key.user.is_enabled:
@@ -384,17 +384,15 @@ class GCSTokenView(View):
             )
 
         try:
-            user = User.objects.select_related("parent").get(email=user_token.user_id)
+            user = User.objects.get(email=user_token.user_id)
         except User.DoesNotExist:
             return JsonResponse(
                 {"error": "Invalid authentication token"}, status=401, headers=headers
             )
         if not user.is_enabled:
-            if user.is_active:
-                error = "Parent user account is disabled"
-            else:
-                error = "User account is disabled"
-            return JsonResponse({"error": error}, status=401, headers=headers)
+            return JsonResponse(
+                {"error": "User account is disabled"}, status=401, headers=headers
+            )
 
         # Get GCS token
         gcs_token = gcs.get_gcs_token_for_user(user.email, bucket)

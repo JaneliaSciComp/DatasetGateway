@@ -83,18 +83,6 @@ class TestUserHasEffectiveAccess(TestCase):
         )
         self.assertFalse(_user_has_effective_access(self.user, self.dataset))
 
-    def test_service_account_inherits_parent_tos(self):
-        from core.iam import _user_has_effective_access
-        tos = TOSDocument.objects.create(name="TOS", text="Terms", dataset=self.dataset)
-        self.dataset.tos = tos
-        self.dataset.save()
-        sa = User.objects.create(email="sa@example.org", parent=self.user)
-        Grant.objects.create(user=sa, dataset=self.dataset, permission=self.view_perm)
-        # Parent hasn't accepted yet
-        self.assertFalse(_user_has_effective_access(sa, self.dataset))
-        # Parent accepts
-        TOSAcceptance.objects.create(user=self.user, tos_document=tos)
-        self.assertTrue(_user_has_effective_access(sa, self.dataset))
 
     def test_disabled_user_returns_false(self):
         from core.iam import _user_has_effective_access
@@ -103,27 +91,7 @@ class TestUserHasEffectiveAccess(TestCase):
         self.user.save()
         self.assertFalse(_user_has_effective_access(self.user, self.dataset))
 
-    def test_disabled_service_account_user_returns_false(self):
-        from core.iam import _user_has_effective_access
-        sa = User.objects.create(email="sa@example.org", parent=self.user, is_active=False)
-        Grant.objects.create(user=sa, dataset=self.dataset, permission=self.view_perm)
-        self.assertFalse(_user_has_effective_access(sa, self.dataset))
 
-    def test_disabled_parent_gates_service_account(self):
-        from core.iam import _user_has_effective_access
-        sa = User.objects.create(email="sa@example.org", parent=self.user)
-        Grant.objects.create(user=sa, dataset=self.dataset, permission=self.view_perm)
-        self.assertTrue(_user_has_effective_access(sa, self.dataset))
-        # Disabling the parent kills the robot too
-        self.user.is_active = False
-        self.user.save()
-        sa.refresh_from_db()
-        self.assertFalse(_user_has_effective_access(sa, self.dataset))
-        # Re-enabling restores it
-        self.user.is_active = True
-        self.user.save()
-        sa.refresh_from_db()
-        self.assertTrue(_user_has_effective_access(sa, self.dataset))
 
 
 @pytest.mark.django_db
@@ -487,24 +455,6 @@ class TestSyncUserIAM(TestCase):
 
         removed = {c.args[0] for c in mock_remove.call_args_list}
         self.assertEqual(removed, {"bucket-a", "bucket-b"})
-        mock_add.assert_not_called()
-
-    @patch("ngauth.gcs.add_user_to_bucket")
-    @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_disabled_parent_deprovisions_service_account(self, mock_remove, mock_add):
-        from core.iam import sync_user_iam
-        mock_remove.return_value = True
-        sa = User.objects.create(email="sa@example.org", parent=self.user)
-        Grant.objects.create(user=sa, dataset=self.ds_a, permission=self.view_perm)
-        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="sa@example.org")
-        self.user.is_active = False
-        self.user.save()
-        sa.refresh_from_db()
-
-        sync_user_iam(sa)
-
-        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
-        self.assertEqual(removed, {("bucket-a", "sa@example.org")})
         mock_add.assert_not_called()
 
 

@@ -853,8 +853,7 @@ class TestTOSDocumentAdminIAM(_AdminTestBase):
 
 @pytest.mark.django_db
 class TestUserFlagAdminIAM(_AdminTestBase):
-    """is_active/admin flips via UserAdmin.save_model fan out per-user IAM,
-    including the user's user-type service accounts."""
+    """is_active/admin flips via UserAdmin.save_model resync per-user IAM."""
 
     def setUp(self):
         super().setUp()
@@ -863,31 +862,23 @@ class TestUserFlagAdminIAM(_AdminTestBase):
         DatasetBucket.objects.create(dataset=self.ds_a, name="bucket-a")
         self.user = User.objects.create(email="user@example.org")
         Grant.objects.create(user=self.user, dataset=self.ds_a, permission=self.view_perm)
-        self.ds_b = Dataset.objects.create(name="ds-b")
-        DatasetBucket.objects.create(dataset=self.ds_b, name="bucket-b")
-        self.sa_user = User.objects.create(email="robot@example.org", parent=self.user)
-        Grant.objects.create(user=self.sa_user, dataset=self.ds_b, permission=self.view_perm)
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_disable_removes_user_and_sa_iam(self, mock_remove, mock_add):
+    def test_disable_removes_user_iam(self, mock_remove, mock_add):
         mock_remove.return_value = True
         self._own("bucket-a", "user@example.org")
-        self._own("bucket-b", "robot@example.org")
         # is_active checkbox omitted → False
         self._save_via_admin(self.ma, {
             "email": self.user.email, "name": self.user.name,
         }, instance=self.user)
         removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
-        self.assertEqual(removed, {
-            ("bucket-a", "user@example.org"),
-            ("bucket-b", "robot@example.org"),
-        })
+        self.assertEqual(removed, {("bucket-a", "user@example.org")})
         mock_add.assert_not_called()
 
     @patch("ngauth.gcs.add_user_to_bucket")
     @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_reenable_readds_user_and_sa_iam(self, mock_remove, mock_add):
+    def test_reenable_readds_user_iam(self, mock_remove, mock_add):
         mock_add.return_value = "created"
         self.user.is_active = False
         self.user.save()
@@ -895,10 +886,7 @@ class TestUserFlagAdminIAM(_AdminTestBase):
             "email": self.user.email, "name": self.user.name, "is_active": "on",
         }, instance=self.user)
         added = {(c.args[0], c.args[1]) for c in mock_add.call_args_list}
-        self.assertEqual(added, {
-            ("bucket-a", "user@example.org"),
-            ("bucket-b", "robot@example.org"),
-        })
+        self.assertEqual(added, {("bucket-a", "user@example.org")})
         mock_remove.assert_not_called()
 
     @patch("ngauth.gcs.add_user_to_bucket")
@@ -911,7 +899,7 @@ class TestUserFlagAdminIAM(_AdminTestBase):
             "email": self.user.email, "name": self.user.name,
             "is_active": "on", "admin": "on",
         }, instance=self.user)
-        # Admins are never provisioned per-user; the SA resync is a no-op add
+        # Admins are never provisioned per-user
         removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
         self.assertEqual(removed, {("bucket-a", "user@example.org")})
 

@@ -22,7 +22,7 @@ class SCIMAuthentication(BaseAuthentication):
             return None
 
         try:
-            api_key = APIKey.objects.select_related("user__parent").get(key=token)
+            api_key = APIKey.objects.select_related("user").get(key=token)
         except APIKey.DoesNotExist:
             raise AuthenticationFailed("Invalid token.")
 
@@ -31,8 +31,6 @@ class SCIMAuthentication(BaseAuthentication):
 
         user = api_key.user
         if not user.is_enabled:
-            if user.is_active:
-                raise AuthenticationFailed("Parent user account is disabled.")
             raise AuthenticationFailed("User account is disabled.")
 
         if not user.admin:

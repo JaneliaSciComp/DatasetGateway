@@ -48,8 +48,6 @@ class TokenAuthentication(BaseAuthentication):
         if not principal.is_enabled:
             if isinstance(principal, ServiceAccount):
                 raise AuthenticationFailed("Service account is disabled.")
-            if principal.is_active:
-                raise AuthenticationFailed("Parent user account is disabled.")
             raise AuthenticationFailed("User account is disabled.")
 
         # Attach cached permissions to the request for downstream views.
@@ -98,7 +96,7 @@ class TokenAuthentication(BaseAuthentication):
         from .models import APIKey, ServiceAccountToken
 
         try:
-            api_key = APIKey.objects.select_related("user__parent").get(key=token)
+            api_key = APIKey.objects.select_related("user").get(key=token)
         except APIKey.DoesNotExist:
             api_key = None
 

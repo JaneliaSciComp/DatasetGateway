@@ -42,8 +42,10 @@ def build_permission_cache(user, service=None):
 
     return {
         "id": user.pk,
-        "parent_id": user.parent_id,
-        "service_account": user.parent_id is not None,
+        # Constant for Users; the dedicated-SA builder emits its own pair.
+        # Kept in the blob (and in this key order) for CAVE wire compat.
+        "parent_id": None,
+        "service_account": False,
         "name": user.public_name,
         "email": user.email,
         "admin": user.admin,
@@ -173,7 +175,7 @@ def _get_permissions(user, ignore_tos=False, service=None):
     """
     from .models import Grant, GroupDatasetPermission, TOSAcceptance, TOSDocument
 
-    tos_user_id = user.parent_id if user.is_service_account else user.pk
+    tos_user_id = user.pk
 
     # --- Group-based permissions (existing) ---
     group_qs = (
@@ -267,7 +269,7 @@ def _datasets_missing_tos(user, service=None):
     """
     from .models import Dataset, Grant, GroupDatasetPermission, TOSAcceptance, TOSDocument
 
-    tos_user_id = user.parent_id if user.is_service_account else user.pk
+    tos_user_id = user.pk
 
     # Get datasets from group-based permissions that have a TOS requirement
     group_datasets = set(

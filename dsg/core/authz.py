@@ -174,15 +174,14 @@ def expand_permission(permission_name, read_only=False):
 def pending_tos(user, dataset, service_name=None, anchor=None):
     """Return active TOS documents the principal still needs to accept.
 
-    Human-style service accounts store acceptance on the parent User. Dedicated
-    ServiceAccount principals do not participate in TOS.
+    Dedicated ServiceAccount principals do not participate in TOS; they reach
+    this function from native authorization and return early here.
     """
     if isinstance(user, ServiceAccount):
         return []
 
-    check_user_id = user.parent_id if getattr(user, "parent_id", None) else user.pk
     accepted_ids = set(
-        TOSAcceptance.objects.filter(user_id=check_user_id).values_list(
+        TOSAcceptance.objects.filter(user_id=user.pk).values_list(
             "tos_document_id", flat=True
         )
     )

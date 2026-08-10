@@ -218,7 +218,7 @@ class OAuth2CallbackView(APIView):
         except Dataset.DoesNotExist:
             return redirect_url
 
-        tos_user_id = user.parent_id if user.is_service_account else user.pk
+        tos_user_id = user.pk
         accepted_tos_ids = set(
             TOSAcceptance.objects.filter(user_id=tos_user_id).values_list(
                 "tos_document_id", flat=True

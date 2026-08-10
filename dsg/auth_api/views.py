@@ -189,7 +189,7 @@ class AuthorizeDecisionView(APIView):
             return Response({"allowed": True, "reason": "dataset_admin"})
 
         # Check general TOS requirement
-        tos_user_id = user.parent_id if user.is_service_account else user.pk
+        tos_user_id = user.pk
         if dataset.tos_id:
             if not TOSAcceptance.objects.filter(
                 user_id=tos_user_id, tos_document_id=dataset.tos_id

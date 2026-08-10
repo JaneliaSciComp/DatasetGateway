@@ -43,11 +43,6 @@ class User(AbstractBaseUser):
     notes = models.TextField(blank=True, default="")
     picture_url = models.URLField(max_length=512, blank=True, default="")
 
-    # Service account support — parent is the owning human user
-    parent = models.ForeignKey(
-        "self", on_delete=models.CASCADE, null=True, blank=True, related_name="service_accounts"
-    )
-
     # SCIM 2.0 fields
     scim_id = models.CharField(max_length=36, unique=True, null=True, blank=True, db_index=True)
     external_id = models.CharField(
@@ -86,17 +81,17 @@ class User(AbstractBaseUser):
     def has_module_perms(self, app_label):
         return self.admin
 
-    @property
-    def is_service_account(self):
-        return self.parent_id is not None
+    # Constant False for duck-type symmetry with ServiceAccount, which sets
+    # is_service_account = True. A User is never a service account: the
+    # user-type ("parent"-linked robot) mechanism was removed in favor of the
+    # dedicated ServiceAccount model.
+    is_service_account = False
 
     @property
     def is_enabled(self):
-        """Disabled means disabled, including robots: a user-type service
-        account is dead while its parent is disabled. Single home for the
-        rule — consumed by the IAM access rule, DRF auth, and both cookie
-        helpers."""
-        return self.is_active and (self.parent_id is None or self.parent.is_active)
+        """Disabled means disabled. Single home for the rule — consumed by the
+        IAM access rule, DRF auth, and both cookie helpers."""
+        return self.is_active
 
     @property
     def public_name(self):
@@ -595,7 +590,7 @@ class ServiceAccount(models.Model):
 
     @property
     def is_enabled(self):
-        # No parent to inherit a disable from — mirrors User.is_enabled.
+        # Mirrors User.is_enabled: the row's own active flag is the whole rule.
         return self.is_active
 
     @property

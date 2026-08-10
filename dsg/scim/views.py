@@ -232,8 +232,6 @@ class UserDetailView(SCIMBaseView):
         if any(before.get(k) != after.get(k) for k in ("is_active", "admin")):
             from core.iam import sync_user_iam
             sync_user_iam(user)
-            for sa in user.service_accounts.all():
-                sync_user_iam(sa)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def patch(self, request, scim_id):
@@ -300,8 +298,6 @@ class UserDetailView(SCIMBaseView):
         if any(before[k] != after[k] for k in ("is_active", "admin")):
             from core.iam import sync_user_iam
             sync_user_iam(user)
-            for sa in user.service_accounts.all():
-                sync_user_iam(sa)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def delete(self, request, scim_id):
@@ -309,9 +305,7 @@ class UserDetailView(SCIMBaseView):
         if not user:
             return scim_error(404, detail="User not found")
 
-        captured_emails = [user.email] + list(
-            user.service_accounts.values_list("email", flat=True)
-        )
+        captured_emails = [user.email]
 
         log_audit(request.user, "user_deleted", "User", user.pk, before_state={
             "email": user.email, "name": user.name, "admin": user.admin,

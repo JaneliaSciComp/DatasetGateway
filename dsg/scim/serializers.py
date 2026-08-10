@@ -50,7 +50,9 @@ class UserSCIMSerializer:
                 "admin": user.admin,
                 "pi": user.pi,
                 "gdprConsent": user.gdpr_consent,
-                "serviceAccount": user.is_service_account,
+                # Constant False: SCIM serves Users only, and a User is never a
+            # service account. Field retained for wire-shape stability.
+            "serviceAccount": False,
             },
             "meta": {
                 "resourceType": "User",

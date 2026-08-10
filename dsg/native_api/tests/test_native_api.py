@@ -63,30 +63,6 @@ class TestNativeUser(TestCase):
             "groups": ["researchers"],
         })
 
-    def test_user_type_service_account_via_api_key(self):
-        parent = User.objects.create(email="owner@example.org", name="Owner")
-        robot = User.objects.create(
-            email="robot@example.org",
-            name="Robot",
-            picture_url="https://example.org/robot.png",
-            parent=parent,
-        )
-        token = APIKey.objects.create(user=robot, key="tok-user-sa")
-        group = Group.objects.create(name="robots")
-        UserGroup.objects.create(user=robot, group=group)
-
-        resp = self.client.get("/api/dsg/v1/user", **self._auth(token.key))
-
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json(), {
-            "id": robot.pk,
-            "email": "robot@example.org",
-            "name": "Robot",
-            "picture_url": "https://example.org/robot.png",
-            "admin": False,
-            "service_account": True,
-            "groups": ["robots"],
-        })
 
     def test_dedicated_service_account_token_shape(self):
         service_account = ServiceAccount.objects.create(name="pipeline")

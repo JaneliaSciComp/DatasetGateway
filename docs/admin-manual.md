@@ -145,7 +145,6 @@ Each row is a DatasetGateway user. Key fields:
 | **Is active** | Unchecked = account disabled. Disabled users cannot authenticate. |
 | **Read only** | If checked, `edit` permissions are stripped from this user's permission cache. They can only view. |
 | **Pi** | Principal Investigator field (informational, from Clio legacy). |
-| **Parent** | Legacy field for an early User-as-service-account design. Not used by the current service-account feature — see [Service Accounts](service-accounts.md). Existing parent-linked rows still inherit TOS acceptance from their parent. |
 
 **Inline sections on the User detail page:**
 
@@ -360,7 +359,7 @@ bucket is in the union of that user's qualifying DSG permission sources for
 the dataset, after TOS gates are applied:
 
 ```
-user enabled (active, and an active parent for user-type service accounts)
+user enabled (active)
 AND dataset TOS accepted, if any
 AND bucket reached by a qualifying Grant or Group dataset permission
 AND no unaccepted active version TOS blocks that bucket
@@ -368,8 +367,7 @@ AND no unaccepted active version TOS blocks that bucket
 
 Global admins are skipped (they use service-account auth, not per-user
 bucket IAM). `ServiceAccount`-model accounts (organization robots) are
-never added to bucket IAM; user-type service accounts (`User` rows with a
-parent) carry their own bucket IAM and follow their parent's enabled state.
+never added to bucket IAM.
 
 Only DSG permissions that GCS can safely express are qualifying bucket-IAM
 sources:
@@ -391,8 +389,7 @@ sources:
   statements for the native decision API, not GCS policy inputs.
 
 Version-scoped TOS documents gate bucket IAM per bucket. An active
-version-scoped, non-service TOS blocks an anchor until the user (or parent,
-for user-type service accounts) accepts it. A bucket attached to anchors is
+version-scoped, non-service TOS blocks an anchor until the user accepts it. A bucket attached to anchors is
 excluded only when all of its anchor attachments are blocked; a bucket with
 no anchor attachment is never blocked by version TOS. Service-scoped TOS
 documents do not affect bucket IAM because GCS cannot express the service
