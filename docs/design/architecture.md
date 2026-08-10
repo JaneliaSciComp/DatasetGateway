@@ -1,7 +1,7 @@
 ---
 doc_status: historical-design
 sync_policy: Design context only; do not assume this is synchronized with current code unless deliberately refreshed.
-last_reviewed: 2026-06-01
+last_reviewed: 2026-08-10
 ---
 
 # Architecture
@@ -350,13 +350,15 @@ generalizing it. Dataset data is stored in Google Cloud Storage (GCS)
 buckets. DatasetGateway controls who can read that data through two
 mechanisms that can coexist.
 
-### Mode 1: Bucket IAM membership ("activate" flow)
+### Mode 1: Model-derived bucket IAM membership
 
-When a user accepts the TOS and calls `POST /activate` with a bucket
-name, DatasetGateway adds the user's Google email to the bucket's IAM
-policy with the `roles/storage.objectViewer` role. After IAM propagation
-(which can take minutes), the user can access the bucket directly with
-their own Google credentials.
+When a user accepts a dataset-scoped TOS by calling `POST /activate` with
+its `tos_id`, DatasetGateway records the acceptance and synchronizes the
+buckets sanctioned by that user's DSG grants. The endpoint does not accept
+a caller-chosen bucket as an authorization input: bucket-only requests are
+rejected, and a legacy `bucket` key accompanying `tos_id` is ignored. After
+IAM propagation (which can take minutes), provisioned users can access the
+bucket directly with their own Google credentials.
 
 - Pros: simple for tools that check bucket IAM directly
 - Cons: IAM propagation delay; the user gets read access to the entire
@@ -369,9 +371,13 @@ short-lived GCS access token that is restricted to a single bucket.
 This uses Google's [Credential Access Boundaries](https://cloud.google.com/iam/docs/downscoping-short-lived-credentials)
 (Security Token Service API):
 
-1. DatasetGateway first verifies the user has `objectViewer` access on the
-   bucket via a direct IAM policy check.
-2. It then takes its own service account credential and exchanges it
+1. DatasetGateway resolves the requested name to every matching
+   `DatasetBucket` row and evaluates each attached dataset with DSG's
+   grant containment and TOS rules. Bucket- and version-scoped grants are
+   honored, service-scoped grants are excluded, and coverage plus TOS must
+   succeed at the same anchor. Public datasets provide view coverage to
+   enabled users without a grant. No per-user bucket IAM probe is made.
+2. DatasetGateway then takes its own service account credential and exchanges it
    with Google's STS endpoint (`sts.googleapis.com/v1/token`) for a new
    token whose permissions are narrowed to `roles/storage.objectViewer`
    on just that one bucket.
@@ -390,9 +396,11 @@ automatically.
 
 GCS buckets are associated with a dataset via the DatasetBucket model.
 Each dataset version can link to multiple buckets (M2M), and multiple
-versions can share the same bucket. This mapping determines which
-buckets a user gets access to when they are granted permission on a
-dataset.
+versions can share the same bucket. A bucket name can also occur on more
+than one dataset; `/gcs_token` treats those attachments as a deliberate
+union and issues when any attached dataset has one grant-covered,
+TOS-clear anchor. This mapping also determines which buckets the separate
+IAM synchronization subsystem provisions.
 
 ---
 
@@ -405,11 +413,12 @@ Neuroglancer typically expects a fixed token endpoint like:
 We do **not** require `https://auth.example.org/<dataset>/token`.
 
 ### How dataset context is determined
-The dataset context is derived from the Neuroglancer source URL scheme used in `tos-ngauth`, which includes the bucket:
+The dataset context is derived from the bucket in the Neuroglancer source URL scheme used in `tos-ngauth`:
 - `precomputed://gs+ngauth+https://AUTH_SERVER/BUCKET/path/to/data`
 
-The request arriving at `/token` includes enough context (bucket / resource) to map to:
-- dataset version → required permissions → TOS requirement → token issuance policy
+Neuroglancer sends that bucket in the `/gcs_token` request. DatasetGateway
+resolves all matching dataset-bucket rows and their valid version
+attachments, then applies grant containment and TOS before token issuance.
 
 ## API Endpoints
 
@@ -421,7 +430,7 @@ Endpoints marked with **ngauth** are required by the [ngauth protocol](https://g
 | `GET` | `/health` | Health check | — |
 | `GET` | `/auth/login` | Initiate OAuth (redirects to allauth) | — |
 | `GET` | `/accounts/google/login/callback/` | OAuth callback (allauth) | — |
-| `POST` | `/activate` | Provision access | — |
+| `POST` | `/activate` | Accept `tos_id`; sync DSG-sanctioned bucket IAM | — |
 | `GET` | `/success` | Success page | — |
 | `GET` | `/login` | Login status page | ngauth |
 | `POST` | `/logout` | Logout | ngauth |
@@ -534,6 +543,9 @@ Use Django Admin as the first implementation:
 - Whether to enforce dataset isolation via:
   - bucket-per-version (simple), or
   - prefix constraints (more complex, can be added later)
-- Whether to keep “activate adds user to bucket IAM” as default or use downscoped tokens primarily.
+- Whether direct-access clients still need the separately maintained
+  per-user bucket IAM synchronization subsystem; `/activate` no longer
+  accepts caller-chosen buckets, and ngauth authorization does not depend
+  on per-user IAM.
 
 ---

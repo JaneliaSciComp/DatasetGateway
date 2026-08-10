@@ -11,6 +11,7 @@ from django.utils import timezone
 from core.models import (
     Dataset,
     DatasetAlias,
+    DatasetBucket,
     DatasetVersion,
     Grant,
     GroupDatasetPermission,
@@ -40,6 +41,12 @@ class ContainmentStatus(str, Enum):
     COVERED = "covered"
     NOT_COVERED = "not_covered"
     INDETERMINATE = "indeterminate"
+
+
+class BucketAuthorizationStatus(str, Enum):
+    AUTHORIZED = "authorized"
+    TOS_REQUIRED = "tos_required"
+    DENIED = "denied"
 
 
 @dataclass(frozen=True)
@@ -76,6 +83,19 @@ class ContainmentDecision:
     @property
     def covered(self):
         return self.status == ContainmentStatus.COVERED
+
+
+@dataclass(frozen=True)
+class BucketAuthorizationDecision:
+    status: BucketAuthorizationStatus
+    reason: str
+    dataset: Dataset | None = None
+    anchor: ResolvedTarget | None = None
+    pending_documents: tuple = ()
+
+    @property
+    def authorized(self):
+        return self.status == BucketAuthorizationStatus.AUTHORIZED
 
 
 def resolve_dataset_reference(service, client_name, client_version=None, branch=None):
@@ -157,6 +177,81 @@ def evaluate_containment(principal, service, target, requested_permission="view"
         matching_rows=tuple(matching_rows),
         covering_rows=tuple(covering_rows),
         indeterminate_rows=tuple(indeterminate_rows),
+    )
+
+
+def evaluate_bucket_authorization(principal, bucket_name):
+    """Evaluate DSG-model view access for one physical GCS bucket name.
+
+    Bucket names are not unique in DSG.  Every matching ``DatasetBucket`` row
+    contributes an authorization domain, and access is the union across those
+    domains.  Within a domain, containment and TOS must both succeed at the
+    same dataset/version anchor.
+    """
+    bucket_rows = list(
+        DatasetBucket.objects.filter(name=bucket_name)
+        .select_related("dataset")
+        .prefetch_related("versions")
+        .order_by("pk")
+    )
+    if not bucket_rows:
+        return BucketAuthorizationDecision(
+            BucketAuthorizationStatus.DENIED,
+            reason="unknown_bucket",
+        )
+
+    first_tos_block = None
+    for bucket_row in bucket_rows:
+        for anchor in _bucket_anchors(bucket_row):
+            containment = evaluate_containment(
+                principal,
+                service=None,
+                target=anchor,
+                requested_permission="view",
+            )
+            covering_rows = tuple(
+                row
+                for row in containment.covering_rows
+                if _row_is_valid_for_bucket(row, anchor, bucket_row)
+            )
+            public_coverage = (
+                not isinstance(principal, ServiceAccount)
+                and bool(getattr(principal, "is_enabled", False))
+                and anchor.dataset.access_mode == Dataset.ACCESS_PUBLIC
+            )
+            if not covering_rows and not public_coverage:
+                continue
+
+            pending = tuple(
+                pending_tos(
+                    principal,
+                    anchor.dataset,
+                    service_name=None,
+                    anchor=anchor,
+                )
+            )
+            if not pending:
+                return BucketAuthorizationDecision(
+                    BucketAuthorizationStatus.AUTHORIZED,
+                    reason="public" if public_coverage and not covering_rows else "covered",
+                    dataset=anchor.dataset,
+                    anchor=anchor,
+                )
+
+            if first_tos_block is None:
+                first_tos_block = BucketAuthorizationDecision(
+                    BucketAuthorizationStatus.TOS_REQUIRED,
+                    reason="missing_tos",
+                    dataset=anchor.dataset,
+                    anchor=anchor,
+                    pending_documents=pending,
+                )
+
+    if first_tos_block is not None:
+        return first_tos_block
+    return BucketAuthorizationDecision(
+        BucketAuthorizationStatus.DENIED,
+        reason="no_coverage",
     )
 
 
@@ -332,6 +427,7 @@ def _candidate_rows(principal, dataset, service):
     grants = list(
         Grant.objects.filter(service_filter, user=principal, dataset=dataset)
         .select_related("permission", "dataset_version", "service")
+        .prefetch_related("buckets")
     )
     group_permissions = list(
         GroupDatasetPermission.objects.filter(
@@ -358,6 +454,42 @@ def _row_covers_target(row, target):
         )
 
     return target.ordinal is not None and target.branch == row_version.branch and target.ordinal <= row_version.ordinal
+
+
+def _bucket_anchors(bucket_row):
+    versions = sorted(
+        (
+            version
+            for version in bucket_row.versions.all()
+            if version.dataset_id == bucket_row.dataset_id
+        ),
+        key=lambda version: version.pk,
+    )
+    if not versions:
+        return (ResolvedTarget(dataset=bucket_row.dataset),)
+    return tuple(_target_from_dataset_version(version) for version in versions)
+
+
+def _row_is_valid_for_bucket(row, target, bucket_row):
+    """Apply bucket constraints and reject representable cross-dataset edges."""
+    if getattr(row, "dataset_id", None) != target.dataset.pk:
+        return False
+
+    row_version = getattr(row, "dataset_version", None)
+    if row_version is not None and row_version.dataset_id != target.dataset.pk:
+        return False
+
+    if not isinstance(row, Grant):
+        return True
+
+    constrained_buckets = list(row.buckets.all())
+    if not constrained_buckets:
+        return True
+    return any(
+        constrained.pk == bucket_row.pk
+        and constrained.dataset_id == target.dataset.pk
+        for constrained in constrained_buckets
+    )
 
 
 def _row_is_cross_branch_indeterminate(row, target, service):

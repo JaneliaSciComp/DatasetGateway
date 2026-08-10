@@ -10,8 +10,9 @@ from unittest.mock import patch
 import pytest
 from django.conf import settings
 from django.test import TestCase
+from django.utils import timezone
 
-from core.models import APIKey, User
+from core.models import APIKey, Dataset, DatasetBucket, Grant, Permission, User
 
 
 @pytest.mark.django_db
@@ -19,6 +20,12 @@ class TestDisabledUserNgauth(TestCase):
     def setUp(self):
         self.user = User.objects.create(email="user@example.org", name="User")
         self.key = APIKey.objects.create(user=self.user, key="tok-ng-user")
+        self.dataset = Dataset.objects.create(name="ds1")
+        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        view_perm, _ = Permission.objects.get_or_create(name="view")
+        Grant.objects.create(
+            user=self.user, dataset=self.dataset, permission=view_perm,
+        )
         self.client.cookies[settings.AUTH_COOKIE_NAME] = self.key.key
 
     def _post_activate(self):
@@ -63,6 +70,22 @@ class TestDisabledUserNgauth(TestCase):
         self.user.is_active = True
         self.user.save()
         resp = self.client.post("/token")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_expired_api_key_cannot_mint_user_token(self):
+        self.key.expires_at = timezone.now() - timezone.timedelta(seconds=1)
+        self.key.save(update_fields=["expires_at"])
+
+        resp = self.client.post("/token")
+
+        self.assertEqual(resp.status_code, 401)
+
+    def test_nonexpiring_api_key_can_mint_user_token(self):
+        self.key.expires_at = None
+        self.key.save(update_fields=["expires_at"])
+
+        resp = self.client.post("/token")
+
         self.assertEqual(resp.status_code, 200)
 
     @patch("ngauth.gcs.get_gcs_token_for_user", return_value="gcs-access-token")

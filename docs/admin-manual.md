@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with setup, admin workflow, environment variable, and management command changes.
-last_reviewed: 2026-06-01
+last_reviewed: 2026-08-10
 ---
 
 # DatasetGateway Admin Manual
@@ -195,7 +195,9 @@ Each row is a dataset. Key fields:
 **Inline sections on the Dataset detail page:**
 
 - **Dataset buckets** — the GCS buckets associated with this dataset.
-  Used for IAM provisioning and Neuroglancer token issuance. Adding,
+  These mappings are the authoritative entry point for Neuroglancer token
+  authorization; the same bucket name on several datasets declares union
+  semantics. They are also used by the separate IAM provisioning subsystem. Adding,
   renaming, or deleting a bucket here immediately syncs bucket IAM for
   the dataset's users (see [Bucket IAM Synchronization](#bucket-iam-synchronization)).
 - **Dataset versions** — the versioned releases. Each version can be
@@ -352,6 +354,12 @@ logins. You generally don't need to touch them.
 ---
 
 ## Bucket IAM Synchronization
+
+This subsystem is not an authorization gate for ngauth `/gcs_token`.
+That endpoint authorizes from DSG's dataset/grant/TOS model and mints a
+one-bucket read credential without checking the requesting user's bucket
+IAM. IAM synchronization remains available for clients that access GCS
+under their own Google identity.
 
 DSG grants and revokes per-user GCS bucket IAM (`core/iam.py`) at
 `(user, bucket)` grain. A user is provisioned on a bucket only when the

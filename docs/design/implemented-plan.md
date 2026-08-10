@@ -1,7 +1,7 @@
 ---
 doc_status: historical-record
 sync_policy: Preserve as implementation history; update only for deliberate retrospective notes.
-last_reviewed: 2026-06-01
+last_reviewed: 2026-08-10
 ---
 
 # DatasetGateway Implementation Record
@@ -55,7 +55,7 @@ Add a new section documenting the SCIM 2.0 provisioning endpoints derived from t
 | Token storage | Database `APIKey` model + Django cache | Replaces CAVE's Redis; Django cache swappable to Redis later |
 | ngauth tokens | HMAC-SHA256 encoded tokens (port from tos-ngauth) | Internal plumbing for Neuroglancer cross-origin `/token` flow only |
 | TOS scope | Both dataset-wide and per-version (admin chooses) | Admin sets per TOSDocument whether it applies to entire dataset or specific version |
-| GCS auth | Both bucket IAM + downscoped tokens | `/activate` adds user to bucket IAM; `/gcs_token` issues downscoped tokens for Neuroglancer |
+| GCS auth | DSG-authorized downscoped tokens plus separate bucket IAM sync | `/gcs_token` authorizes from DSG grants/TOS and issues one-bucket tokens; `/activate` accepts only `tos_id` and may sync model-sanctioned IAM |
 | Dependency management | `pyproject.toml` | Modern Python packaging standard |
 
 ### Project Structure
@@ -221,19 +221,28 @@ All views in `cave_api/oauth_views.py`:
 
 **Step 8: Implement ngauth endpoints**
 - `ngauth/tokens.py`: Port HMAC token encode/decode from tos-ngauth `auth.py`
-- `ngauth/gcs.py`: Port `check_storage_permission()`, `generate_bounded_access_token()`, `get_gcs_token_for_user()` from tos-ngauth
+- `ngauth/gcs.py`: Port the STS downscoping and IAM provisioning helpers
 - `ngauth/views.py`:
   - `GET /` — Landing page with TOS
   - `GET /health` — Health check
   - `GET /auth/login`, `GET /auth/callback` — OAuth flow
   - `GET /login` — Login status / ngauth popup flow
   - `POST /logout`
-  - `POST /activate` — TOS acceptance + bucket IAM provisioning
+  - `POST /activate` — `tos_id` acceptance + model-derived bucket IAM sync;
+    caller-chosen bucket provisioning was removed retrospectively
   - `GET /success`
   - `POST /token` — Cross-origin user token (CORS handling)
   - `POST /gcs_token` — Downscoped GCS access token
   - CORS preflight for `/token` and `/gcs_token`
 - Templates: `index.html`, `login_status.html`, `success.html`
+
+> *Implementation note (retrospective, 2026-08-10):* `/gcs_token` no longer
+> checks the human user's bucket IAM policy. It resolves the bucket through
+> `DatasetBucket`, authorizes with DSG's shared grant containment and TOS
+> model, then mints a one-bucket `objectViewer` token. The direct IAM probe
+> and `/activate` raw-bucket fallback were removed; the separate,
+> model-derived IAM synchronization subsystem remains for direct-access
+> clients.
 
 **Step 9: Implement SCIM infrastructure**
 - `scim/renderers.py`, `scim/parsers.py`: `application/scim+json`

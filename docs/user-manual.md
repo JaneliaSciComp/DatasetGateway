@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with user-facing workflow, role, login, TOS, and API behavior changes.
-last_reviewed: 2026-06-01
+last_reviewed: 2026-08-10
 ---
 
 # DatasetGateway User Manual
@@ -71,6 +71,13 @@ calls `POST /token` (server-side, so it can read the cookie) to get a
 short-lived token, and exchanges that for a time-limited GCS read
 credential via `POST /gcs_token`. This lets the browser load data
 directly from cloud storage without exposing long-lived credentials.
+DatasetGateway resolves the requested bucket through every matching
+dataset-bucket mapping, then applies the same grant containment rules as
+the native authorization API, including group grants, bucket and version
+scope, and TOS at the same covered anchor. Service-scoped grants do not
+authorize a direct GCS token, and no per-user bucket IAM probe is made.
+For a public dataset, an enabled user needs no grant, but must still accept
+any applicable TOS; a pending TOS response includes the DSG acceptance URL.
 
 **neuPrint, celltyping-light, Clio** — These services validate users
 by calling DatasetGateway's `/api/v1/user/cache` with the user's token,
@@ -95,6 +102,12 @@ If a dataset has an associated **Terms of Service (TOS)** document, users
 must accept the TOS before their permissions take effect. Permissions
 exist in the database but are hidden from API responses until TOS is
 accepted.
+
+The ngauth `POST /activate` endpoint accepts `tos_id` as its only
+actionable field. A legacy caller-chosen `bucket` value cannot provision
+access: bucket-only requests are rejected, and a `bucket` field alongside
+a valid `tos_id` is ignored. Dataset-scoped TOS acceptance may still run
+the separately maintained, DSG-derived bucket IAM synchronization path.
 
 ---
 

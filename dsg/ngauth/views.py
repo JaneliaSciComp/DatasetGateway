@@ -5,6 +5,7 @@ plus TOS gating and GCS token issuance.
 """
 
 import json
+import logging
 import re
 import time
 from urllib.parse import urlencode
@@ -24,10 +25,18 @@ from django.utils.decorators import method_decorator
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from core.audit import log_audit
+from core.authz import (
+    BucketAuthorizationStatus,
+    build_tos_url,
+    evaluate_bucket_authorization,
+)
 from core.models import APIKey, TOSAcceptance, TOSDocument, User
 from core.origins import is_origin_syntax_valid as _is_origin_syntax_valid
 
 from . import gcs, tokens
+
+
+logger = logging.getLogger(__name__)
 
 
 def _get_session_key():
@@ -49,7 +58,7 @@ def _get_user_from_cookie(request):
         api_key = APIKey.objects.select_related("user").get(key=cookie_value)
     except APIKey.DoesNotExist:
         return None
-    if not api_key.user.is_enabled:
+    if api_key.is_expired or not api_key.user.is_enabled:
         return None
     return api_key.user.email
 
@@ -88,6 +97,23 @@ def _cors_headers(request):
             "Vary": "origin",
         }
     return {}
+
+
+def _log_gcs_token_decision(user_email, bucket, decision, reason, level=logging.INFO):
+    logger.log(
+        level,
+        "GCS token decision user=%s bucket=%s decision=%s reason=%s",
+        user_email,
+        bucket,
+        decision,
+        reason,
+        extra={
+            "user": user_email,
+            "bucket": bucket,
+            "decision": decision,
+            "reason": reason,
+        },
+    )
 
 
 class IndexView(View):
@@ -217,37 +243,48 @@ class ActivateView(View):
         tos_id = body.get("tos_id") or request.POST.get("tos_id")
         bucket = body.get("bucket") or request.POST.get("bucket")
 
-        # Accept TOS if provided
-        tos_doc = None
-        if tos_id:
-            try:
-                tos_doc = TOSDocument.objects.select_related("dataset").get(pk=tos_id)
-                acceptance, created = TOSAcceptance.objects.get_or_create(
-                    user=user,
-                    tos_document=tos_doc,
-                    defaults={"ip_address": request.META.get("REMOTE_ADDR")},
+        if not tos_id:
+            if bucket:
+                logger.info(
+                    "Rejected legacy bucket-only activation request",
+                    extra={
+                        "user": user.email,
+                        "bucket": bucket,
+                        "decision": "legacy_bucket_rejected",
+                    },
                 )
-                if created:
-                    log_audit(user, "tos_accepted", "TOSAcceptance", acceptance.pk,
-                              after_state={
-                                  "user": user.email, "tos_document": tos_doc.name,
-                                  "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
-                              })
-            except TOSDocument.DoesNotExist:
-                return JsonResponse({"error": "TOS document not found"}, status=404)
+            return JsonResponse({"error": "Missing tos_id"}, status=400)
+
+        try:
+            tos_doc = TOSDocument.objects.select_related("dataset").get(pk=tos_id)
+            acceptance, created = TOSAcceptance.objects.get_or_create(
+                user=user,
+                tos_document=tos_doc,
+                defaults={"ip_address": request.META.get("REMOTE_ADDR")},
+            )
+            if created:
+                log_audit(user, "tos_accepted", "TOSAcceptance", acceptance.pk,
+                          after_state={
+                              "user": user.email, "tos_document": tos_doc.name,
+                              "dataset": tos_doc.dataset.name if tos_doc.dataset else None,
+                          })
+        except TOSDocument.DoesNotExist:
+            return JsonResponse({"error": "TOS document not found"}, status=404)
+
+        if bucket:
+            logger.info(
+                "Ignored legacy bucket field on TOS activation",
+                extra={
+                    "user": user.email,
+                    "bucket": bucket,
+                    "decision": "legacy_bucket_ignored",
+                },
+            )
 
         # Sync IAM for dataset-scoped TOS
-        if tos_doc and tos_doc.dataset:
+        if tos_doc.dataset:
             from core.iam import sync_user_dataset_iam
             sync_user_dataset_iam(user, tos_doc.dataset)
-        elif bucket:
-            # Legacy fallback: add user to specific bucket
-            from core.iam import provision_binding
-            result = provision_binding(bucket, user_email)
-            if result == "failed":
-                return JsonResponse(
-                    {"error": "Failed to provision bucket access"}, status=500
-                )
 
         return JsonResponse({"status": "activated"})
 
@@ -356,13 +393,98 @@ class GCSTokenView(View):
                 {"error": "User account is disabled"}, status=401, headers=headers
             )
 
-        # Get GCS token
-        gcs_token = gcs.get_gcs_token_for_user(user.email, bucket)
-        if not gcs_token:
+        authorization = evaluate_bucket_authorization(user, bucket)
+        if not authorization.authorized:
+            _log_gcs_token_decision(
+                user.email,
+                bucket,
+                "denied",
+                authorization.reason,
+            )
+            if authorization.status == BucketAuthorizationStatus.TOS_REQUIRED:
+                tos_url = build_tos_url(
+                    request,
+                    service_name=None,
+                    dataset=authorization.dataset,
+                    anchor=authorization.anchor,
+                    return_url=None,
+                    pending_documents=authorization.pending_documents,
+                )
+                return JsonResponse(
+                    {
+                        "error": "tos_required",
+                        "message": (
+                            "Terms acceptance is required for dataset "
+                            f"{authorization.dataset.name}: {tos_url}"
+                        ),
+                        "tos_url": tos_url,
+                    },
+                    status=403,
+                    headers=headers,
+                )
             return JsonResponse(
                 {"error": "Access denied"}, status=403, headers=headers
             )
 
+        try:
+            gcs_token = gcs.get_gcs_token_for_user(user.email, bucket)
+        except gcs.ADCUnavailableError as exc:
+            _log_gcs_token_decision(
+                user.email,
+                bucket,
+                "error",
+                exc.reason_code,
+                level=logging.WARNING,
+            )
+            return JsonResponse(
+                {"error": "Credential service unavailable"},
+                status=503,
+                headers=headers,
+            )
+        except gcs.STSResponseError as exc:
+            _log_gcs_token_decision(
+                user.email,
+                bucket,
+                "error",
+                exc.reason_code,
+                level=logging.WARNING,
+            )
+            return JsonResponse(
+                {"error": "Credential exchange failed"},
+                status=502,
+                headers=headers,
+            )
+        except gcs.STSUnavailableError as exc:
+            _log_gcs_token_decision(
+                user.email,
+                bucket,
+                "error",
+                exc.reason_code,
+                level=logging.WARNING,
+            )
+            return JsonResponse(
+                {"error": "Credential service unavailable"},
+                status=503,
+                headers=headers,
+            )
+        if not gcs_token:
+            _log_gcs_token_decision(
+                user.email,
+                bucket,
+                "error",
+                "sts_unusable_response",
+                level=logging.WARNING,
+            )
+            return JsonResponse(
+                {"error": "Credential exchange failed"}, status=502, headers=headers
+            )
+
+        _log_gcs_token_decision(
+            user.email,
+            bucket,
+            "issued",
+            authorization.reason,
+        )
         return JsonResponse({"token": gcs_token}, headers=headers)
 
     def options(self, request):

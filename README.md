@@ -138,6 +138,11 @@ it calls `POST /token`, which reads the cookie server-side and returns a
 short-lived token. Neuroglancer then exchanges that token for a
 time-limited GCS access credential via `POST /gcs_token`, which grants
 read access to the specific cloud storage bucket holding the dataset.
+Before minting, DatasetGateway resolves the bucket through every matching
+`DatasetBucket` row and applies its own unscoped grant, group, version,
+bucket, and TOS rules. It does not use the caller's per-user bucket IAM as
+an authorization probe. Public datasets need no grant but still require
+any applicable TOS acceptance.
 
 **Other services** (neuPrint, celltyping-light, Clio) validate users by
 calling `/api/v1/user/cache` with the `dsg_token` value, the same way

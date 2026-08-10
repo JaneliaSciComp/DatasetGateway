@@ -1,7 +1,7 @@
 ---
 doc_status: brainstorm
 sync_policy: Pre-decision brainstorm under review by the maintainer and Codex. NOT synchronized with code — nothing described here is implemented. Once a direction is chosen, supersede this doc or split the decisions into the relevant living docs.
-last_reviewed: 2026-06-01
+last_reviewed: 2026-08-10
 ---
 
 # ngauth in DatasetGateway — Brainstorming & Design Options
@@ -14,6 +14,13 @@ last_reviewed: 2026-06-01
 > us (and Codex) a single reviewable artifact before we commit to a course of
 > action. File/line references point at `dsg/` as of this writing; verify
 > against the code and tests, which are the source of truth.
+
+> **Superseded behavior note (2026-08-10):** The direct per-user IAM probe
+> and `/activate` raw-bucket fallback discussed in the original snapshot
+> have been removed. `/gcs_token` now resolves every matching
+> `DatasetBucket`, authorizes from DSG grants and TOS, and then performs the
+> one-bucket STS downscope. `/activate` accepts only `tos_id`; IAM
+> provisioning survives as a separate model-derived subsystem.
 
 ---
 
@@ -62,18 +69,20 @@ The ngauth app exists at `dsg/ngauth/` and is mounted at the **URL root**
 `/`, `/health`, `/auth/login`, `/login`, `/logout`, `/activate`, `/success`,
 `/token`, `/gcs_token`.
 
-### 2.2 Server-side token issuance — correct
+### 2.2 Server-side token issuance — superseded by DSG-authoritative authorization
 
-`POST /gcs_token` (`dsg/ngauth/views.py:228`) is a faithful port:
-decode the HMAC user token → `check_storage_permission` (direct bucket IAM read)
-→ `generate_bounded_access_token` (STS downscope to `objectViewer` on the
-bucket) → return token. The HMAC encode/decode (`dsg/ngauth/tokens.py`) matches
-the prototype's `auth.py` format and has unit tests (`test_tokens.py`).
+`POST /gcs_token` decodes the HMAC user token, reloads the enabled user,
+resolves the requested bucket name through every `DatasetBucket` row, and
+applies DSG's shared grant containment plus same-anchor TOS rules. Only
+after DSG authorizes does `generate_bounded_access_token` downscope the
+runtime credential to `objectViewer` on that one bucket. The HMAC
+encode/decode (`dsg/ngauth/tokens.py`) still matches the prototype's
+`auth.py` format and has unit tests (`test_tokens.py`).
 
-Notable improvement over the prototype: DSG does a **direct bucket IAM read**
-(`bucket.get_iam_policy`, `dsg/ngauth/gcs.py:20`) rather than the Policy
-Troubleshooter API. The STS form-encoding (`gcs.py:40`) is also cleaner
-(single-encode vs. the prototype's double-encode trick).
+Unlike the prototype, token authorization does not inspect the human
+user's bucket IAM. Bucket existence, grants, groups, version reach,
+grant-bucket restrictions, service scope, public access, and TOS are DSG
+model decisions. The STS form-encoding remains a single encode.
 
 ### 2.3 The cross-origin login handshake — **MISSING (blocker for live Neuroglancer)**
 
@@ -111,8 +120,9 @@ obtain the user token, which is the prerequisite for `/gcs_token`.
 
 ### 2.5 Test coverage
 
-Only HMAC unit tests exist (`dsg/ngauth/tests/test_tokens.py`). No integration
-test exercises `/login → /token → /gcs_token`, origin/CORS, or postMessage.
+The current suite includes HMAC unit tests plus endpoint coverage for the
+`/login → /token → /gcs_token` handshake, origin/CORS gating, DSG bucket
+authorization, TOS pointers, public access, and STS failure mapping.
 
 ---
 
@@ -134,10 +144,9 @@ DSG has a general `AuditLog` + `log_audit()` (`core/audit.py`) used across admin
 mutations (grants, users, SCIM) with no prototype equivalent.
 
 **Honest caveats:**
-- Granularity matches the prototype, not finer. `/activate` records acceptance;
-  `/gcs_token` (the actual token-issuance / data-access event) persists nothing
-  — just `logger.info`, same as the prototype. And `/activate` itself does not
-  call `log_audit()` (only creates the `TOSAcceptance` row).
+- `/activate` records and audits TOS acceptance. `/gcs_token` persists no
+  access row, but logs issuance and denial with user, bucket, decision, and
+  a sanitized reason code.
 - Backend is **sqlite** (`settings.py:86`, `DATABASE_PATH`-overridable) under a
   **long-running container** deploy (`scripts/deploy.py` → `docker compose up`),
   not Cloud Run. The prototype used Firestore *because* Cloud Run is stateless.
@@ -300,8 +309,8 @@ doubles as the readiness check.
 
 For a bucket the gateway must serve via ngauth, the chosen identity needs, on
 that bucket:
-- `storage.buckets.getIamPolicy` — for `check_storage_permission`
-- `storage.buckets.getIamPolicy` + `setIamPolicy` — for `add/remove_user_to_bucket`
+- `storage.buckets.getIamPolicy` + `setIamPolicy` only if the separate
+  per-user IAM provisioning subsystem is enabled
 - **its own object read** (`storage.objects.get`/`list`) — so the downscoped
   token can actually read (see §4.2.2)
 
@@ -392,9 +401,10 @@ DSG (`dsg/`):
 - `dsg/urls.py:12` — ngauth mounted at root
 - `ngauth/urls.py` — route list
 - `ngauth/views.py:90` — `LoginStatusView` (static; no origin/postMessage)
-- `ngauth/views.py:144` — `/activate` writes `TOSAcceptance`
-- `ngauth/views.py:228` — `/gcs_token`
-- `ngauth/gcs.py:25,108,128` — `storage.Client()`; `:47` — `google.auth.default()`; `:58` — downscope resource wildcard
+- `ngauth/views.py` — `/activate` writes `TOSAcceptance`; `/gcs_token`
+  performs DSG model authorization before minting
+- `ngauth/gcs.py` — `storage.Client()` remains for IAM provisioning;
+  `google.auth.default()` and STS mint the one-bucket downscoped token
 - `ngauth/tokens.py` — HMAC token (matches prototype `auth.py`)
 - `core/models.py:189` — `DatasetBucket` (only `dataset` + `name`)
 - `core/models.py:352` — `TOSAcceptance`
