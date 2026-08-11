@@ -143,6 +143,20 @@ LOGGING = {
             "level": DSG_LOG_LEVEL,
             "propagate": False,
         },
+        # /gcs_token issuance/denial decisions are INFO-level and are the only
+        # per-user access record (the minted bearer token is not linked to the
+        # user), so they must reach a handler regardless of DSG_LOG_LEVEL.
+        "ngauth.views": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # web.views warns on rejected TOS return origins.
+        "web.views": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
     },
 }
 
