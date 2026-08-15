@@ -4,10 +4,6 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
-_PREVIOUS_MODEL_NAME = "Dataset" + "Alias"
-_PREVIOUS_CONSTRAINT_PREFIX = "uniq_dataset_" + "alias_service_name_"
-
-
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -16,7 +12,7 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.RenameModel(
-            old_name=_PREVIOUS_MODEL_NAME,
+            old_name='DatasetAlias',
             new_name='DatasetTranslation',
         ),
         migrations.AlterField(
@@ -34,30 +30,24 @@ class Migration(migrations.Migration):
             name='service',
             field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='dataset_translations', to='core.service'),
         ),
-        # The constraint definitions are unchanged. Updating only Django's
-        # state avoids SQLite's table-copy implementation for cosmetic names.
-        migrations.SeparateDatabaseAndState(
-            state_operations=[
-                migrations.RemoveConstraint(
-                    model_name='datasettranslation',
-                    name=_PREVIOUS_CONSTRAINT_PREFIX + 'version',
-                ),
-                migrations.RemoveConstraint(
-                    model_name='datasettranslation',
-                    name=_PREVIOUS_CONSTRAINT_PREFIX + 'null_version',
-                ),
-                migrations.AddConstraint(
-                    model_name='datasettranslation',
-                    constraint=models.UniqueConstraint(fields=('service', 'client_name', 'client_version'), name='uniq_dataset_translation_service_name_version'),
-                ),
-                migrations.AddConstraint(
-                    model_name='datasettranslation',
-                    constraint=models.UniqueConstraint(condition=models.Q(('client_version__isnull', True)), fields=('service', 'client_name'), name='uniq_dataset_translation_service_name_null_version'),
-                ),
-            ],
-        ),
         migrations.AlterModelTable(
             name='datasettranslation',
             table='dataset_translation',
+        ),
+        migrations.RemoveConstraint(
+            model_name='datasettranslation',
+            name='uniq_dataset_alias_service_name_version',
+        ),
+        migrations.RemoveConstraint(
+            model_name='datasettranslation',
+            name='uniq_dataset_alias_service_name_null_version',
+        ),
+        migrations.AddConstraint(
+            model_name='datasettranslation',
+            constraint=models.UniqueConstraint(fields=('service', 'client_name', 'client_version'), name='uniq_dataset_translation_service_name_version'),
+        ),
+        migrations.AddConstraint(
+            model_name='datasettranslation',
+            constraint=models.UniqueConstraint(condition=models.Q(('client_version__isnull', True)), fields=('service', 'client_name'), name='uniq_dataset_translation_service_name_null_version'),
         ),
     ]
