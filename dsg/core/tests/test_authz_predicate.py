@@ -10,6 +10,7 @@ from core.authz import (
     evaluate_bucket_authorization,
     evaluate_containment,
     expand_permission,
+    public_version_coverage,
 )
 from core.models import (
     Dataset,
@@ -68,6 +69,106 @@ class TestAuthzContainmentPredicate(TestCase):
         )
 
         self.assertEqual(decision.status, ContainmentStatus.COVERED)
+
+
+@pytest.mark.django_db
+class TestPublicVersionCoverage(TestCase):
+    def setUp(self):
+        self.linear_service = Service.objects.create(
+            name="public-linear",
+            version_eval_mode=Service.VERSION_EVAL_LINEAR,
+        )
+        self.dag_service = Service.objects.create(
+            name="public-dag",
+            version_eval_mode=Service.VERSION_EVAL_DAG,
+        )
+        self.dataset = Dataset.objects.create(name="public-coverage")
+        self.v1 = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="v1",
+            branch="main",
+            ordinal=1,
+        )
+        self.v2 = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="v2",
+            branch="main",
+            ordinal=2,
+            is_public=True,
+        )
+        self.v3 = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="v3",
+            branch="main",
+            ordinal=3,
+        )
+        self.alt = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="alt",
+            branch="alt",
+            ordinal=1,
+        )
+        self.unranked = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="unranked",
+            branch="main",
+            is_public=True,
+        )
+        self.user = User.objects.create(email="public-coverage@example.org")
+
+    def _target(self, version):
+        return ResolvedTarget(
+            dataset=version.dataset,
+            branch=version.branch,
+            ordinal=version.ordinal,
+            dataset_version=version,
+        )
+
+    def _coverage(self, target, permission="view", service=None, principal=None):
+        return public_version_coverage(
+            principal or self.user,
+            target,
+            requested_permission=permission,
+            service=service or self.linear_service,
+        )
+
+    def test_ordinal_public_version_covers_exact_and_same_branch_ancestor_only(self):
+        self.assertTrue(self._coverage(self._target(self.v2)).covered)
+        self.assertTrue(self._coverage(self._target(self.v1)).covered)
+        self.assertFalse(self._coverage(self._target(self.v3)).covered)
+        self.assertFalse(self._coverage(self._target(self.alt)).covered)
+
+    def test_null_ordinal_public_version_covers_only_itself(self):
+        self.assertTrue(self._coverage(self._target(self.unranked)).covered)
+
+        sibling = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="unranked-sibling",
+            branch="main",
+        )
+        self.assertFalse(self._coverage(self._target(sibling)).covered)
+
+    def test_dag_returns_ordinal_anchors_for_noncovering_target_and_skips_null(self):
+        coverage = self._coverage(self._target(self.alt), service=self.dag_service)
+
+        self.assertFalse(coverage.covered)
+        self.assertEqual(coverage.service_eval_versions, (self.v2,))
+
+    def test_dataset_grain_non_view_disabled_and_service_account_are_not_covered(self):
+        dataset_grain = self._coverage(ResolvedTarget(dataset=self.dataset))
+        non_view = self._coverage(self._target(self.v2), permission="edit")
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        disabled = self._coverage(self._target(self.v2))
+        service_account = ServiceAccount.objects.create(name="public-coverage-sa")
+        service_account_result = self._coverage(
+            self._target(self.v2),
+            principal=service_account,
+        )
+
+        for result in (dataset_grain, non_view, disabled, service_account_result):
+            self.assertFalse(result.covered)
+            self.assertEqual(result.service_eval_versions, ())
 
 
 @pytest.mark.django_db
@@ -293,6 +394,115 @@ class TestBucketAuthorizationPredicate(TestCase):
 
         self.assertEqual(decision.status, BucketAuthorizationStatus.TOS_REQUIRED)
         self.assertEqual(decision.anchor.dataset_version, self.v1)
+
+    def test_public_version_covers_exact_and_ancestor_buckets_only(self):
+        descendant_bucket = DatasetBucket.objects.create(
+            dataset=self.dataset,
+            name="bucket-descendant",
+        )
+        other_branch_bucket = DatasetBucket.objects.create(
+            dataset=self.dataset,
+            name="bucket-other-branch",
+        )
+        descendant = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="v3",
+            branch="main",
+            ordinal=3,
+        )
+        other_branch = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="alt",
+            branch="alt",
+            ordinal=1,
+        )
+        self.v1.buckets.add(self.bucket_a)
+        self.v2.buckets.add(self.bucket_b)
+        descendant.buckets.add(descendant_bucket)
+        other_branch.buckets.add(other_branch_bucket)
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+
+        exact = self._decision(self.bucket_b.name)
+        ancestor = self._decision(self.bucket_a.name)
+        descendant_result = self._decision(descendant_bucket.name)
+        other_branch_result = self._decision(other_branch_bucket.name)
+
+        self.assertEqual(exact.status, BucketAuthorizationStatus.AUTHORIZED)
+        self.assertEqual(exact.reason, "public-version")
+        self.assertEqual(ancestor.status, BucketAuthorizationStatus.AUTHORIZED)
+        self.assertEqual(ancestor.reason, "public-version")
+        self.assertEqual(descendant_result.status, BucketAuthorizationStatus.DENIED)
+        self.assertEqual(other_branch_result.status, BucketAuthorizationStatus.DENIED)
+
+    def test_null_ordinal_public_version_covers_only_its_bucket(self):
+        unranked = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="unranked",
+            is_public=True,
+        )
+        unranked.buckets.add(self.bucket_a)
+        self.v1.buckets.add(self.bucket_b)
+
+        exact = self._decision(self.bucket_a.name)
+        sibling = self._decision(self.bucket_b.name)
+
+        self.assertEqual(exact.status, BucketAuthorizationStatus.AUTHORIZED)
+        self.assertEqual(exact.reason, "public-version")
+        self.assertEqual(sibling.status, BucketAuthorizationStatus.DENIED)
+
+    def test_public_version_does_not_cover_dataset_grain_or_nonhuman_principals(self):
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        self.v2.buckets.add(self.bucket_b)
+
+        dataset_grain = self._decision(self.bucket_a.name)
+        service_account = ServiceAccount.objects.create(name="public-bucket-sa")
+        service_account_result = evaluate_bucket_authorization(
+            service_account,
+            self.bucket_b.name,
+        )
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        disabled = self._decision(self.bucket_b.name)
+
+        self.assertEqual(dataset_grain.status, BucketAuthorizationStatus.DENIED)
+        self.assertEqual(service_account_result.status, BucketAuthorizationStatus.DENIED)
+        self.assertEqual(disabled.status, BucketAuthorizationStatus.DENIED)
+
+    def test_public_version_tos_is_live_and_evaluated_at_target(self):
+        self.v1.buckets.add(self.bucket_a)
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        TOSDocument.objects.create(
+            name="Public release terms",
+            text="Terms",
+            dataset_version=self.v2,
+        )
+
+        before_target_tos = self._decision(self.bucket_a.name)
+        target_tos = TOSDocument.objects.create(
+            name="Ancestor terms",
+            text="Terms",
+            dataset_version=self.v1,
+        )
+        after_target_tos = self._decision(self.bucket_a.name)
+
+        self.assertEqual(
+            before_target_tos.status,
+            BucketAuthorizationStatus.AUTHORIZED,
+        )
+        self.assertEqual(after_target_tos.status, BucketAuthorizationStatus.TOS_REQUIRED)
+        self.assertEqual(after_target_tos.pending_documents, (target_tos,))
+
+    def test_dataset_public_reason_remains_distinct(self):
+        self.dataset.access_mode = Dataset.ACCESS_PUBLIC
+        self.dataset.save(update_fields=["access_mode"])
+
+        decision = self._decision(self.bucket_a.name)
+
+        self.assertEqual(decision.status, BucketAuthorizationStatus.AUTHORIZED)
+        self.assertEqual(decision.reason, "public")
 
 
 @pytest.mark.django_db

@@ -205,7 +205,7 @@ class TestGCSTokenAuthorization(TestCase):
         mock_get_token.assert_not_called()
 
     @patch("ngauth.gcs.get_gcs_token_for_user", return_value="bounded-token")
-    def test_public_dataset_zero_grant_funnel_and_public_version_nonrule(
+    def test_public_dataset_and_public_version_zero_grant_funnel(
         self, mock_get_token,
     ):
         self.grant.delete()
@@ -270,10 +270,9 @@ class TestGCSTokenAuthorization(TestCase):
         )
         public_version.buckets.add(closed_bucket)
 
-        closed = self._post(bucket_name=closed_bucket.name)
-        self.assertEqual(closed.status_code, 403)
-        self.assertEqual(closed.json(), {"error": "Access denied"})
-        self.assertEqual(mock_get_token.call_count, 2)
+        version_public = self._post(bucket_name=closed_bucket.name)
+        self.assertEqual(version_public.status_code, 200)
+        self.assertEqual(mock_get_token.call_count, 3)
 
     @patch("ngauth.gcs.get_gcs_token_for_user")
     def test_version_tos_pointer_identifies_anchor_without_next(self, mock_get_token):

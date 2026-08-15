@@ -307,7 +307,7 @@ class TestNativeAuthorize(TestCase):
     @override_settings(
         TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)
     )
-    def test_public_self_service_tos_round_trip_and_public_version_metadata_only(self):
+    def test_public_self_service_tos_round_trip_and_public_version_access(self):
         public = Dataset.objects.create(name="public-ds", access_mode=Dataset.ACCESS_PUBLIC)
         tos = TOSDocument.objects.create(name="Public TOS", text="Terms.", dataset=public)
         public.tos = tos
@@ -345,7 +345,146 @@ class TestNativeAuthorize(TestCase):
         closed_decision = self._post([
             {"name": closed.name, "version": "v1"}
         ]).json()["entries"][0]
-        self.assertEqual(closed_decision["decision"], "deny")
+        self.assertEqual(closed_decision["decision"], "allow")
+        self.assertEqual(closed_decision["roles"], ["view"])
+
+    def test_public_version_linear_coverage_matrix_and_dataset_grain(self):
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+
+        decisions = self._post([
+            {"name": "canonical", "version": "v2"},
+            {"name": "canonical", "version": "v1"},
+            {"name": "canonical", "version": "3", "branch": "main"},
+            {"name": "canonical", "version": "alt1"},
+            {"name": "canonical"},
+        ]).json()["entries"]
+
+        self.assertEqual(
+            [decision["decision"] for decision in decisions],
+            ["allow", "allow", "deny", "deny", "deny"],
+        )
+        self.assertEqual(decisions[0]["roles"], ["view"])
+        self.assertEqual(decisions[1]["roles"], ["view"])
+
+    def test_null_ordinal_public_version_covers_only_exact_version(self):
+        unranked = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="unranked",
+            is_public=True,
+        )
+
+        decisions = self._post([
+            {"name": "canonical", "version": unranked.version},
+            {"name": "canonical", "version": self.v1.version},
+        ]).json()["entries"]
+
+        self.assertEqual(
+            [decision["decision"] for decision in decisions],
+            ["allow", "deny"],
+        )
+
+    def test_dag_public_anchors_merge_with_grant_anchors_and_skip_null_ordinals(self):
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="unranked-public",
+            is_public=True,
+        )
+        Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            dataset_version=self.v1,
+            permission=self.view_perm,
+        )
+
+        merged = self._post([
+            {"name": "canonical", "version": "alt1"}
+        ], service="dag").json()["entries"][0]
+
+        self.assertEqual(merged["decision"], "service_eval")
+        self.assertEqual(merged["roles"], ["view"])
+        self.assertEqual(merged["anchors"], [
+            {"branch": "main", "version": 1, "roles": ["view"]},
+            {"branch": "main", "version": 2, "roles": ["view"]},
+        ])
+
+        no_grant_user = User.objects.create(email="public-dag@example.org")
+        no_grant_key = APIKey.objects.create(
+            user=no_grant_user,
+            key="tok-public-dag",
+        )
+        public_only = self._post(
+            [{"name": "canonical", "version": "alt1"}],
+            service="dag",
+            key=no_grant_key.key,
+        ).json()["entries"][0]
+
+        self.assertEqual(public_only["decision"], "service_eval")
+        self.assertEqual(public_only["anchors"], [
+            {"branch": "main", "version": 2, "roles": ["view"]},
+        ])
+
+    def test_public_version_does_not_grant_edit_or_service_account_view(self):
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        service_account = ServiceAccount.objects.create(name="public-version-sa")
+        token = ServiceAccountToken.objects.create(
+            service_account=service_account,
+            key="tok-public-version-sa",
+            description="public version guard",
+        )
+
+        edit = self._post([{
+            "name": "canonical",
+            "version": "v2",
+            "permission": "edit",
+        }]).json()["entries"][0]
+        service_account_view = self._post(
+            [{"name": "canonical", "version": "v2"}],
+            key=token.key,
+        ).json()["entries"][0]
+
+        self.assertEqual(edit["decision"], "deny")
+        self.assertEqual(service_account_view["decision"], "deny")
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)
+    )
+    def test_public_version_tos_is_live_and_evaluated_at_target(self):
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+
+        initial = self._post([
+            {"name": "canonical", "version": "v1"}
+        ]).json()["entries"][0]
+        TOSDocument.objects.create(
+            name="Public release terms",
+            text="Terms.",
+            dataset_version=self.v2,
+        )
+        release_tos_only = self._post([
+            {"name": "canonical", "version": "v1"}
+        ]).json()["entries"][0]
+        target_tos = TOSDocument.objects.create(
+            name="Ancestor terms",
+            text="Terms.",
+            dataset_version=self.v1,
+        )
+        target_tos_required = self._post([
+            {"name": "canonical", "version": "v1"}
+        ]).json()["entries"][0]
+        TOSAcceptance.objects.create(user=self.user, tos_document=target_tos)
+        accepted = self._post([
+            {"name": "canonical", "version": "v1"}
+        ]).json()["entries"][0]
+
+        self.assertEqual(initial["decision"], "allow")
+        self.assertEqual(release_tos_only["decision"], "allow")
+        self.assertEqual(target_tos_required["decision"], "tos_required")
+        self.assertIn("version=v1", target_tos_required["tos_url"])
+        self.assertEqual(accepted["decision"], "allow")
 
     @override_settings(
         TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)
@@ -464,6 +603,34 @@ class TestNativeAuthorize(TestCase):
         self.assertEqual(mock_debug.call_count, 2)
         reasons = [call.args[-1] for call in mock_debug.call_args_list]
         self.assertEqual(reasons, ["covered", "unknown-translation"])
+
+    def test_public_decision_log_reasons_distinguish_dataset_and_version(self):
+        public_dataset = Dataset.objects.create(
+            name="log-public-dataset",
+            access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        version_public_dataset = Dataset.objects.create(name="log-public-version")
+        DatasetVersion.objects.create(
+            dataset=version_public_dataset,
+            version="v1",
+            is_public=True,
+        )
+
+        with override_settings(DSG_LOG_LEVEL="DEBUG"):
+            with patch("native_api.views.logger.debug") as mock_debug:
+                response = self._post([
+                    {"name": public_dataset.name},
+                    {"name": version_public_dataset.name, "version": "v1"},
+                ])
+
+        self.assertEqual(
+            [entry["decision"] for entry in response.json()["entries"]],
+            ["allow", "allow"],
+        )
+        self.assertEqual(
+            [call.args[-1] for call in mock_debug.call_args_list],
+            ["public", "public-version"],
+        )
 
 
 @pytest.mark.django_db

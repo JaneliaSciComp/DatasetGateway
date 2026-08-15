@@ -14,6 +14,7 @@ from core.authz import (
     evaluate_containment,
     expand_permission,
     pending_tos,
+    public_version_coverage,
     resolve_dataset_reference,
 )
 from core.models import (
@@ -127,6 +128,13 @@ class AuthorizeView(APIView):
                 principal, service_name, entry, base, "allow", "covered", roles=roles
             )
 
+        public_coverage = public_version_coverage(
+            principal,
+            target,
+            requested_permission=requested_permission,
+            service=service,
+        )
+
         if (
             containment.status == ContainmentStatus.NOT_COVERED
             and not isinstance(principal, ServiceAccount)
@@ -151,7 +159,10 @@ class AuthorizeView(APIView):
                 principal, service_name, entry, base, "allow", "public", roles=["view"]
             )
 
-        if containment.status == ContainmentStatus.INDETERMINATE:
+        if (
+            containment.status == ContainmentStatus.NOT_COVERED
+            and public_coverage.covered
+        ):
             pending = pending_tos(principal, target.dataset, service_name, target)
             if pending:
                 return _finish_decision(
@@ -161,13 +172,52 @@ class AuthorizeView(APIView):
                     base,
                     "tos_required",
                     "missing-tos",
-                    roles=_roles_from_rows(containment.indeterminate_rows, principal),
+                    roles=["view"],
+                    tos_url=build_tos_url(
+                        request, service_name, target.dataset, target, return_url, pending
+                    ),
+                )
+            return _finish_decision(
+                principal,
+                service_name,
+                entry,
+                base,
+                "allow",
+                "public-version",
+                roles=["view"],
+            )
+
+        public_anchors = _anchors_from_public_versions(
+            public_coverage.service_eval_versions
+        )
+        if containment.status == ContainmentStatus.INDETERMINATE or public_anchors:
+            grant_roles = _roles_from_rows(
+                containment.indeterminate_rows,
+                principal,
+            )
+            service_eval_roles = set(grant_roles)
+            if public_anchors:
+                service_eval_roles.add("view")
+
+            pending = pending_tos(principal, target.dataset, service_name, target)
+            if pending:
+                return _finish_decision(
+                    principal,
+                    service_name,
+                    entry,
+                    base,
+                    "tos_required",
+                    "missing-tos",
+                    roles=_ordered_roles(service_eval_roles),
                     tos_url=build_tos_url(
                         request, service_name, target.dataset, target, return_url, pending
                     ),
                 )
 
-            anchors = _anchors_from_rows(containment.indeterminate_rows, principal)
+            anchors = (
+                _anchors_from_rows(containment.indeterminate_rows, principal)
+                + public_anchors
+            )
             if anchors:
                 roles = _ordered_roles({
                     role for anchor in anchors for role in anchor["roles"]
@@ -329,6 +379,18 @@ def _anchors_from_rows(rows, principal):
             "roles": _roles_from_rows([row], principal),
         })
     return anchors
+
+
+def _anchors_from_public_versions(versions):
+    return [
+        {
+            "branch": version.branch,
+            "version": version.ordinal,
+            "roles": ["view"],
+        }
+        for version in versions
+        if version.ordinal is not None
+    ]
 
 
 def _ordered_roles(roles):

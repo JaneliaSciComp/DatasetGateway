@@ -686,6 +686,17 @@ class TestDatasetVersionAdminIAM(_AdminTestBase):
             permission=self.view_perm,
         )
 
+    def test_public_field_explains_ancestor_coverage(self):
+        form_class = self.ma.get_form(self.request, obj=self.version, change=True)
+
+        self.assertEqual(
+            form_class.base_fields["is_public"].help_text,
+            (
+                "Covers this version and, when ordinals are set, its "
+                "same-branch ancestors."
+            ),
+        )
+
     def _save_version_buckets_via_admin(self, bucket_ids, mock_remove=None, mock_add=None):
         FormClass = self.ma.get_form(self.request, obj=self.version, change=True)
         form = FormClass(data={

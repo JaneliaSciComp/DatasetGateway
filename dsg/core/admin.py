@@ -224,6 +224,14 @@ class DatasetVersionAdmin(admin.ModelAdmin):
     search_fields = ("dataset__name", "version")
     filter_horizontal = ("buckets",)
 
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        if db_field.name == "is_public":
+            kwargs["help_text"] = (
+                "Covers this version and, when ordinals are set, its "
+                "same-branch ancestors."
+            )
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
+
     def save_related(self, request, form, formsets, change):
         super().save_related(request, form, formsets, change)
         if "buckets" in form.changed_data:

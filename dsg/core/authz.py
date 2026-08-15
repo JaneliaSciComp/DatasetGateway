@@ -98,6 +98,12 @@ class BucketAuthorizationDecision:
         return self.status == BucketAuthorizationStatus.AUTHORIZED
 
 
+@dataclass(frozen=True)
+class PublicVersionCoverage:
+    covered: bool = False
+    service_eval_versions: tuple[DatasetVersion, ...] = ()
+
+
 def resolve_dataset_reference(service, client_name, client_version=None, branch=None):
     """Resolve a service/client dataset reference to a canonical DSG target."""
     branch = branch or "main"
@@ -186,6 +192,47 @@ def evaluate_containment(principal, service, target, requested_permission="view"
     )
 
 
+def public_version_coverage(
+    principal,
+    target,
+    requested_permission="view",
+    service=None,
+):
+    """Evaluate public-version view coverage for an enabled human principal.
+
+    A public version covers itself and same-branch ancestors at or below its
+    ordinal.  Without an ordinal it covers only its exact registered version.
+    For DAG services, non-covering public versions with ordinals are returned
+    as anchors for service-side ancestry evaluation.
+    """
+    if (
+        isinstance(principal, ServiceAccount)
+        or not bool(getattr(principal, "is_enabled", False))
+        or requested_permission != "view"
+        or target.is_dataset_grain
+    ):
+        return PublicVersionCoverage()
+
+    public_versions = tuple(
+        DatasetVersion.objects.filter(
+            dataset=target.dataset,
+            is_public=True,
+        ).order_by("pk")
+    )
+    if any(_public_version_covers_target(version, target) for version in public_versions):
+        return PublicVersionCoverage(covered=True)
+
+    service_obj = _coerce_service(service)
+    if service_obj is None or service_obj.version_eval_mode != Service.VERSION_EVAL_DAG:
+        return PublicVersionCoverage()
+
+    return PublicVersionCoverage(
+        service_eval_versions=tuple(
+            version for version in public_versions if version.ordinal is not None
+        )
+    )
+
+
 def evaluate_bucket_authorization(principal, bucket_name):
     """Evaluate DSG-model view access for one physical GCS bucket name.
 
@@ -220,12 +267,22 @@ def evaluate_bucket_authorization(principal, bucket_name):
                 for row in containment.covering_rows
                 if _row_is_valid_for_bucket(row, anchor, bucket_row)
             )
-            public_coverage = (
+            dataset_public_coverage = (
                 not isinstance(principal, ServiceAccount)
                 and bool(getattr(principal, "is_enabled", False))
                 and anchor.dataset.access_mode == Dataset.ACCESS_PUBLIC
             )
-            if not covering_rows and not public_coverage:
+            version_public_coverage = public_version_coverage(
+                principal,
+                anchor,
+                requested_permission="view",
+                service=None,
+            ).covered
+            if (
+                not covering_rows
+                and not dataset_public_coverage
+                and not version_public_coverage
+            ):
                 continue
 
             pending = tuple(
@@ -237,9 +294,15 @@ def evaluate_bucket_authorization(principal, bucket_name):
                 )
             )
             if not pending:
+                if covering_rows:
+                    reason = "covered"
+                elif dataset_public_coverage:
+                    reason = "public"
+                else:
+                    reason = "public-version"
                 return BucketAuthorizationDecision(
                     BucketAuthorizationStatus.AUTHORIZED,
-                    reason="public" if public_coverage and not covering_rows else "covered",
+                    reason=reason,
                     dataset=anchor.dataset,
                     anchor=anchor,
                 )
@@ -460,6 +523,20 @@ def _row_covers_target(row, target):
         )
 
     return target.ordinal is not None and target.branch == row_version.branch and target.ordinal <= row_version.ordinal
+
+
+def _public_version_covers_target(public_version, target):
+    if public_version.ordinal is None:
+        return (
+            target.dataset_version is not None
+            and target.dataset_version.pk == public_version.pk
+        )
+
+    return (
+        target.ordinal is not None
+        and target.branch == public_version.branch
+        and target.ordinal <= public_version.ordinal
+    )
 
 
 def _bucket_anchors(bucket_row):

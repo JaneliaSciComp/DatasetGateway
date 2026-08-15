@@ -219,7 +219,12 @@ datasets.
 | **Version** | Version string (e.g., `v1`, `2026-01`). |
 | **Buckets** | The GCS buckets linked to this version (selected from the dataset's bucket list). |
 | **Prefix** | Optional path prefix within the bucket. |
-| **Is public** | Whether this version's data is publicly readable (no auth needed). |
+| **Is public** | Grants enabled human principals `view` access to this version and, when ordinals are set, its same-branch ancestors. It does not make the dataset-grain target public. |
+
+Terms are evaluated at the version a user requests. A version-grain TOS on a
+public version does not follow `is_public` ancestry to that version's ancestors.
+Use a dataset-grain TOS for a gated public release that must cover its ancestry
+(or a service-and-dataset-scoped TOS when the gate is service-specific).
 
 ### Group dataset permissions
 
