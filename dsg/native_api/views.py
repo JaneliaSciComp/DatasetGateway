@@ -160,7 +160,10 @@ class AuthorizeView(APIView):
             )
 
         if (
-            containment.status == ContainmentStatus.NOT_COVERED
+            containment.status in (
+                ContainmentStatus.NOT_COVERED,
+                ContainmentStatus.INDETERMINATE,
+            )
             and public_coverage.covered
         ):
             pending = pending_tos(principal, target.dataset, service_name, target)

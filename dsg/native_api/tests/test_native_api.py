@@ -426,6 +426,70 @@ class TestNativeAuthorize(TestCase):
             {"branch": "main", "version": 2, "roles": ["view"]},
         ])
 
+    def test_dag_public_ancestor_overrides_indeterminate_cross_branch_grant(self):
+        target = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="target-main-5",
+            branch="main",
+            ordinal=5,
+        )
+        DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="public-main-10",
+            branch="main",
+            ordinal=10,
+            is_public=True,
+        )
+        Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            dataset_version=self.alt,
+            permission=self.view_perm,
+        )
+
+        with override_settings(DSG_LOG_LEVEL="DEBUG"):
+            with patch("native_api.views.logger.debug") as mock_debug:
+                decision = self._post(
+                    [{"name": "canonical", "version": target.version}],
+                    service="dag",
+                ).json()["entries"][0]
+
+        self.assertEqual(decision["decision"], "allow")
+        self.assertEqual(decision["roles"], ["view"])
+        self.assertEqual(mock_debug.call_args.args[-1], "public-version")
+
+    def test_dag_uncovered_target_preserves_grant_only_service_eval(self):
+        dataset = Dataset.objects.create(name="genuinely-uncovered")
+        target = DatasetVersion.objects.create(
+            dataset=dataset,
+            version="target-main-5",
+            branch="main",
+            ordinal=5,
+        )
+        grant_anchor = DatasetVersion.objects.create(
+            dataset=dataset,
+            version="grant-alt-10",
+            branch="alt",
+            ordinal=10,
+        )
+        Grant.objects.create(
+            user=self.user,
+            dataset=dataset,
+            dataset_version=grant_anchor,
+            permission=self.view_perm,
+        )
+
+        decision = self._post(
+            [{"name": dataset.name, "version": target.version}],
+            service="dag",
+        ).json()["entries"][0]
+
+        self.assertEqual(decision["decision"], "service_eval")
+        self.assertEqual(decision["roles"], ["view"])
+        self.assertEqual(decision["anchors"], [
+            {"branch": "alt", "version": 10, "roles": ["view"]},
+        ])
+
     def test_public_version_does_not_grant_edit_or_service_account_view(self):
         self.v2.is_public = True
         self.v2.save(update_fields=["is_public"])
