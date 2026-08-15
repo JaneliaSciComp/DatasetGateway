@@ -18,7 +18,7 @@ from core.authz import (
 )
 from core.models import (
     Dataset,
-    DatasetAlias,
+    DatasetTranslation,
     DatasetVersion,
     Group,
     Grant,
@@ -81,7 +81,12 @@ class AuthorizeView(APIView):
         )
         if not resolved.found:
             return _finish_decision(
-                request.user, service_name, entry, base, "deny", "unknown-alias"
+                request.user,
+                service_name,
+                entry,
+                base,
+                "deny",
+                "unknown-translation",
             )
 
         target = resolved.target
@@ -365,24 +370,30 @@ def _dataset_visible(principal, dataset):
 def _dataset_name_for_service(dataset, service):
     if service is None:
         return dataset.name
-    alias = (
-        DatasetAlias.objects.filter(
+    translation = (
+        DatasetTranslation.objects.filter(
             service=service, dataset=dataset, client_version__isnull=True
         )
         .order_by("client_name")
         .first()
     )
-    return alias.client_name if alias else dataset.name
+    return translation.client_name if translation else dataset.name
 
 
 def _version_name_for_service(version, service, client_name):
     if service is None:
         return version.version
-    alias_qs = DatasetAlias.objects.filter(service=service, dataset_version=version)
-    alias = alias_qs.filter(client_name=client_name).order_by("client_version").first()
-    if alias is None:
-        alias = alias_qs.order_by("client_name", "client_version").first()
-    return alias.client_version if alias else version.version
+    translation_qs = DatasetTranslation.objects.filter(
+        service=service, dataset_version=version
+    )
+    translation = (
+        translation_qs.filter(client_name=client_name)
+        .order_by("client_version")
+        .first()
+    )
+    if translation is None:
+        translation = translation_qs.order_by("client_name", "client_version").first()
+    return translation.client_version if translation else version.version
 
 
 def _log_decision(principal, service_name, entry, decision, reason):

@@ -270,39 +270,49 @@ class DatasetVersion(models.Model):
         return f"{self.dataset.name}:{self.version}"
 
 
-class DatasetAlias(models.Model):
-    """Service-local dataset/version vocabulary mapped to canonical DSG anchors."""
+class DatasetTranslation(models.Model):
+    """Service-local dataset/version vocabulary translated to canonical DSG anchors."""
 
-    service = models.ForeignKey("Service", on_delete=models.CASCADE, related_name="dataset_aliases")
+    service = models.ForeignKey(
+        "Service", on_delete=models.CASCADE, related_name="dataset_translations"
+    )
     client_name = models.CharField(max_length=255)
     client_version = models.CharField(max_length=255, null=True, blank=True)
-    dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE, related_name="aliases")
+    dataset = models.ForeignKey(
+        Dataset, on_delete=models.CASCADE, related_name="translations"
+    )
     dataset_version = models.ForeignKey(
-        DatasetVersion, on_delete=models.CASCADE, null=True, blank=True, related_name="aliases"
+        DatasetVersion,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="translations",
     )
 
     class Meta:
-        db_table = "dataset_alias"
+        db_table = "dataset_translation"
         constraints = [
             models.UniqueConstraint(
                 fields=["service", "client_name", "client_version"],
-                name="uniq_dataset_alias_service_name_version",
+                name="uniq_dataset_translation_service_name_version",
             ),
             models.UniqueConstraint(
                 fields=["service", "client_name"],
                 condition=models.Q(client_version__isnull=True),
-                name="uniq_dataset_alias_service_name_null_version",
+                name="uniq_dataset_translation_service_name_null_version",
             ),
         ]
 
     def clean(self):
         super().clean()
         if self.client_version == "":
-            raise ValidationError({"client_version": "Use NULL for name-level aliases."})
+            raise ValidationError(
+                {"client_version": "Use NULL for name-level translations."}
+            )
         if bool(self.client_version) != bool(self.dataset_version_id):
             raise ValidationError(
-                "Version aliases must set both client_version and dataset_version; "
-                "name-level aliases must set neither."
+                "Version translations must set both client_version and dataset_version; "
+                "name-level translations must set neither."
             )
         if (
             self.dataset_version_id

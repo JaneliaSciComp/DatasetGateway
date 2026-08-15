@@ -19,8 +19,8 @@ from .models import (
     AuditLog,
     BucketIAMBinding,
     Dataset,
-    DatasetAlias,
     DatasetBucket,
+    DatasetTranslation,
     DatasetVersion,
     Grant,
     Group,
@@ -230,8 +230,8 @@ class DatasetVersionAdmin(admin.ModelAdmin):
             sync_dataset_iam(form.instance.dataset)
 
 
-@admin.register(DatasetAlias)
-class DatasetAliasAdmin(admin.ModelAdmin):
+@admin.register(DatasetTranslation)
+class DatasetTranslationAdmin(admin.ModelAdmin):
     list_display = (
         "id", "service", "client_name", "client_version", "dataset", "dataset_version",
     )

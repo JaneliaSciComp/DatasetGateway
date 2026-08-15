@@ -15,9 +15,9 @@ from django.forms.models import inlineformset_factory
 from django.test import RequestFactory, TestCase
 
 from core.admin import (
-    DatasetAliasAdmin,
     DatasetBucketAdmin,
     DatasetModelAdmin,
+    DatasetTranslationAdmin,
     DatasetVersionAdmin,
     GrantAdmin,
     GroupAdmin,
@@ -30,8 +30,8 @@ from core.models import (
     AuditLog,
     BucketIAMBinding,
     Dataset,
-    DatasetAlias,
     DatasetBucket,
+    DatasetTranslation,
     DatasetVersion,
     Grant,
     Group,
@@ -67,10 +67,10 @@ class _AdminTestBase(TestCase):
 
 
 @pytest.mark.django_db
-class TestDatasetAliasAdmin(_AdminTestBase):
+class TestDatasetTranslationAdmin(_AdminTestBase):
     def setUp(self):
         super().setUp()
-        self.ma = DatasetAliasAdmin(DatasetAlias, django_admin.site)
+        self.ma = DatasetTranslationAdmin(DatasetTranslation, django_admin.site)
         self.service = Service.objects.create(name="neuprint")
         self.dataset = Dataset.objects.create(name="canonical")
         self.other_dataset = Dataset.objects.create(name="other")
@@ -84,6 +84,10 @@ class TestDatasetAliasAdmin(_AdminTestBase):
         return FormClass(data=data)
 
     def test_admin_configuration(self):
+        self.assertEqual(
+            self.ma.model._meta.verbose_name_plural,
+            "dataset translations",
+        )
         self.assertEqual(
             self.ma.list_display,
             (
@@ -101,7 +105,7 @@ class TestDatasetAliasAdmin(_AdminTestBase):
             ("service", "dataset", "dataset_version"),
         )
 
-    def test_name_level_alias_creation_form_is_valid(self):
+    def test_name_level_translation_creation_form_is_valid(self):
         form = self._form({
             "service": self.service.pk,
             "client_name": "client-ds",
@@ -111,10 +115,10 @@ class TestDatasetAliasAdmin(_AdminTestBase):
         })
 
         self.assertTrue(form.is_valid(), form.errors)
-        alias = form.save()
-        self.assertEqual(alias.client_name, "client-ds")
-        self.assertIsNone(alias.client_version)
-        self.assertIsNone(alias.dataset_version)
+        translation = form.save()
+        self.assertEqual(translation.client_name, "client-ds")
+        self.assertIsNone(translation.client_version)
+        self.assertIsNone(translation.dataset_version)
 
     def test_version_mismatch_surfaces_as_form_error(self):
         form = self._form({

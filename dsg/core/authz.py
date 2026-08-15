@@ -10,8 +10,8 @@ from django.utils import timezone
 
 from core.models import (
     Dataset,
-    DatasetAlias,
     DatasetBucket,
+    DatasetTranslation,
     DatasetVersion,
     Grant,
     GroupDatasetPermission,
@@ -104,8 +104,8 @@ def resolve_dataset_reference(service, client_name, client_version=None, branch=
     service_obj = _coerce_service(service)
 
     if service_obj is not None and client_version is not None:
-        alias = (
-            DatasetAlias.objects.filter(
+        translation = (
+            DatasetTranslation.objects.filter(
                 service=service_obj,
                 client_name=client_name,
                 client_version=client_version,
@@ -113,12 +113,14 @@ def resolve_dataset_reference(service, client_name, client_version=None, branch=
             .select_related("dataset", "dataset_version")
             .first()
         )
-        if alias is not None:
-            return ResolveResult(ResolveStatus.FOUND, _target_from_alias(alias))
+        if translation is not None:
+            return ResolveResult(
+                ResolveStatus.FOUND, _target_from_translation(translation)
+            )
 
     if service_obj is not None:
-        alias = (
-            DatasetAlias.objects.filter(
+        translation = (
+            DatasetTranslation.objects.filter(
                 service=service_obj,
                 client_name=client_name,
                 client_version__isnull=True,
@@ -126,11 +128,15 @@ def resolve_dataset_reference(service, client_name, client_version=None, branch=
             .select_related("dataset", "dataset_version")
             .first()
         )
-        if alias is not None:
-            target = _interpret_canonical_version(alias.dataset, client_version, branch)
+        if translation is not None:
+            target = _interpret_canonical_version(
+                translation.dataset, client_version, branch
+            )
             if target is not None:
                 return ResolveResult(ResolveStatus.FOUND, target)
-            return ResolveResult(ResolveStatus.NOT_FOUND, reason="unknown_alias_version")
+            return ResolveResult(
+                ResolveStatus.NOT_FOUND, reason="unknown_translation_version"
+            )
 
     dataset = Dataset.objects.filter(name=client_name).first()
     if dataset is None:
@@ -381,10 +387,10 @@ def _coerce_service(service):
     return Service.objects.filter(name=service).first()
 
 
-def _target_from_alias(alias):
-    if alias.dataset_version_id:
-        return _target_from_dataset_version(alias.dataset_version)
-    return ResolvedTarget(dataset=alias.dataset)
+def _target_from_translation(translation):
+    if translation.dataset_version_id:
+        return _target_from_dataset_version(translation.dataset_version)
+    return ResolvedTarget(dataset=translation.dataset)
 
 
 def _target_from_dataset_version(dataset_version):

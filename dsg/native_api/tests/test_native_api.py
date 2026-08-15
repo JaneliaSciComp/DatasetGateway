@@ -14,8 +14,8 @@ from core.models import (
     AuditLog,
     BucketIAMBinding,
     Dataset,
-    DatasetAlias,
     DatasetBucket,
+    DatasetTranslation,
     DatasetVersion,
     Group,
     Grant,
@@ -188,12 +188,12 @@ class TestNativeAuthorize(TestCase):
         self.alt = DatasetVersion.objects.create(
             dataset=self.dataset, version="alt1", branch="alt", ordinal=1
         )
-        DatasetAlias.objects.create(
+        DatasetTranslation.objects.create(
             service=self.linear,
             client_name="client-ds",
             dataset=self.dataset,
         )
-        DatasetAlias.objects.create(
+        DatasetTranslation.objects.create(
             service=self.linear,
             client_name="client-ds",
             client_version="client-v1",
@@ -463,7 +463,7 @@ class TestNativeAuthorize(TestCase):
                 self._post([{"name": "canonical"}, {"name": "missing"}])
         self.assertEqual(mock_debug.call_count, 2)
         reasons = [call.args[-1] for call in mock_debug.call_args_list]
-        self.assertEqual(reasons, ["covered", "unknown-alias"])
+        self.assertEqual(reasons, ["covered", "unknown-translation"])
 
 
 @pytest.mark.django_db
@@ -484,10 +484,10 @@ class TestNativeMetadata(TestCase):
             dataset=self.granted, version="v2", branch="main", ordinal=2,
             is_public=True,
         )
-        DatasetAlias.objects.create(
+        DatasetTranslation.objects.create(
             service=self.service, client_name="client-ds", dataset=self.granted,
         )
-        DatasetAlias.objects.create(
+        DatasetTranslation.objects.create(
             service=self.service, client_name="client-ds", client_version="client-v1",
             dataset=self.granted, dataset_version=self.v1,
         )

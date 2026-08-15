@@ -7,7 +7,7 @@ from django.test import TestCase
 
 from core.models import (
     Dataset,
-    DatasetAlias,
+    DatasetTranslation,
     DatasetVersion,
     Group,
     GroupDatasetPermission,
@@ -45,8 +45,8 @@ class TestNativeAuthzSchema(TestCase):
         DatasetVersion.objects.create(dataset=self.dataset, version="unranked-a")
         DatasetVersion.objects.create(dataset=self.dataset, version="unranked-b")
 
-    def test_dataset_alias_uniqueness_and_validation(self):
-        DatasetAlias.objects.create(
+    def test_dataset_translation_uniqueness_and_validation(self):
+        DatasetTranslation.objects.create(
             service=self.service,
             client_name="client-ds",
             client_version="1.0",
@@ -54,7 +54,7 @@ class TestNativeAuthzSchema(TestCase):
             dataset_version=self.version,
         )
         with self.assertRaises(IntegrityError), transaction.atomic():
-            DatasetAlias.objects.create(
+            DatasetTranslation.objects.create(
                 service=self.service,
                 client_name="client-ds",
                 client_version="1.0",
@@ -62,15 +62,15 @@ class TestNativeAuthzSchema(TestCase):
                 dataset_version=self.version,
             )
 
-        DatasetAlias.objects.create(
+        DatasetTranslation.objects.create(
             service=self.service, client_name="name-only", dataset=self.dataset
         )
         with self.assertRaises(IntegrityError), transaction.atomic():
-            DatasetAlias.objects.create(
+            DatasetTranslation.objects.create(
                 service=self.service, client_name="name-only", dataset=self.dataset
             )
 
-        empty_version = DatasetAlias(
+        empty_version = DatasetTranslation(
             service=self.service,
             client_name="empty",
             client_version="",
@@ -79,7 +79,7 @@ class TestNativeAuthzSchema(TestCase):
         with self.assertRaises(ValidationError):
             empty_version.full_clean()
 
-        wrong_dataset = DatasetAlias(
+        wrong_dataset = DatasetTranslation(
             service=self.service,
             client_name="wrong-ds",
             client_version="1.0",
