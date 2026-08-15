@@ -77,13 +77,38 @@ class TestNativeUser(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json(), {
             "id": service_account.pk,
-            "email": None,
+            "email": "pipeline@service-account.dsg.local",
             "name": "pipeline",
             "picture_url": None,
             "admin": False,
             "service_account": True,
             "groups": [],
         })
+
+    def test_dedicated_service_account_email_agrees_across_surfaces(self):
+        service_account = ServiceAccount.objects.create(name="cross-surface")
+        token = ServiceAccountToken.objects.create(
+            service_account=service_account,
+            key="tok-cross-surface-sa",
+            description="cross-surface identity",
+        )
+
+        responses = [
+            self.client.get(path, **self._auth(token.key))
+            for path in (
+                "/api/dsg/v1/user",
+                "/api/v1/whoami",
+                "/api/v1/user/cache",
+            )
+        ]
+
+        for response in responses:
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["service_account"])
+        self.assertEqual(
+            {response.json()["email"] for response in responses},
+            {service_account.email},
+        )
 
     def test_admin_flag(self):
         user = User.objects.create(email="admin@example.org", name="Admin", admin=True)

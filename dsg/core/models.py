@@ -11,6 +11,9 @@ from django.db import models
 from django.utils import timezone
 
 
+SERVICE_ACCOUNT_EMAIL_SUFFIX = "@service-account.dsg.local"
+
+
 class UserManager(BaseUserManager):
     """Manager for the custom User model (no passwords — Google OAuth + APIKey only)."""
 
@@ -63,6 +66,19 @@ class User(AbstractBaseUser):
 
     class Meta:
         db_table = "dsg_user"
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(email__iendswith=SERVICE_ACCOUNT_EMAIL_SUFFIX),
+                name="user_email_not_service_account_domain",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.email and self.email.lower().endswith(SERVICE_ACCOUNT_EMAIL_SUFFIX):
+            raise ValidationError({
+                "email": "User email addresses cannot use the service-account domain."
+            })
 
     def __str__(self):
         return self.email
@@ -588,6 +604,21 @@ class ServiceAccount(models.Model):
     def __str__(self):
         return self.name
 
+    def save(self, *args, **kwargs):
+        if self.pk and not self._state.adding:
+            database = kwargs.get("using") or self._state.db or "default"
+            saved_name = (
+                type(self).objects.using(database)
+                .filter(pk=self.pk)
+                .values_list("name", flat=True)
+                .first()
+            )
+            if saved_name is not None and saved_name != self.name:
+                raise ValidationError({
+                    "name": "Service account names cannot be changed after creation."
+                })
+        return super().save(*args, **kwargs)
+
     @property
     def is_enabled(self):
         # Mirrors User.is_enabled: the row's own active flag is the whole rule.
@@ -597,7 +628,7 @@ class ServiceAccount(models.Model):
     def email(self):
         # Synthetic identifier; never sent to GCS IAM (SAs use bearer-token
         # auth at the gateway, not bucket-level IAM).
-        return f"{self.name}@service-account.dsg.local"
+        return f"{self.name}{SERVICE_ACCOUNT_EMAIL_SUFFIX}"
 
     @property
     def public_name(self):

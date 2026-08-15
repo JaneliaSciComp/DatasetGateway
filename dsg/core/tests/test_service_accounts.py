@@ -1,12 +1,16 @@
 """Tests for ServiceAccount auth and permission cache."""
 
 import pytest
+from django.contrib import admin as django_admin
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
 from django.test import RequestFactory, TestCase
 from rest_framework.exceptions import AuthenticationFailed
 
 from core.authentication import TokenAuthentication
 from core.cache import build_permission_cache
+from core.admin import ServiceAccountAdmin, UserAdmin
 from core.models import (
     APIKey,
     Dataset,
@@ -17,6 +21,78 @@ from core.models import (
     ServiceAccountToken,
     User,
 )
+
+
+@pytest.mark.django_db
+class TestPrincipalIdentityInvariants(TestCase):
+    def setUp(self):
+        self.admin_user = User.objects.create(
+            email="admin@example.org", name="Admin", admin=True
+        )
+        self.request = RequestFactory().post("/admin/")
+        self.request.user = self.admin_user
+
+    def test_service_account_name_is_settable_on_create(self):
+        model_admin = ServiceAccountAdmin(ServiceAccount, django_admin.site)
+        form_class = model_admin.get_form(self.request, obj=None, change=False)
+        form = form_class(data={
+            "name": "created-name",
+            "description": "created through admin",
+            "is_active": "on",
+        })
+
+        self.assertTrue(form.is_valid(), form.errors)
+        service_account = form.save()
+        self.assertEqual(service_account.name, "created-name")
+
+    def test_service_account_name_change_is_rejected_by_model(self):
+        service_account = ServiceAccount.objects.create(name="stable-name")
+        service_account.name = "renamed"
+
+        with self.assertRaisesMessage(
+            ValidationError, "Service account names cannot be changed"
+        ):
+            service_account.save()
+
+        service_account.refresh_from_db()
+        self.assertEqual(service_account.name, "stable-name")
+
+    def test_service_account_name_is_readonly_on_admin_change_form(self):
+        service_account = ServiceAccount.objects.create(name="stable-admin-name")
+        model_admin = ServiceAccountAdmin(ServiceAccount, django_admin.site)
+        form_class = model_admin.get_form(
+            self.request, obj=service_account, change=True
+        )
+        form = form_class(
+            data={
+                "name": "ignored-rename",
+                "description": "updated",
+                "is_active": "on",
+            },
+            instance=service_account,
+        )
+
+        self.assertNotIn("name", form.fields)
+        self.assertTrue(form.is_valid(), form.errors)
+        saved = form.save()
+        self.assertEqual(saved.name, "stable-admin-name")
+        self.assertEqual(saved.description, "updated")
+
+    def test_user_save_rejects_service_account_email_domain(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            User.objects.create(email="collision@SERVICE-ACCOUNT.DSG.LOCAL")
+
+    def test_user_admin_form_rejects_service_account_email_domain(self):
+        model_admin = UserAdmin(User, django_admin.site)
+        form_class = model_admin.get_form(self.request, obj=None, change=False)
+        form = form_class(data={
+            "email": "collision@service-account.dsg.local",
+            "name": "Collision",
+            "is_active": "on",
+        })
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("service-account domain", form.errors["email"][0])
 
 
 @pytest.mark.django_db

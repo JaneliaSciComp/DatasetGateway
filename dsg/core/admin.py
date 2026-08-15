@@ -499,6 +499,12 @@ class ServiceAccountAdmin(admin.ModelAdmin):
     readonly_fields = ("created", "updated")
     inlines = [ServiceAccountTokenInline, ServiceAccountGrantInline]
 
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj is not None:
+            fields.append("name")
+        return fields
+
 
 @admin.register(ServiceAccountToken)
 class ServiceAccountTokenAdmin(admin.ModelAdmin):

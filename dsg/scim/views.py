@@ -1,5 +1,6 @@
 """SCIM 2.0 views — User, Group, Dataset CRUD + discovery endpoints."""
 
+from django.core.exceptions import ValidationError
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -187,7 +188,16 @@ class UserListView(SCIMBaseView):
         if User.objects.filter(email=fields["email"]).exists():
             return scim_error(409, detail="User already exists", scim_type="uniqueness")
 
-        user = User.objects.create(**fields)
+        user = User(**fields)
+        try:
+            user.clean()
+        except ValidationError as error:
+            return scim_error(
+                400,
+                detail="; ".join(error.messages),
+                scim_type="invalidValue",
+            )
+        user.save()
         user.scim_id = generate_scim_id(user.pk, "User")
         user.save(update_fields=["scim_id"])
 

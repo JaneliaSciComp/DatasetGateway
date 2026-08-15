@@ -176,6 +176,24 @@ class TestSCIMUserCRUD(TestCase):
         )
         self.assertEqual(resp.status_code, 409)
 
+    def test_create_rejects_service_account_email_domain(self):
+        resp = self.client.post(
+            "/auth/scim/v2/Users",
+            {
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": "collision@service-account.dsg.local",
+            },
+            format="json",
+            **self._auth(),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.json()["scimType"], "invalidValue")
+        self.assertIn("service-account domain", resp.json()["detail"])
+        self.assertFalse(
+            User.objects.filter(email="collision@service-account.dsg.local").exists()
+        )
+
     def test_list_users(self):
         resp = self.client.get("/auth/scim/v2/Users", **self._auth())
         self.assertEqual(resp.status_code, 200)

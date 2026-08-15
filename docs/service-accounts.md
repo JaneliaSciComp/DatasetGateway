@@ -128,9 +128,13 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
      https://dsg.example.org/api/v1/check-access
 ```
 
-The synthetic email `<name>@service-account.dsg.local` is an internal
-identifier only. It is never sent to Google IAM, GCS, or any external
-system.
+The synthetic email `<name>@service-account.dsg.local` is the service
+account's canonical cross-service identity. It is an internal identifier
+only and is never sent to Google IAM, GCS, or any external system. The
+`.local` suffix is retained for compatibility with the shipped contract;
+RFC 6762 assigns `.local` multicast-DNS semantics, so the address is not
+made safe by being inherently invalid. Instead, DatasetGateway reserves
+the suffix with a database constraint that prevents a `User` from using it.
 
 ---
 
@@ -145,7 +149,7 @@ service identify the SA:
 | Field | For a user | For a service account |
 |---|---|---|
 | `service_account` | `false` | `true` |
-| `name` | display name or email prefix | the SA slug (e.g. `"ci-bot"`) — exactly `ServiceAccount.name`, immutable in practice |
+| `name` | display name or email prefix | the SA slug (e.g. `"ci-bot"`) — exactly `ServiceAccount.name`, immutable after creation |
 | `id` | `User.pk` | `ServiceAccount.pk` |
 | `email` | real Google email | synthetic `<name>@service-account.dsg.local` |
 
@@ -158,9 +162,16 @@ Recommendations:
   namespace. Treating `id` alone as a globally unique principal key
   will collide. Use `(service_account, id)` or just `name` when
   `service_account` is true.
-- **`email` is stable too.** The `service-account.dsg.local` suffix is
-  a reliable marker, useful if your existing code already keys
-  attribution on email.
+- **`email` is stable for the lifetime of the account.** The service-account
+  name cannot be renamed after creation, so the synthetic email does not
+  change. Deleting an account and recreating the same name deliberately
+  transfers that identity to the new account. This is an accepted risk for
+  admin-created, read-only recon principals; revisit it before allowing any
+  service account to hold write grants.
+- **Clio treats service accounts as read-only principals.** A service account
+  can read the datasets resolved by its DSG grants, but clio-store rejects all
+  POST, PUT, PATCH, and DELETE requests. Matching clio-store's configured
+  `OWNER` email does not grant an SA administrator access.
 
 ```python
 cache = dsg.get("/api/v1/user/cache", token=token).json()

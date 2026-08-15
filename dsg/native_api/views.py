@@ -200,7 +200,7 @@ class UserView(APIView):
             )
         return Response({
             "id": principal.pk,
-            "email": None if is_dedicated_service_account else principal.email,
+            "email": principal.email,
             "name": getattr(principal, "name", ""),
             "picture_url": (
                 None
