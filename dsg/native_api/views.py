@@ -4,13 +4,14 @@ import logging
 
 from django.conf import settings
 from django.db.models import Q
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.authz import (
     ContainmentStatus,
     build_tos_url,
+    evaluate_anonymous_authorization,
     evaluate_containment,
     expand_permission,
     pending_tos,
@@ -39,16 +40,40 @@ ROLE_ORDER = ("view", "edit", "manage", "admin")
 class AuthorizeView(APIView):
     """POST /api/dsg/v1/authorize — batch DSG-native authorization decision."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
+        if not isinstance(request.data, dict):
+            return Response({"error": "entries must be a list"}, status=400)
+
         entries = request.data.get("entries")
         if not isinstance(entries, list):
             return Response({"error": "entries must be a list"}, status=400)
+        if len(entries) > 64:
+            return Response(
+                {"error": "entries must contain at most 64 items"}, status=400
+            )
 
-        service_name = request.data.get("service") or None
+        service_name = request.data.get("service")
+        if not isinstance(service_name, str) or not service_name.strip():
+            return Response({"error": "service is required"}, status=400)
         service = _service_for_name(service_name)
         return_url = request.data.get("return_url")
+
+        if service is None:
+            return Response({
+                "entries": [
+                    _finish_decision(
+                        request.user,
+                        service_name,
+                        entry,
+                        _echo_entry(entry),
+                        "deny",
+                        "unknown-service",
+                    )
+                    for entry in entries
+                ]
+            })
 
         return Response({
             "entries": [
@@ -92,6 +117,34 @@ class AuthorizeView(APIView):
 
         target = resolved.target
         principal = request.user
+
+        if principal is None:
+            anonymous = evaluate_anonymous_authorization(
+                service,
+                target,
+                requested_permission=requested_permission,
+            )
+            return _finish_decision(
+                principal,
+                service_name,
+                entry,
+                base,
+                anonymous.decision,
+                anonymous.reason,
+                roles=["view"] if anonymous.decision != "deny" else [],
+                tos_url=(
+                    build_tos_url(
+                        request,
+                        service_name,
+                        target.dataset,
+                        target,
+                        return_url,
+                        anonymous.pending_documents,
+                    )
+                    if anonymous.decision == "tos_required"
+                    else None
+                ),
+            )
 
         if getattr(principal, "admin", False):
             return _finish_decision(

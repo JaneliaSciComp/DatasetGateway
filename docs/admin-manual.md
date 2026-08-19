@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with setup, admin workflow, environment variable, and management command changes.
-last_reviewed: 2026-08-10
+last_reviewed: 2026-08-19
 ---
 
 # DatasetGateway Admin Manual
@@ -190,7 +190,11 @@ Each row is a dataset. Key fields:
 | **Name** | Slug identifier used in URLs and API responses (e.g., `fish2`). Lowercase, no spaces. |
 | **Description** | Human-readable description shown on the web UI. |
 | **Tos** | Link to the TOS document users must accept. Leave blank if no TOS is required. |
-| **Access mode** | `Closed` (invite-only — users need a Grant or admin role) or `Public` (any authenticated user can self-service accept TOS and get view access). |
+| **Access mode** | `Closed` (invite-only — users need a Grant or admin role) or `Public` (anonymous and authenticated callers receive `view` access, subject to TOS). Public never grants write access. |
+
+Public access is read-only. Mutations still require an explicit grant carrying
+the required write role; publishing a dataset or version does not create a
+grant and does not make its base data writable.
 
 **Inline sections on the Dataset detail page:**
 
@@ -219,7 +223,7 @@ datasets.
 | **Version** | Version string (e.g., `v1`, `2026-01`). |
 | **Buckets** | The GCS buckets linked to this version (selected from the dataset's bucket list). |
 | **Prefix** | Optional path prefix within the bucket. |
-| **Is public** | Grants enabled human principals `view` access to this version and, when ordinals are set, its same-branch ancestors. It does not make the dataset-grain target public. |
+| **Is public** | Grants anonymous callers and enabled human principals `view` access to this version and, when ordinals are set, its same-branch ancestors. It does not make the dataset-grain target public or grant write access. |
 
 Terms are evaluated at the version a user requests. A version-grain TOS on a
 public version does not follow `is_public` ancestry to that version's ancestors.

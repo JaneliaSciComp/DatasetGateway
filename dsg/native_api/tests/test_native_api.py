@@ -214,6 +214,242 @@ class TestNativeAuthorize(TestCase):
             "/api/dsg/v1/authorize", payload, format="json", **self._auth(key)
         )
 
+    def _anonymous_post(self, entries, service="linear"):
+        return self.client.post(
+            "/api/dsg/v1/authorize",
+            {
+                "service": service,
+                "return_url": "https://service.example.org/return?x=1",
+                "entries": entries,
+            },
+            format="json",
+        )
+
+    def test_authenticated_response_golden_and_unknown_service_deny(self):
+        Grant.objects.create(
+            user=self.user,
+            dataset=self.dataset,
+            dataset_version=self.v1,
+            permission=self.view_perm,
+        )
+
+        response = self._post([
+            {"name": "client-ds", "version": "client-v1"},
+            {"name": "missing"},
+        ])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "entries": [
+                {
+                    "name": "client-ds",
+                    "version": "client-v1",
+                    "roles": ["view"],
+                    "decision": "allow",
+                },
+                {"name": "missing", "roles": [], "decision": "deny"},
+            ]
+        })
+
+        unknown_service = self._post(
+            [{"name": "canonical"}], service="unknown-service"
+        )
+        self.assertEqual(unknown_service.status_code, 200)
+        self.assertEqual(unknown_service.json(), {
+            "entries": [
+                {"name": "canonical", "roles": [], "decision": "deny"}
+            ]
+        })
+
+    def test_anonymous_public_read_matrix_is_principal_free_and_fail_closed(self):
+        public_dataset = Dataset.objects.create(
+            name="public-dataset",
+            access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        unranked_public = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="unranked-public",
+            branch="main",
+            is_public=True,
+        )
+        unranked_sibling = DatasetVersion.objects.create(
+            dataset=self.dataset,
+            version="unranked-sibling",
+            branch="main",
+        )
+        counts_before = {
+            "users": User.objects.count(),
+            "api_keys": APIKey.objects.count(),
+            "grants": Grant.objects.count(),
+            "acceptances": TOSAcceptance.objects.count(),
+        }
+
+        response = self._anonymous_post([
+            {"name": public_dataset.name},
+            {"name": public_dataset.name, "version": "99"},
+            {"name": "canonical", "version": "v2"},
+            {"name": "canonical", "version": "v1"},
+            {"name": "canonical", "version": "3", "branch": "main"},
+            {"name": "canonical", "version": "alt1"},
+            {"name": "canonical", "version": unranked_public.version},
+            {"name": "canonical", "version": unranked_sibling.version},
+            {"name": "canonical"},
+            {"name": "missing"},
+            {"name": "canonical", "version": "missing-version"},
+            {"name": "canonical", "version": "v2", "permission": "edit"},
+        ], service="dag")
+
+        self.assertEqual(response.status_code, 200)
+        entries = response.json()["entries"]
+        self.assertEqual(
+            [entry["decision"] for entry in entries],
+            [
+                "allow",
+                "allow",
+                "allow",
+                "allow",
+                "deny",
+                "deny",
+                "allow",
+                "deny",
+                "deny",
+                "deny",
+                "deny",
+                "deny",
+            ],
+        )
+        self.assertEqual(
+            [entry["roles"] for entry in entries],
+            [["view"]] * 4
+            + [[], []]
+            + [["view"]]
+            + [[], [], [], [], []],
+        )
+        self.assertTrue(all("anchors" not in entry for entry in entries))
+        self.assertEqual(
+            {
+                "users": User.objects.count(),
+                "api_keys": APIKey.objects.count(),
+                "grants": Grant.objects.count(),
+                "acceptances": TOSAcceptance.objects.count(),
+            },
+            counts_before,
+        )
+
+    @override_settings(
+        TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)
+    )
+    def test_anonymous_tos_response_golden(self):
+        public_dataset = Dataset.objects.create(
+            name="public-tos",
+            access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        tos = TOSDocument.objects.create(
+            name="Anonymous terms",
+            text="Terms.",
+            dataset=public_dataset,
+        )
+        public_dataset.tos = tos
+        public_dataset.save(update_fields=["tos"])
+
+        response = self._anonymous_post([{"name": public_dataset.name}])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {
+            "entries": [
+                {
+                    "name": "public-tos",
+                    "roles": ["view"],
+                    "decision": "tos_required",
+                    "tos_url": (
+                        "http://testserver/web/tos/service-check/"
+                        "?dataset=public-tos&next=https%3A%2F%2Fservice.example.org%2F"
+                        "return%3Fx%3D1&service=linear"
+                    ),
+                }
+            ]
+        })
+        self.assertEqual(TOSAcceptance.objects.count(), 0)
+
+    def test_anonymous_denials_are_uniform_and_invalid_token_is_not_anonymous(self):
+        closed = self._anonymous_post([{"name": "canonical"}]).json()["entries"][0]
+        unknown_dataset = self._anonymous_post(
+            [{"name": "unknown"}]
+        ).json()["entries"][0]
+        unknown_version = self._anonymous_post([
+            {"name": "canonical", "version": "unknown"}
+        ]).json()["entries"][0]
+        unknown_service = self._anonymous_post(
+            [{"name": "canonical"}], service="unknown"
+        ).json()["entries"][0]
+
+        for decision in (closed, unknown_dataset, unknown_version, unknown_service):
+            self.assertEqual(decision["decision"], "deny")
+            self.assertEqual(decision["roles"], [])
+            self.assertEqual(set(decision) - {"name", "version"}, {"roles", "decision"})
+
+        invalid = self.client.post(
+            "/api/dsg/v1/authorize",
+            {"service": "linear", "entries": [{"name": "public-dataset"}]},
+            format="json",
+            HTTP_AUTHORIZATION="Bearer definitely-invalid",
+        )
+        self.assertEqual(invalid.status_code, 401)
+
+    def test_authorize_batch_and_service_validation_for_all_callers(self):
+        for auth in ({}, self._auth()):
+            empty = self.client.post(
+                "/api/dsg/v1/authorize",
+                {"service": "linear", "entries": []},
+                format="json",
+                **auth,
+            )
+            boundary = self.client.post(
+                "/api/dsg/v1/authorize",
+                {"service": "linear", "entries": [{"name": "missing"}] * 64},
+                format="json",
+                **auth,
+            )
+            oversized = self.client.post(
+                "/api/dsg/v1/authorize",
+                {"service": "linear", "entries": [{"name": "missing"}] * 65},
+                format="json",
+                **auth,
+            )
+            malformed = self.client.post(
+                "/api/dsg/v1/authorize",
+                {"service": "linear", "entries": {}},
+                format="json",
+                **auth,
+            )
+            missing_service = self.client.post(
+                "/api/dsg/v1/authorize",
+                {"entries": []},
+                format="json",
+                **auth,
+            )
+            empty_service = self.client.post(
+                "/api/dsg/v1/authorize",
+                {"service": "", "entries": []},
+                format="json",
+                **auth,
+            )
+
+            self.assertEqual(empty.status_code, 200)
+            self.assertEqual(empty.json(), {"entries": []})
+            self.assertEqual(boundary.status_code, 200)
+            self.assertEqual(len(boundary.json()["entries"]), 64)
+            self.assertEqual(oversized.status_code, 400)
+            self.assertEqual(oversized.json(), {
+                "error": "entries must contain at most 64 items"
+            })
+            self.assertEqual(malformed.status_code, 400)
+            self.assertEqual(malformed.json(), {"error": "entries must be a list"})
+            self.assertEqual(missing_service.status_code, 400)
+            self.assertEqual(empty_service.status_code, 400)
+
     def test_batch_echoes_correlation_keys_and_never_returns_canonical_fields(self):
         Grant.objects.create(
             user=self.user, dataset=self.dataset, dataset_version=self.v1,

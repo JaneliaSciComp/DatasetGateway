@@ -104,6 +104,13 @@ class PublicVersionCoverage:
     service_eval_versions: tuple[DatasetVersion, ...] = ()
 
 
+@dataclass(frozen=True)
+class AnonymousAuthorizationDecision:
+    decision: str = "deny"
+    reason: str = "not-public"
+    pending_documents: tuple = ()
+
+
 def resolve_dataset_reference(service, client_name, client_version=None, branch=None):
     """Resolve a service/client dataset reference to a canonical DSG target."""
     branch = branch or "main"
@@ -233,6 +240,44 @@ def public_version_coverage(
     )
 
 
+def evaluate_anonymous_authorization(
+    service,
+    target,
+    requested_permission="view",
+):
+    """Evaluate public read access without constructing or accepting a principal.
+
+    Anonymous authorization is deliberately narrower than principal-based
+    authorization: it grants only exact ``view`` requests, never evaluates
+    grants, and never returns DAG ``service_eval`` anchors.
+    """
+    if requested_permission != "view":
+        return AnonymousAuthorizationDecision(reason="non-view")
+
+    if target.dataset.access_mode == Dataset.ACCESS_PUBLIC:
+        reason = "public"
+    elif not target.is_dataset_grain and _public_version_covers_target_query(target):
+        reason = "public-version"
+    else:
+        return AnonymousAuthorizationDecision()
+
+    pending = tuple(
+        _pending_tos_documents(
+            target.dataset,
+            service_name=getattr(service, "name", None),
+            anchor=target,
+            accepted_ids=set(),
+        )
+    )
+    if pending:
+        return AnonymousAuthorizationDecision(
+            decision="tos_required",
+            reason="missing-tos",
+            pending_documents=pending,
+        )
+    return AnonymousAuthorizationDecision(decision="allow", reason=reason)
+
+
 def evaluate_bucket_authorization(principal, bucket_name):
     """Evaluate DSG-model view access for one physical GCS bucket name.
 
@@ -349,6 +394,11 @@ def pending_tos(user, dataset, service_name=None, anchor=None):
             "tos_document_id", flat=True
         )
     )
+    return _pending_tos_documents(dataset, service_name, anchor, accepted_ids)
+
+
+def _pending_tos_documents(dataset, service_name, anchor, accepted_ids):
+    """Return active governing TOS documents not present in ``accepted_ids``."""
     now = timezone.now()
     docs = []
     seen = set()
@@ -536,6 +586,16 @@ def _public_version_covers_target(public_version, target):
         target.ordinal is not None
         and target.branch == public_version.branch
         and target.ordinal <= public_version.ordinal
+    )
+
+
+def _public_version_covers_target_query(target):
+    return any(
+        _public_version_covers_target(version, target)
+        for version in DatasetVersion.objects.filter(
+            dataset=target.dataset,
+            is_public=True,
+        ).order_by("pk")
     )
 
 
