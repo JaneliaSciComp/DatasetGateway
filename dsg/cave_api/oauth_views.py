@@ -1,8 +1,16 @@
 """CAVE OAuth flow and token management views."""
 
+import logging
 import secrets
+import unicodedata
+from contextlib import nullcontext
+from datetime import timedelta
+from threading import Lock
+from time import sleep
+from urllib.parse import urlsplit
 
 from django.conf import settings
+from django.db import DatabaseError, OperationalError, connection, transaction
 from django.http import HttpResponseRedirect, JsonResponse
 from django.utils import timezone
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -13,6 +21,93 @@ from core.models import APIKey, User
 from core.permissions import IsHumanUser
 
 DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION = "Default long-lived API token"
+LOGIN_TOKEN_DESCRIPTION = "OAuth login token"
+LOGIN_TOKEN_LIMIT = 10
+REDIRECT_ALLOWED_DOMAIN = "janelia.org"
+
+logger = logging.getLogger(__name__)
+_SQLITE_LOGIN_LOCK = Lock()
+
+
+def validate_redirect_url(redirect_url):
+    """Return an allowed absolute redirect URL, or the safe root fallback."""
+    if not isinstance(redirect_url, str):
+        return "/"
+    if any(unicodedata.category(char) == "Cc" for char in redirect_url):
+        return "/"
+    if redirect_url.startswith("//"):
+        return "/"
+
+    try:
+        parsed = urlsplit(redirect_url)
+        hostname = parsed.hostname
+        has_credentials = parsed.username is not None or parsed.password is not None
+    except (TypeError, ValueError):
+        return "/"
+
+    if parsed.scheme not in {"http", "https"} or not hostname or has_credentials:
+        return "/"
+    if hostname != REDIRECT_ALLOWED_DOMAIN and not hostname.endswith(
+        f".{REDIRECT_ALLOWED_DOMAIN}"
+    ):
+        return "/"
+    return redirect_url
+
+
+def _upsert_user_and_create_login_token_atomic(email, defaults, presented_token):
+    with transaction.atomic():
+        user, _ = User.objects.update_or_create(email=email, defaults=defaults)
+        locked_user = User.objects.select_for_update().get(pk=user.pk)
+        login_tokens = APIKey.objects.filter(
+            user=locked_user,
+            description=LOGIN_TOKEN_DESCRIPTION,
+        )
+
+        if presented_token:
+            login_tokens.filter(key=presented_token).delete()
+
+        now = timezone.now()
+        login_tokens.filter(expires_at__lte=now).delete()
+
+        eviction_count = max(0, login_tokens.count() - (LOGIN_TOKEN_LIMIT - 1))
+        if eviction_count:
+            oldest_ids = list(
+                login_tokens.order_by("created", "pk").values_list(
+                    "pk", flat=True
+                )[:eviction_count]
+            )
+            APIKey.objects.filter(pk__in=oldest_ids).delete()
+
+        api_key = APIKey.objects.create(
+            user=locked_user,
+            description=LOGIN_TOKEN_DESCRIPTION,
+            expires_at=now + timedelta(seconds=settings.AUTH_COOKIE_AGE),
+        )
+        return locked_user, api_key
+
+
+def upsert_user_and_create_login_token(email, defaults, presented_token=None):
+    """Update a user and atomically issue a bounded per-device session."""
+    # SQLite has no per-user row locks. Serialize callbacks within this process;
+    # the retry below handles a writer in another process.
+    lock = _SQLITE_LOGIN_LOCK if connection.vendor == "sqlite" else nullcontext()
+    with lock:
+        for attempt in range(5):
+            try:
+                return _upsert_user_and_create_login_token_atomic(
+                    email,
+                    defaults,
+                    presented_token,
+                )
+            except OperationalError as error:
+                sqlite_lock_error = (
+                    connection.vendor == "sqlite"
+                    and "locked" in str(error).lower()
+                )
+                if not sqlite_lock_error or attempt == 4:
+                    raise
+                # Retry the whole rolled-back transaction.
+                sleep(0.01 * (attempt + 1))
 
 
 def get_or_create_default_long_lived_token(user):
@@ -59,9 +154,10 @@ class AuthorizeView(APIView):
     def _initiate_oauth(self, request):
         from urllib.parse import urlencode
 
-        redirect_url = request.query_params.get(
-            "redirect", request.data.get("redirect", "/")
-        )
+        redirect_url = request.query_params.get("redirect")
+        if redirect_url is None:
+            redirect_url = request.data.get("redirect", "/")
+        redirect_url = validate_redirect_url(redirect_url)
 
         # Store redirect URL and optional tos_id in session
         request.session["oauth_redirect"] = redirect_url
@@ -153,7 +249,6 @@ class OAuth2CallbackView(APIView):
         if not email:
             return Response({"error": "No email in token"}, status=400)
 
-        # Create or update user
         defaults = {
             "google_sub": google_sub,
             "name": name,
@@ -161,14 +256,11 @@ class OAuth2CallbackView(APIView):
         }
         if picture:
             defaults["picture_url"] = picture
-        user, created = User.objects.update_or_create(
-            email=email,
-            defaults=defaults,
+        user, api_key = upsert_user_and_create_login_token(
+            email,
+            defaults,
+            presented_token=request.COOKIES.get(settings.AUTH_COOKIE_NAME),
         )
-
-        # Clean up old login tokens and create a fresh one
-        APIKey.objects.filter(user=user, description="OAuth login token").delete()
-        api_key = APIKey.objects.create(user=user, description="OAuth login token")
 
         # Sync the Django session to match the freshly-authenticated user.
         # Without this, a stale session from an earlier Allauth login as a
@@ -178,7 +270,9 @@ class OAuth2CallbackView(APIView):
         request.session["user_email"] = user.email
 
         # Check for pending TOS before redirecting
-        redirect_url = request.session.pop("oauth_redirect", "/")
+        redirect_url = validate_redirect_url(
+            request.session.pop("oauth_redirect", "/")
+        )
         service_name = request.session.pop("oauth_service", None)
         dataset_name = request.session.pop("oauth_dataset", None)
 
@@ -190,6 +284,7 @@ class OAuth2CallbackView(APIView):
         response = HttpResponseRedirect(redirect_url)
         cookie_kwargs = {
             "max_age": settings.AUTH_COOKIE_AGE,
+            "path": "/",
             "httponly": True,
             "samesite": "Lax",
             "secure": settings.AUTH_COOKIE_SECURE,
@@ -302,6 +397,7 @@ class LogoutView(APIView):
     """
 
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def get(self, request):
         return self._logout(request)
@@ -310,14 +406,24 @@ class LogoutView(APIView):
         return self._logout(request)
 
     def _logout(self, request):
-        # Delete the API key if authenticated
-        if request.user and hasattr(request.user, "pk"):
-            token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
-            if token:
-                APIKey.objects.filter(key=token).delete()
+        token = request.COOKIES.get(settings.AUTH_COOKIE_NAME)
+        if token:
+            try:
+                APIKey.objects.filter(
+                    key=token,
+                    description=LOGIN_TOKEN_DESCRIPTION,
+                ).delete()
+            except DatabaseError:
+                logger.warning("Could not revoke OAuth login token", exc_info=True)
 
-        response = Response({"status": "logged out"})
-        delete_kwargs = {}
+        if "redirect" in request.query_params:
+            response = HttpResponseRedirect(
+                validate_redirect_url(request.query_params.get("redirect"))
+            )
+        else:
+            response = Response({"status": "logged out"})
+
+        delete_kwargs = {"path": "/"}
         cookie_domain = getattr(settings, "AUTH_COOKIE_DOMAIN", "")
         if cookie_domain:
             delete_kwargs["domain"] = cookie_domain

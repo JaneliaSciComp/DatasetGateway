@@ -5,6 +5,7 @@ Ported from CAVE's SQLAlchemy models with extensions from Architecture.md.
 
 import secrets
 
+from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -509,7 +510,7 @@ def _generate_token():
 
 
 def _default_expiry():
-    return timezone.now() + timezone.timedelta(days=7)
+    return timezone.now() + timezone.timedelta(seconds=settings.AUTH_COOKIE_AGE)
 
 
 class APIKey(models.Model):
