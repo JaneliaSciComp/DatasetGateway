@@ -750,6 +750,54 @@ class TestNativeAuthorize(TestCase):
         self.assertEqual(service_account_view["decision"], "allow")
         self.assertEqual(service_account_view["roles"], ["view"])
 
+    def test_service_account_non_view_denied_on_public_resources(self):
+        public = Dataset.objects.create(
+            name="sa-nonview-public", access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        sa = ServiceAccount.objects.create(name="nonview-sa")
+        token = ServiceAccountToken.objects.create(
+            service_account=sa, key="tok-nonview-sa", description="nonview",
+        )
+
+        for permission in ("edit", "manage", "admin"):
+            dataset_entry = self._post(
+                [{"name": public.name, "permission": permission}],
+                key=token.key,
+            ).json()["entries"][0]
+            version_entry = self._post(
+                [{"name": "canonical", "version": "v2", "permission": permission}],
+                key=token.key,
+            ).json()["entries"][0]
+            self.assertEqual(dataset_entry["decision"], "deny", permission)
+            self.assertEqual(version_entry["decision"], "deny", permission)
+
+    def test_service_account_mixed_batch_public_private_nonview(self):
+        public = Dataset.objects.create(
+            name="sa-batch-public", access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        sa = ServiceAccount.objects.create(name="batch-sa")
+        token = ServiceAccountToken.objects.create(
+            service_account=sa, key="tok-batch-sa", description="batch",
+        )
+
+        entries = self._post([
+            {"name": public.name},
+            {"name": "canonical", "version": "v2"},
+            {"name": "canonical", "version": "alt1"},
+            {"name": public.name, "permission": "edit"},
+        ], key=token.key).json()["entries"]
+
+        self.assertEqual(
+            [e["decision"] for e in entries],
+            ["allow", "allow", "deny", "deny"],
+        )
+        self.assertEqual(entries[0]["roles"], ["view"])
+        self.assertEqual(entries[1]["roles"], ["view"])
+
     def test_service_account_public_coverage_skips_tos_but_not_private(self):
         # A public dataset with an active TOS: SAs never accept TOS, so the
         # decision is a plain allow where a user would get tos_required.

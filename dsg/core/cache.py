@@ -75,8 +75,15 @@ def _build_service_account_cache(sa):
     SAs have no groups, no TOS, no admin grants. The returned dict shape is
     identical to the User path so middle_auth_client consumers don't notice
     the difference; SA-specific fields are empty.
+
+    Public coverage: fully public datasets (ACCESS_PUBLIC) contribute "view"
+    without a grant — SAs never participate in TOS, so this is unconditional.
+    Version-public datasets are deliberately *excluded* here: this cache is
+    dataset-grain, and injecting dataset-level view because one version is
+    public would overstate access to CAVE-side consumers. Version-grain
+    public checks belong to /api/v1/check-access and /api/dsg/v1/authorize.
     """
-    from .models import ServiceAccountGrant
+    from .models import Dataset, ServiceAccountGrant
 
     hierarchy = {
         "admin": {"manage", "edit", "view"},
@@ -97,6 +104,14 @@ def _build_service_account_cache(sa):
             did, {"id": did, "name": g.dataset.name, "permissions": set()}
         )
         entry["permissions"].add(g.permission.name)
+
+    for did, name in Dataset.objects.filter(
+        access_mode=Dataset.ACCESS_PUBLIC
+    ).values_list("pk", "name"):
+        entry = by_dataset.setdefault(
+            did, {"id": did, "name": name, "permissions": set()}
+        )
+        entry["permissions"].add("view")
 
     permissions_v2 = {}
     permissions = {}

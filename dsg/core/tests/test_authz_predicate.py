@@ -183,6 +183,25 @@ class TestPublicVersionCoverage(TestCase):
         self.assertTrue(ancestor.covered)
         self.assertFalse(uncovered.covered)
 
+    def test_service_account_gets_dag_public_anchors_like_a_user(self):
+        service_account = ServiceAccount.objects.create(name="dag-anchor-sa")
+
+        user_coverage = self._coverage(
+            self._target(self.alt), service=self.dag_service,
+        )
+        sa_coverage = self._coverage(
+            self._target(self.alt),
+            service=self.dag_service,
+            principal=service_account,
+        )
+
+        self.assertFalse(sa_coverage.covered)
+        self.assertEqual(
+            sa_coverage.service_eval_versions,
+            user_coverage.service_eval_versions,
+        )
+        self.assertEqual(sa_coverage.service_eval_versions, (self.v2,))
+
 
 @pytest.mark.django_db
 class TestBucketAuthorizationPredicate(TestCase):
@@ -524,6 +543,18 @@ class TestBucketAuthorizationPredicate(TestCase):
         self.dataset.save(update_fields=["access_mode"])
 
         decision = self._decision(self.bucket_a.name)
+
+        self.assertEqual(decision.status, BucketAuthorizationStatus.AUTHORIZED)
+        self.assertEqual(decision.reason, "public")
+
+    def test_dataset_public_covers_service_account_bucket_access(self):
+        self.dataset.access_mode = Dataset.ACCESS_PUBLIC
+        self.dataset.save(update_fields=["access_mode"])
+        service_account = ServiceAccount.objects.create(name="public-ds-bucket-sa")
+
+        decision = evaluate_bucket_authorization(
+            service_account, self.bucket_a.name,
+        )
 
         self.assertEqual(decision.status, BucketAuthorizationStatus.AUTHORIZED)
         self.assertEqual(decision.reason, "public")

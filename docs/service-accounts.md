@@ -47,9 +47,19 @@ service account. Treat it like a password.
   dataset version.
 - **View public data without a grant.** Public datasets and public
   versions grant `view` to every enabled principal, service accounts
-  included, through the native authorization path
-  (`POST /api/dsg/v1/authorize`) — an SA always sees at least what an
-  anonymous caller sees. TOS never gates a service account.
+  included — an SA always sees at least what an anonymous caller sees,
+  and TOS never gates a service account. This applies on every
+  authorization surface, at the grain each surface can express:
+  - `POST /api/dsg/v1/authorize` (native): dataset-public and
+    public-version coverage, version-grain aware.
+  - `POST /api/v1/check-access`: dataset-public always; public-version
+    coverage when a `version` is supplied.
+  - `GET /api/v1/datasets`: lists granted, fully public, and
+    version-public datasets.
+  - `GET /api/v1/user/cache` (CAVE-compatible): fully public datasets
+    appear as `view`. Version-public datasets are excluded — the cache
+    is dataset-grain and a dataset-level `view` entry would overstate
+    access to CAVE-side consumers.
 - **Be granted** by a global admin from either the service-account
   detail page (`/web/service-accounts/<name>`) or from the dataset's
   grants page (`/web/grants/<dataset>`).
@@ -85,8 +95,9 @@ service account. Treat it like a password.
 - **Be created or managed by anyone except a global admin.** All
   service-account web routes require `User.admin = True`.
 - **Have privileges inherited from any human.** A service account's
-  access is exactly the union of its `ServiceAccountGrant` rows —
-  nothing else.
+  granted access is exactly the union of its `ServiceAccountGrant`
+  rows; beyond grants it holds only the same public `view` coverage
+  every enabled principal has (see below).
 
 ---
 

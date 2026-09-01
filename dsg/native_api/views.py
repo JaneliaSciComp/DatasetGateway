@@ -192,6 +192,9 @@ class AuthorizeView(APIView):
             containment.status == ContainmentStatus.NOT_COVERED
             and requested_permission == "view"
             and target.dataset.access_mode == Dataset.ACCESS_PUBLIC
+            # Authentication already rejects disabled principals; this guard
+            # keeps the public branch fail-closed on its own terms.
+            and bool(getattr(principal, "is_enabled", False))
         ):
             pending = pending_tos(principal, target.dataset, service_name, target)
             if pending:

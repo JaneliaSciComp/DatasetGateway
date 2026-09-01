@@ -66,7 +66,14 @@ class DatasetsListView(APIView):
             sa_dataset_ids = ServiceAccountGrant.objects.filter(
                 service_account=user
             ).values_list("dataset_id", flat=True)
-            datasets = Dataset.objects.filter(pk__in=sa_dataset_ids).distinct()
+            # Granted datasets plus public coverage: fully public datasets
+            # and datasets with at least one public version are (at least
+            # partially) viewable by any enabled SA without a grant.
+            datasets = Dataset.objects.filter(
+                Q(pk__in=sa_dataset_ids)
+                | Q(access_mode=Dataset.ACCESS_PUBLIC)
+                | Q(versions__is_public=True)
+            ).distinct()
         elif user.admin:
             datasets = Dataset.objects.all()
         else:
@@ -158,26 +165,46 @@ class AuthorizeDecisionView(APIView):
             )
 
         # Service accounts have a simpler decision path: no admin shortcut,
-        # no TOS, no group permissions — only direct ServiceAccountGrant.
+        # no TOS, no group permissions — direct ServiceAccountGrant, plus
+        # public coverage for view (SAs never participate in TOS, so public
+        # data is a plain allow; see core.authz.public_version_coverage).
         if isinstance(user, ServiceAccount):
             sa_filter = {
                 "service_account": user,
                 "dataset": dataset,
                 "permission__name": permission_name,
             }
+            dv = None
             if version:
                 try:
                     dv = DatasetVersion.objects.get(dataset=dataset, version=version)
-                    has_grant = ServiceAccountGrant.objects.filter(
-                        Q(dataset_version=dv) | Q(dataset_version__isnull=True),
-                        **sa_filter,
-                    ).exists()
                 except DatasetVersion.DoesNotExist:
-                    has_grant = False
+                    return Response({"allowed": False, "reason": "no_permission"})
+                has_grant = ServiceAccountGrant.objects.filter(
+                    Q(dataset_version=dv) | Q(dataset_version__isnull=True),
+                    **sa_filter,
+                ).exists()
             else:
                 has_grant = ServiceAccountGrant.objects.filter(**sa_filter).exists()
             if has_grant:
                 return Response({"allowed": True, "reason": "service_account_grant"})
+            if permission_name == "view":
+                if dataset.access_mode == Dataset.ACCESS_PUBLIC:
+                    return Response({"allowed": True, "reason": "public"})
+                if dv is not None:
+                    from core.authz import ResolvedTarget, public_version_coverage
+
+                    target = ResolvedTarget(
+                        dataset=dataset,
+                        branch=dv.branch,
+                        ordinal=dv.ordinal,
+                        dataset_version=dv,
+                    )
+                    coverage = public_version_coverage(user, target)
+                    if coverage.covered:
+                        return Response(
+                            {"allowed": True, "reason": "public_version"}
+                        )
             return Response({"allowed": False, "reason": "no_permission"})
 
         # Admins always have access
