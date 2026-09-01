@@ -205,16 +205,19 @@ def public_version_coverage(
     requested_permission="view",
     service=None,
 ):
-    """Evaluate public-version view coverage for an enabled human principal.
+    """Evaluate public-version view coverage for an enabled principal.
 
     A public version covers itself and same-branch ancestors at or below its
     ordinal.  Without an ordinal it covers only its exact registered version.
     For DAG services, non-covering public versions with ordinals are returned
     as anchors for service-side ancestry evaluation.
+
+    ServiceAccount principals participate like users: SAs exist to support
+    curated services, so public data is visible to them without a grant and
+    TOS never gates them (``pending_tos`` returns nothing for an SA).
     """
     if (
-        isinstance(principal, ServiceAccount)
-        or not bool(getattr(principal, "is_enabled", False))
+        not bool(getattr(principal, "is_enabled", False))
         or requested_permission != "view"
         or target.is_dataset_grain
     ):
@@ -313,8 +316,7 @@ def evaluate_bucket_authorization(principal, bucket_name):
                 if _row_is_valid_for_bucket(row, anchor, bucket_row)
             )
             dataset_public_coverage = (
-                not isinstance(principal, ServiceAccount)
-                and bool(getattr(principal, "is_enabled", False))
+                bool(getattr(principal, "is_enabled", False))
                 and anchor.dataset.access_mode == Dataset.ACCESS_PUBLIC
             )
             version_public_coverage = public_version_coverage(

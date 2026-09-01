@@ -190,7 +190,6 @@ class AuthorizeView(APIView):
 
         if (
             containment.status == ContainmentStatus.NOT_COVERED
-            and not isinstance(principal, ServiceAccount)
             and requested_permission == "view"
             and target.dataset.access_mode == Dataset.ACCESS_PUBLIC
         ):

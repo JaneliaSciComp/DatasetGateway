@@ -45,6 +45,11 @@ service account. Treat it like a password.
 - **Hold dataset privileges** at the same permission levels users do
   (`view`, `edit`, `manage`, `admin`), optionally scoped to a specific
   dataset version.
+- **View public data without a grant.** Public datasets and public
+  versions grant `view` to every enabled principal, service accounts
+  included, through the native authorization path
+  (`POST /api/dsg/v1/authorize`) — an SA always sees at least what an
+  anonymous caller sees. TOS never gates a service account.
 - **Be granted** by a global admin from either the service-account
   detail page (`/web/service-accounts/<name>`) or from the dataset's
   grants page (`/web/grants/<dataset>`).
@@ -58,9 +63,11 @@ service account. Treat it like a password.
 
 - **Log in via Google OAuth.** Service accounts have no `google_sub`
   and never go through the OAuth flow.
-- **Accept or be gated by TOS.** Direct service-account grants override
-  TOS for that service account; if you do not want a service account to
-  see a dataset, do not grant it.
+- **Accept or be gated by TOS.** TOS never applies to a service
+  account: direct grants and public coverage both bypass it. Service
+  accounts support curated services, not end users, so TOS acceptance
+  is not part of their model. If you do not want a service account to
+  see a *non-public* dataset, do not grant it.
 - **Belong to groups.** The single description field replaces both
   group membership and organizational affiliation.
 - **Mint user `APIKey`s** (`POST /api/v1/create_token`,

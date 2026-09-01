@@ -726,7 +726,7 @@ class TestNativeAuthorize(TestCase):
             {"branch": "alt", "version": 10, "roles": ["view"]},
         ])
 
-    def test_public_version_does_not_grant_edit_or_service_account_view(self):
+    def test_public_version_does_not_grant_edit_but_covers_service_account_view(self):
         self.v2.is_public = True
         self.v2.save(update_fields=["is_public"])
         service_account = ServiceAccount.objects.create(name="public-version-sa")
@@ -747,7 +747,41 @@ class TestNativeAuthorize(TestCase):
         ).json()["entries"][0]
 
         self.assertEqual(edit["decision"], "deny")
-        self.assertEqual(service_account_view["decision"], "deny")
+        self.assertEqual(service_account_view["decision"], "allow")
+        self.assertEqual(service_account_view["roles"], ["view"])
+
+    def test_service_account_public_coverage_skips_tos_but_not_private(self):
+        # A public dataset with an active TOS: SAs never accept TOS, so the
+        # decision is a plain allow where a user would get tos_required.
+        public = Dataset.objects.create(
+            name="sa-public", access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        tos = TOSDocument.objects.create(
+            name="Public TOS", text="Terms.", dataset=public,
+        )
+        public.tos = tos
+        public.save()
+        sa = ServiceAccount.objects.create(name="ungranted-sa")
+        token = ServiceAccountToken.objects.create(
+            service_account=sa, key="tok-ungranted-sa", description="no grants",
+        )
+
+        public_view = self._post(
+            [{"name": public.name}], key=token.key,
+        ).json()["entries"][0]
+        user_view = self._post([{"name": public.name}]).json()["entries"][0]
+        private_view = self._post(
+            [{"name": "canonical"}], key=token.key,
+        ).json()["entries"][0]
+        public_edit = self._post(
+            [{"name": public.name, "permission": "edit"}], key=token.key,
+        ).json()["entries"][0]
+
+        self.assertEqual(public_view["decision"], "allow")
+        self.assertEqual(public_view["roles"], ["view"])
+        self.assertEqual(user_view["decision"], "tos_required")
+        self.assertEqual(private_view["decision"], "deny")
+        self.assertEqual(public_edit["decision"], "deny")
 
     @override_settings(
         TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)

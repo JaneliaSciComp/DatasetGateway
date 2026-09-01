@@ -154,21 +154,34 @@ class TestPublicVersionCoverage(TestCase):
         self.assertFalse(coverage.covered)
         self.assertEqual(coverage.service_eval_versions, (self.v2,))
 
-    def test_dataset_grain_non_view_disabled_and_service_account_are_not_covered(self):
+    def test_dataset_grain_non_view_and_disabled_are_not_covered(self):
         dataset_grain = self._coverage(ResolvedTarget(dataset=self.dataset))
         non_view = self._coverage(self._target(self.v2), permission="edit")
         self.user.is_active = False
         self.user.save(update_fields=["is_active"])
         disabled = self._coverage(self._target(self.v2))
-        service_account = ServiceAccount.objects.create(name="public-coverage-sa")
-        service_account_result = self._coverage(
+        disabled_sa = ServiceAccount.objects.create(
+            name="disabled-coverage-sa", is_active=False,
+        )
+        disabled_sa_result = self._coverage(
             self._target(self.v2),
-            principal=service_account,
+            principal=disabled_sa,
         )
 
-        for result in (dataset_grain, non_view, disabled, service_account_result):
+        for result in (dataset_grain, non_view, disabled, disabled_sa_result):
             self.assertFalse(result.covered)
             self.assertEqual(result.service_eval_versions, ())
+
+    def test_service_account_gets_public_version_coverage_like_a_user(self):
+        service_account = ServiceAccount.objects.create(name="public-coverage-sa")
+
+        covered = self._coverage(self._target(self.v2), principal=service_account)
+        ancestor = self._coverage(self._target(self.v1), principal=service_account)
+        uncovered = self._coverage(self._target(self.v3), principal=service_account)
+
+        self.assertTrue(covered.covered)
+        self.assertTrue(ancestor.covered)
+        self.assertFalse(uncovered.covered)
 
 
 @pytest.mark.django_db
@@ -451,7 +464,7 @@ class TestBucketAuthorizationPredicate(TestCase):
         self.assertEqual(exact.reason, "public-version")
         self.assertEqual(sibling.status, BucketAuthorizationStatus.DENIED)
 
-    def test_public_version_does_not_cover_dataset_grain_or_nonhuman_principals(self):
+    def test_public_version_does_not_cover_dataset_grain_or_disabled_principals(self):
         self.v2.is_public = True
         self.v2.save(update_fields=["is_public"])
         self.v2.buckets.add(self.bucket_b)
@@ -462,12 +475,23 @@ class TestBucketAuthorizationPredicate(TestCase):
             service_account,
             self.bucket_b.name,
         )
+        disabled_sa = ServiceAccount.objects.create(
+            name="disabled-bucket-sa", is_active=False,
+        )
+        disabled_sa_result = evaluate_bucket_authorization(
+            disabled_sa,
+            self.bucket_b.name,
+        )
         self.user.is_active = False
         self.user.save(update_fields=["is_active"])
         disabled = self._decision(self.bucket_b.name)
 
         self.assertEqual(dataset_grain.status, BucketAuthorizationStatus.DENIED)
-        self.assertEqual(service_account_result.status, BucketAuthorizationStatus.DENIED)
+        self.assertEqual(
+            service_account_result.status, BucketAuthorizationStatus.AUTHORIZED
+        )
+        self.assertEqual(service_account_result.reason, "public-version")
+        self.assertEqual(disabled_sa_result.status, BucketAuthorizationStatus.DENIED)
         self.assertEqual(disabled.status, BucketAuthorizationStatus.DENIED)
 
     def test_public_version_tos_is_live_and_evaluated_at_target(self):
