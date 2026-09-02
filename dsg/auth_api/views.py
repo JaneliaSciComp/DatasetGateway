@@ -185,7 +185,11 @@ class AuthorizeDecisionView(APIView):
                     **sa_filter,
                 ).exists()
             else:
-                has_grant = ServiceAccountGrant.objects.filter(**sa_filter).exists()
+                # A versionless (dataset-grain) request needs a dataset-wide
+                # grant; a version-scoped grant covers only its version.
+                has_grant = ServiceAccountGrant.objects.filter(
+                    dataset_version__isnull=True, **sa_filter,
+                ).exists()
             if has_grant:
                 return Response({"allowed": True, "reason": "service_account_grant"})
             if permission_name == "view":

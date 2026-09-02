@@ -227,3 +227,122 @@ class TestSAPublicCoverageAuthAPI(TestCase):
             **self._auth(),
         )
         self.assertEqual(check.status_code, 401)
+
+
+@pytest.mark.django_db
+class TestSAGrainAndCacheInvalidation(TestCase):
+    """Version-grant grain + permission-cache invalidation (datasets-0029)."""
+
+    def setUp(self):
+        cache.clear()
+        self.client = APIClient()
+        self.view_perm, _ = Permission.objects.get_or_create(name="view")
+        self.edit_perm, _ = Permission.objects.get_or_create(name="edit")
+
+        self.sa = ServiceAccount.objects.create(name="grain-bot")
+        self.sa_token = ServiceAccountToken.objects.create(
+            service_account=self.sa, description="t", key="tok-sa-grain",
+        )
+
+        self.versioned_ds = Dataset.objects.create(name="versioned")
+        self.v1 = DatasetVersion.objects.create(
+            dataset=self.versioned_ds, version="v1", branch="main", ordinal=1,
+        )
+        self.v2 = DatasetVersion.objects.create(
+            dataset=self.versioned_ds, version="v2", branch="main", ordinal=2,
+        )
+        ServiceAccountGrant.objects.create(
+            service_account=self.sa,
+            dataset=self.versioned_ds,
+            dataset_version=self.v1,
+            permission=self.view_perm,
+        )
+
+    def _auth(self):
+        return {"HTTP_AUTHORIZATION": f"Bearer {self.sa_token.key}"}
+
+    def _check(self, dataset, permission="view", version=None):
+        data = {"dataset": dataset, "permission": permission}
+        if version:
+            data["version"] = version
+        resp = self.client.post(
+            "/api/v1/check-access", data=data, format="json", **self._auth(),
+        )
+        self.assertEqual(resp.status_code, 200)
+        return resp.json()
+
+    def test_version_scoped_grant_does_not_cover_dataset_grain(self):
+        versionless = self._check("versioned")
+        exact = self._check("versioned", version="v1")
+        other_version = self._check("versioned", version="v2")
+
+        self.assertFalse(versionless["allowed"])
+        self.assertEqual(versionless["reason"], "no_permission")
+        self.assertTrue(exact["allowed"])
+        self.assertEqual(exact["reason"], "service_account_grant")
+        self.assertFalse(other_version["allowed"])
+
+    def test_version_scoped_grant_absent_from_user_cache(self):
+        resp = self.client.get("/api/v1/user/cache", **self._auth())
+        self.assertEqual(resp.status_code, 200)
+        self.assertNotIn("versioned", resp.json()["permissions_v2"])
+
+    def test_public_flip_invalidates_warm_user_cache(self):
+        public = Dataset.objects.create(
+            name="flip-me", access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        warm = self.client.get("/api/v1/user/cache", **self._auth()).json()
+        self.assertEqual(warm["permissions_v2"].get("flip-me"), ["view"])
+
+        public.access_mode = Dataset.ACCESS_CLOSED
+        public.save(update_fields=["access_mode"])
+
+        after = self.client.get("/api/v1/user/cache", **self._auth()).json()
+        self.assertNotIn("flip-me", after["permissions_v2"])
+
+    def test_grant_revocation_invalidates_warm_user_cache(self):
+        grant = ServiceAccountGrant.objects.create(
+            service_account=self.sa,
+            dataset=self.versioned_ds,
+            permission=self.edit_perm,
+        )
+        warm = self.client.get("/api/v1/user/cache", **self._auth()).json()
+        self.assertIn("versioned", warm["permissions_v2"])
+
+        grant.delete()
+
+        after = self.client.get("/api/v1/user/cache", **self._auth()).json()
+        self.assertNotIn("versioned", after["permissions_v2"])
+
+    def test_public_view_merges_with_higher_grant_in_all_maps(self):
+        merged_ds = Dataset.objects.create(
+            name="merged", access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        ServiceAccountGrant.objects.create(
+            service_account=self.sa, dataset=merged_ds, permission=self.edit_perm,
+        )
+
+        data = self.client.get("/api/v1/user/cache", **self._auth()).json()
+        self.assertEqual(data["permissions_v2"]["merged"], ["edit", "view"])
+        self.assertEqual(data["permissions_v2_ignore_tos"]["merged"], ["edit", "view"])
+        self.assertEqual(data["permissions"]["merged"], 2)
+
+        public_only = Dataset.objects.create(
+            name="public-only", access_mode=Dataset.ACCESS_PUBLIC,
+        )
+        data = self.client.get("/api/v1/user/cache", **self._auth()).json()
+        self.assertEqual(data["permissions_v2_ignore_tos"]["public-only"], ["view"])
+
+    def test_disabled_sa_denied_on_datasets_and_native_authorize(self):
+        self.sa.is_active = False
+        self.sa.save(update_fields=["is_active"])
+
+        listing = self.client.get("/api/v1/datasets", **self._auth())
+        native = self.client.post(
+            "/api/dsg/v1/authorize",
+            {"service": "any", "entries": [{"name": "versioned"}]},
+            format="json",
+            **self._auth(),
+        )
+        self.assertEqual(listing.status_code, 401)
+        self.assertEqual(native.status_code, 401)

@@ -66,8 +66,14 @@ service account. Treat it like a password.
 - **Hold multiple tokens.** Mint a new token before deploying it,
   revoke the old one after — zero-downtime rotation.
 - **Be disabled.** Setting `is_active=False` blocks all of its tokens
-  immediately without deleting them, so the account can be re-enabled
-  later.
+  at DSG on the next request without deleting them, so the account can
+  be re-enabled later. Caveat: CAVE-side services cache `/user/cache`
+  responses per token in `middle_auth_client` (default 300 s) and do
+  not re-contact DSG while an allow is cached, so a disabled SA can
+  coast on a warm downstream cache until that TTL expires. The same
+  bound applies to any revocation (grant removal, public→private
+  flips); DSG's own permission cache is invalidated immediately by
+  signals in `core/signals.py`.
 
 ## What a service account cannot do
 

@@ -750,6 +750,26 @@ class TestNativeAuthorize(TestCase):
         self.assertEqual(service_account_view["decision"], "allow")
         self.assertEqual(service_account_view["roles"], ["view"])
 
+    def test_service_account_dag_public_anchors_via_endpoint(self):
+        self.v2.is_public = True
+        self.v2.save(update_fields=["is_public"])
+        sa = ServiceAccount.objects.create(name="dag-endpoint-sa")
+        token = ServiceAccountToken.objects.create(
+            service_account=sa, key="tok-dag-endpoint-sa", description="dag",
+        )
+
+        entry = self._post(
+            [{"name": "canonical", "version": "alt1"}],
+            service="dag",
+            key=token.key,
+        ).json()["entries"][0]
+
+        self.assertEqual(entry["decision"], "service_eval")
+        self.assertEqual(entry["roles"], ["view"])
+        self.assertEqual(entry["anchors"], [
+            {"branch": "main", "version": 2, "roles": ["view"]},
+        ])
+
     def test_service_account_non_view_denied_on_public_resources(self):
         public = Dataset.objects.create(
             name="sa-nonview-public", access_mode=Dataset.ACCESS_PUBLIC,

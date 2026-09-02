@@ -92,8 +92,14 @@ def _build_service_account_cache(sa):
     }
     permission_to_level = {"none": 0, "view": 1, "edit": 2, "manage": 3, "admin": 4}.get
 
+    # Dataset-wide grants only: this cache is dataset-grain, so a
+    # version-scoped grant must not surface as dataset-wide permission —
+    # the same rule that excludes version-public datasets below. Version
+    # grain is served by /api/v1/check-access and /api/dsg/v1/authorize.
     grants = (
-        ServiceAccountGrant.objects.filter(service_account=sa)
+        ServiceAccountGrant.objects.filter(
+            service_account=sa, dataset_version__isnull=True,
+        )
         .select_related("dataset", "permission")
     )
 
