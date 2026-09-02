@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with setup, admin workflow, environment variable, and management command changes.
-last_reviewed: 2026-08-19
+last_reviewed: 2026-09-01
 ---
 
 # DatasetGateway Admin Manual
@@ -30,6 +30,20 @@ prints step-by-step instructions if they are missing. After generating
 `.env`, it runs migrations and seeds the database with default permissions
 and groups. You can re-run `pixi run setup` at any time to update
 settings — existing values are shown as defaults.
+
+Migrations also create `dsg_cache_table`, the shared permission-cache table.
+If an older or manually provisioned deployment does not have it, the fallback
+is safe to run repeatedly:
+
+```bash
+pixi run python manage.py createcachetable dsg_cache_table
+```
+
+The Docker deploy script migrates with a one-off container before starting the
+new application container, so the cache table is available on its first
+request. The database cache makes invalidation visible across workers, but
+leave the production one-worker default in place until a two-worker
+warm/mutate/read smoke check shows no SQLite lock errors.
 
 ### 2. Create an admin user
 
@@ -626,6 +640,7 @@ inside a Docker container.
 | `pixi run make-admin EMAIL` | Create or promote a user to admin (works for both local and Docker). |
 | `pixi run make-admin EMAIL --remove` | Revoke admin status from a user. |
 | `bash scripts/manage.sh migrate` | Create/update database tables. |
+| `bash scripts/manage.sh createcachetable dsg_cache_table` | Manually create the shared permission-cache table if migration fallback is needed. |
 | `bash scripts/manage.sh changepassword EMAIL` | Reset a user's admin console password. |
 | `bash scripts/manage.sh seed_permissions` | Create `view`, `edit`, `manage`, and `admin` permission types. |
 | `bash scripts/manage.sh seed_groups` | Create default groups (`admin`, `sc`, `team_lead`, `user`). |

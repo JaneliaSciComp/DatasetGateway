@@ -35,9 +35,9 @@ export DJANGO_DEBUG="${DJANGO_DEBUG:-False}"
 PORT="${DSG_PORT:-8200}"
 export GUNICORN_BIND="${GUNICORN_BIND:-127.0.0.1:${PORT}}"
 
-# One worker by default: CACHES uses per-process LocMemCache, so the permission
-# cache is not shared across workers. Raise GUNICORN_WORKERS only after moving
-# to a shared cache backend (Redis/Memcached).
+# One worker by default: the database cache is shared across workers, but keep
+# this constraint until a two-worker warm/mutate/read smoke test confirms the
+# deployment's SQLite workload does not produce lock errors.
 export GUNICORN_WORKERS="${GUNICORN_WORKERS:-1}"
 
 # Refresh collected static so WhiteNoise's manifest (staticfiles/staticfiles.json)

@@ -96,9 +96,15 @@ DATABASES = {
 
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "dsg-cache",
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "dsg_cache_table",
+        # Keep this default aligned with PERMISSION_CACHE_TTL below; the
+        # authentication layer passes that setting explicitly.
         "TIMEOUT": 300,
+        "OPTIONS": {
+            "MAX_ENTRIES": 10000,
+            "CULL_FREQUENCY": 3,
+        },
     }
 }
 

@@ -10,6 +10,7 @@ from core.models import (
     Dataset,
     DatasetVersion,
     Permission,
+    Service,
     ServiceAccount,
     ServiceAccountGrant,
     ServiceAccountToken,
@@ -38,6 +39,13 @@ class TestSAAuthAPIFlow(TestCase):
         tos = TOSDocument.objects.create(name="tos1", text="t", dataset=self.tos_ds)
         self.tos_ds.tos = tos
         self.tos_ds.save()
+        self.tos_service = Service.objects.create(name="tos-service")
+        TOSDocument.objects.create(
+            name="service tos",
+            text="service terms",
+            dataset=self.tos_ds,
+            service=self.tos_service,
+        )
 
         ServiceAccountGrant.objects.create(
             service_account=self.sa, dataset=self.granted_ds, permission=self.view_perm,
@@ -77,9 +85,10 @@ class TestSAAuthAPIFlow(TestCase):
             **self._auth(),
         )
         self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertTrue(body["allowed"])
-        self.assertEqual(body["reason"], "service_account_grant")
+        self.assertEqual(
+            resp.json(),
+            {"allowed": True, "reason": "service_account_grant"},
+        )
 
     def test_check_access_denies_sa_without_grant(self):
         resp = self.client.post(
@@ -89,9 +98,10 @@ class TestSAAuthAPIFlow(TestCase):
             **self._auth(),
         )
         self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertFalse(body["allowed"])
-        self.assertEqual(body["reason"], "no_permission")
+        self.assertEqual(
+            resp.json(),
+            {"allowed": False, "reason": "no_permission"},
+        )
 
     def test_check_access_skips_tos_for_sa(self):
         # The dataset has TOS but SA is granted — must be allowed without TOS.
@@ -102,9 +112,28 @@ class TestSAAuthAPIFlow(TestCase):
             **self._auth(),
         )
         self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertTrue(body["allowed"])
-        self.assertEqual(body["reason"], "service_account_grant")
+        self.assertEqual(
+            resp.json(),
+            {"allowed": True, "reason": "service_account_grant"},
+        )
+
+    def test_check_access_skips_service_specific_tos_for_sa(self):
+        resp = self.client.post(
+            "/api/v1/check-access",
+            data={
+                "dataset": "tos-required",
+                "permission": "view",
+                "service": self.tos_service.name,
+            },
+            format="json",
+            **self._auth(),
+        )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(
+            resp.json(),
+            {"allowed": True, "reason": "service_account_grant"},
+        )
 
     def test_disabled_sa_token_rejected(self):
         self.sa.is_active = False
@@ -165,8 +194,7 @@ class TestSAPublicCoverageAuthAPI(TestCase):
 
     def test_check_access_allows_view_on_public_dataset_despite_tos(self):
         body = self._check("fully-public")
-        self.assertTrue(body["allowed"])
-        self.assertEqual(body["reason"], "public")
+        self.assertEqual(body, {"allowed": True, "reason": "public"})
 
     def test_check_access_denies_non_view_on_public_dataset(self):
         body = self._check("fully-public", permission="edit")
@@ -180,13 +208,12 @@ class TestSAPublicCoverageAuthAPI(TestCase):
         dataset_grain = self._check("version-public")
         unknown = self._check("version-public", version="nope")
 
-        self.assertTrue(exact["allowed"])
-        self.assertEqual(exact["reason"], "public_version")
+        self.assertEqual(exact, {"allowed": True, "reason": "public_version"})
         self.assertTrue(ancestor["allowed"])
         self.assertEqual(ancestor["reason"], "public_version")
         self.assertFalse(descendant["allowed"])
         self.assertFalse(dataset_grain["allowed"])
-        self.assertFalse(unknown["allowed"])
+        self.assertEqual(unknown, {"allowed": False, "reason": "no_permission"})
 
     def test_check_access_still_denies_private(self):
         body = self._check("private")
@@ -251,36 +278,115 @@ class TestSAGrainAndCacheInvalidation(TestCase):
         self.v2 = DatasetVersion.objects.create(
             dataset=self.versioned_ds, version="v2", branch="main", ordinal=2,
         )
+        self.v3 = DatasetVersion.objects.create(
+            dataset=self.versioned_ds, version="v3", branch="main", ordinal=3,
+        )
+        self.alt = DatasetVersion.objects.create(
+            dataset=self.versioned_ds, version="alt", branch="alt", ordinal=1,
+        )
+        self.service_a = Service.objects.create(name="service-a")
+        self.service_b = Service.objects.create(name="service-b")
+        self.dag_service = Service.objects.create(
+            name="dag-service", version_eval_mode=Service.VERSION_EVAL_DAG,
+        )
         ServiceAccountGrant.objects.create(
             service_account=self.sa,
             dataset=self.versioned_ds,
-            dataset_version=self.v1,
+            dataset_version=self.v2,
             permission=self.view_perm,
         )
 
     def _auth(self):
         return {"HTTP_AUTHORIZATION": f"Bearer {self.sa_token.key}"}
 
-    def _check(self, dataset, permission="view", version=None):
+    def _check(self, dataset, permission="view", version=None, service=None):
         data = {"dataset": dataset, "permission": permission}
         if version:
             data["version"] = version
+        if service is not None:
+            data["service"] = service
         resp = self.client.post(
             "/api/v1/check-access", data=data, format="json", **self._auth(),
         )
         self.assertEqual(resp.status_code, 200)
         return resp.json()
 
-    def test_version_scoped_grant_does_not_cover_dataset_grain(self):
+    def test_version_scoped_grant_uses_ordinal_ancestry(self):
         versionless = self._check("versioned")
-        exact = self._check("versioned", version="v1")
-        other_version = self._check("versioned", version="v2")
+        ancestor = self._check("versioned", version="v1")
+        exact = self._check("versioned", version="v2")
+        descendant = self._check("versioned", version="v3")
+        cross_branch = self._check("versioned", version="alt")
 
-        self.assertFalse(versionless["allowed"])
-        self.assertEqual(versionless["reason"], "no_permission")
-        self.assertTrue(exact["allowed"])
-        self.assertEqual(exact["reason"], "service_account_grant")
-        self.assertFalse(other_version["allowed"])
+        self.assertEqual(versionless, {"allowed": False, "reason": "no_permission"})
+        self.assertEqual(
+            ancestor, {"allowed": True, "reason": "service_account_grant"}
+        )
+        self.assertEqual(
+            exact, {"allowed": True, "reason": "service_account_grant"}
+        )
+        self.assertEqual(descendant, {"allowed": False, "reason": "no_permission"})
+        self.assertEqual(cross_branch, {"allowed": False, "reason": "no_permission"})
+
+    def test_cross_branch_dag_grant_is_indeterminate_and_denied(self):
+        body = self._check(
+            "versioned", version="alt", service=self.dag_service.name,
+        )
+
+        self.assertEqual(body, {"allowed": False, "reason": "no_permission"})
+
+    def test_edit_grant_satisfies_view_at_dataset_and_version_grains(self):
+        ServiceAccountGrant.objects.all().delete()
+        ServiceAccountGrant.objects.create(
+            service_account=self.sa,
+            dataset=self.versioned_ds,
+            permission=self.edit_perm,
+        )
+
+        dataset_grain = self._check("versioned", permission="view")
+        version_grain = self._check(
+            "versioned", permission="view", version="v1",
+        )
+
+        expected = {"allowed": True, "reason": "service_account_grant"}
+        self.assertEqual(dataset_grain, expected)
+        self.assertEqual(version_grain, expected)
+
+    def test_service_scope_and_global_grant_semantics(self):
+        ServiceAccountGrant.objects.all().delete()
+        ServiceAccountGrant.objects.create(
+            service_account=self.sa,
+            dataset=self.versioned_ds,
+            service=self.service_a,
+            permission=self.view_perm,
+        )
+
+        expected_allow = {"allowed": True, "reason": "service_account_grant"}
+        expected_deny = {"allowed": False, "reason": "no_permission"}
+        self.assertEqual(
+            self._check("versioned", service=self.service_a.name), expected_allow
+        )
+        self.assertEqual(
+            self._check("versioned", service=self.service_b.name), expected_deny
+        )
+        self.assertEqual(self._check("versioned"), expected_deny)
+        self.assertEqual(
+            self._check("versioned", service="unknown-service"), expected_deny
+        )
+
+        ServiceAccountGrant.objects.all().delete()
+        ServiceAccountGrant.objects.create(
+            service_account=self.sa,
+            dataset=self.versioned_ds,
+            permission=self.view_perm,
+        )
+        self.assertEqual(self._check("versioned"), expected_allow)
+        self.assertEqual(
+            self._check("versioned", service=self.service_b.name), expected_allow
+        )
+        self.assertEqual(
+            self._check("versioned", service="unknown-service"), expected_allow
+        )
 
     def test_version_scoped_grant_absent_from_user_cache(self):
         resp = self.client.get("/api/v1/user/cache", **self._auth())
@@ -295,7 +401,8 @@ class TestSAGrainAndCacheInvalidation(TestCase):
         self.assertEqual(warm["permissions_v2"].get("flip-me"), ["view"])
 
         public.access_mode = Dataset.ACCESS_CLOSED
-        public.save(update_fields=["access_mode"])
+        with self.captureOnCommitCallbacks(execute=True):
+            public.save(update_fields=["access_mode"])
 
         after = self.client.get("/api/v1/user/cache", **self._auth()).json()
         self.assertNotIn("flip-me", after["permissions_v2"])
@@ -309,7 +416,8 @@ class TestSAGrainAndCacheInvalidation(TestCase):
         warm = self.client.get("/api/v1/user/cache", **self._auth()).json()
         self.assertIn("versioned", warm["permissions_v2"])
 
-        grant.delete()
+        with self.captureOnCommitCallbacks(execute=True):
+            grant.delete()
 
         after = self.client.get("/api/v1/user/cache", **self._auth()).json()
         self.assertNotIn("versioned", after["permissions_v2"])
@@ -327,9 +435,10 @@ class TestSAGrainAndCacheInvalidation(TestCase):
         self.assertEqual(data["permissions_v2_ignore_tos"]["merged"], ["edit", "view"])
         self.assertEqual(data["permissions"]["merged"], 2)
 
-        public_only = Dataset.objects.create(
-            name="public-only", access_mode=Dataset.ACCESS_PUBLIC,
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            Dataset.objects.create(
+                name="public-only", access_mode=Dataset.ACCESS_PUBLIC,
+            )
         data = self.client.get("/api/v1/user/cache", **self._auth()).json()
         self.assertEqual(data["permissions_v2_ignore_tos"]["public-only"], ["view"])
 

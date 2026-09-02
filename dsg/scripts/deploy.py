@@ -77,19 +77,28 @@ def main() -> None:
     else:
         print("  OAuth credentials: OK")
 
-    # --- Build and start ---
-    print("\n[2/4] Building and starting containers...")
+    # --- Build ---
+    print("\n[2/4] Building container image...")
     run(
-        ["docker", "compose", "-f", str(compose_file), "up", "-d", "--build"],
+        ["docker", "compose", "-f", str(compose_file), "build", "dsg"],
         cwd=project_root,
     )
 
-    # --- Run seed commands ---
-    print("\n[3/4] Running database migrations and seed data...")
+    # --- Migrate, start, and seed ---
+    # The database-backed cache table is migration-owned, so migration must
+    # complete before the new application container starts serving requests.
+    print("\n[3/4] Running migrations, starting containers, and seeding data...")
+    compose_run = [
+        "docker", "compose", "-f", str(compose_file), "run", "--rm", "dsg",
+    ]
+    run([*compose_run, "python", "manage.py", "migrate", "--noinput"])
+    run(
+        ["docker", "compose", "-f", str(compose_file), "up", "-d"],
+        cwd=project_root,
+    )
     compose_exec = [
         "docker", "compose", "-f", str(compose_file), "exec", "dsg",
     ]
-    run([*compose_exec, "python", "manage.py", "migrate", "--noinput"])
     run([*compose_exec, "python", "manage.py", "seed_permissions"])
     run([*compose_exec, "python", "manage.py", "seed_groups"])
 

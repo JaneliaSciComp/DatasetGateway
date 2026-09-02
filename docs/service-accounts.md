@@ -1,7 +1,7 @@
 ---
 doc_status: living-reference
 sync_policy: Update with service account model, token, permission, UI, and audit behavior changes.
-last_reviewed: 2026-06-01
+last_reviewed: 2026-09-01
 ---
 
 # Service Accounts
@@ -71,9 +71,12 @@ service account. Treat it like a password.
   responses per token in `middle_auth_client` (default 300 s) and do
   not re-contact DSG while an allow is cached, so a disabled SA can
   coast on a warm downstream cache until that TTL expires. The same
-  bound applies to any revocation (grant removal, public→private
-  flips); DSG's own permission cache is invalidated immediately by
-  signals in `core/signals.py`.
+  bound applies to any revocation (grant removal, public→private flips).
+  DSG's database-backed permission cache is shared across workers, and
+  signals in `core/signals.py` invalidate affected entries after the
+  database transaction commits. A small window remains between commit
+  and callback execution; a process crash or cache-backend failure can
+  leave an entry until DSG's 300-second cache TTL expires.
 
 ## What a service account cannot do
 
@@ -243,6 +246,13 @@ both principal types duck-type alike; a `User` is never a service account.
 The `/api/v1/user/cache` blob still carries `parent_id` and
 `service_account` keys for CAVE wire compatibility — constant
 `null`/`false` for users, `null`/`true` for dedicated service accounts.
+
+> **Version-grant behavior change:** A version-scoped
+> `ServiceAccountGrant` no longer appears as dataset-wide permission in the
+> CAVE-compatible `/api/v1/user/cache` response and does not satisfy a
+> versionless `/api/v1/check-access` request. It covers its registered version
+> and same-branch ancestors according to ordinal containment. Before rollout,
+> inventory these rows with `python manage.py audit_version_grants`.
 
 ### `request.user` carries the principal; ServiceAccount duck-types as User
 

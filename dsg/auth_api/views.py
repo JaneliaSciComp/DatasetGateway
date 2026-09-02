@@ -6,12 +6,19 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.authz import (
+    ContainmentStatus,
+    ResolvedTarget,
+    evaluate_containment,
+    public_version_coverage,
+)
 from core.models import (
     Dataset,
     DatasetVersion,
     Grant,
     GroupDatasetPermission,
     Permission,
+    Service,
     ServiceAccount,
     ServiceAccountGrant,
     TOSAcceptance,
@@ -164,47 +171,45 @@ class AuthorizeDecisionView(APIView):
                 {"allowed": False, "reason": "Dataset not found"}, status=404
             )
 
-        # Service accounts have a simpler decision path: no admin shortcut,
-        # no TOS, no group permissions — direct ServiceAccountGrant, plus
-        # public coverage for view (SAs never participate in TOS, so public
-        # data is a plain allow; see core.authz.public_version_coverage).
+        # Service accounts stay on an early-return path: no admin shortcut,
+        # no TOS, no group permissions. Grant coverage uses the same native
+        # containment semantics as /api/dsg/v1/authorize.
         if isinstance(user, ServiceAccount):
-            sa_filter = {
-                "service_account": user,
-                "dataset": dataset,
-                "permission__name": permission_name,
-            }
             dv = None
             if version:
                 try:
                     dv = DatasetVersion.objects.get(dataset=dataset, version=version)
                 except DatasetVersion.DoesNotExist:
                     return Response({"allowed": False, "reason": "no_permission"})
-                has_grant = ServiceAccountGrant.objects.filter(
-                    Q(dataset_version=dv) | Q(dataset_version__isnull=True),
-                    **sa_filter,
-                ).exists()
+                target = ResolvedTarget(
+                    dataset=dataset,
+                    branch=dv.branch,
+                    ordinal=dv.ordinal,
+                    dataset_version=dv,
+                )
             else:
-                # A versionless (dataset-grain) request needs a dataset-wide
-                # grant; a version-scoped grant covers only its version.
-                has_grant = ServiceAccountGrant.objects.filter(
-                    dataset_version__isnull=True, **sa_filter,
-                ).exists()
-            if has_grant:
+                target = ResolvedTarget(dataset=dataset)
+
+            service_obj = None
+            if service_name:
+                service_obj = Service.objects.filter(name=service_name).first()
+
+            decision = evaluate_containment(
+                user, service_obj, target, permission_name
+            )
+            if decision.status == ContainmentStatus.COVERED:
                 return Response({"allowed": True, "reason": "service_account_grant"})
+
+            # NOT_COVERED and INDETERMINATE both proceed only to the existing
+            # public fallbacks. The legacy boolean response cannot express
+            # service_eval, so an otherwise-indeterminate grant must deny.
             if permission_name == "view":
                 if dataset.access_mode == Dataset.ACCESS_PUBLIC:
                     return Response({"allowed": True, "reason": "public"})
                 if dv is not None:
-                    from core.authz import ResolvedTarget, public_version_coverage
-
-                    target = ResolvedTarget(
-                        dataset=dataset,
-                        branch=dv.branch,
-                        ordinal=dv.ordinal,
-                        dataset_version=dv,
+                    coverage = public_version_coverage(
+                        user, target, service=service_obj
                     )
-                    coverage = public_version_coverage(user, target)
                     if coverage.covered:
                         return Response(
                             {"allowed": True, "reason": "public_version"}

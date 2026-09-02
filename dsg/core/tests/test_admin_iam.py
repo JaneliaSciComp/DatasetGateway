@@ -22,6 +22,7 @@ from core.admin import (
     GrantAdmin,
     GroupAdmin,
     GroupDatasetPermissionAdmin,
+    PermissionAdmin,
     TOSAcceptanceAdmin,
     TOSDocumentAdmin,
     UserAdmin,
@@ -64,6 +65,19 @@ class _AdminTestBase(TestCase):
 
     def _own(self, bucket_name, email):
         return BucketIAMBinding.objects.create(bucket_name=bucket_name, email=email)
+
+
+@pytest.mark.django_db
+class TestPermissionAdmin(_AdminTestBase):
+    def test_name_is_editable_on_add_and_read_only_on_change(self):
+        model_admin = PermissionAdmin(Permission, django_admin.site)
+
+        self.assertNotIn(
+            "name", model_admin.get_readonly_fields(self.request, obj=None)
+        )
+        self.assertIn(
+            "name", model_admin.get_readonly_fields(self.request, obj=self.view_perm)
+        )
 
 
 @pytest.mark.django_db

@@ -11,6 +11,9 @@ from core.models import (
     DatasetVersion,
     Grant,
     Permission,
+    Service,
+    ServiceAccount,
+    ServiceAccountGrant,
     TOSDocument,
     User,
 )
@@ -22,6 +25,8 @@ class TestAuditVersionGrantsCommand(TestCase):
         permission, _ = Permission.objects.get_or_create(name="view")
         dataset = Dataset.objects.create(name="ds1")
         user = User.objects.create(email="user@example.org")
+        service = Service.objects.create(name="svc")
+        service_account = ServiceAccount.objects.create(name="audit-bot")
         granted = DatasetVersion.objects.create(dataset=dataset, version="v1")
         public = DatasetVersion.objects.create(
             dataset=dataset, version="v2", branch="main", ordinal=2, is_public=True
@@ -33,10 +38,18 @@ class TestAuditVersionGrantsCommand(TestCase):
             dataset_version=granted,
             permission=permission,
         )
+        ServiceAccountGrant.objects.create(
+            service_account=service_account,
+            dataset=dataset,
+            dataset_version=granted,
+            service=service,
+            permission=permission,
+        )
         TOSDocument.objects.create(name="TOS", text="Terms", dataset_version=tos_version)
         before = {
             "versions": DatasetVersion.objects.count(),
             "grants": Grant.objects.count(),
+            "sa_grants": ServiceAccountGrant.objects.count(),
             "tos": TOSDocument.objects.count(),
         }
         out = StringIO()
@@ -47,6 +60,12 @@ class TestAuditVersionGrantsCommand(TestCase):
         self.assertIn("Version-scoped grants", text)
         self.assertIn("user=user@example.org dataset=ds1 version=v1", text)
         self.assertIn("ordinal=MISSING", text)
+        self.assertIn("Version-scoped service-account grants", text)
+        self.assertIn(
+            "service_account=audit-bot dataset=ds1 version=v1 "
+            "branch=main ordinal=MISSING permission=view service=svc",
+            text,
+        )
         self.assertIn("dataset=ds1 version=v2 branch=main ordinal=2 reasons=public", text)
         self.assertIn("dataset=ds1 version=v3 branch=main ordinal=MISSING reasons=tos", text)
         self.assertIn("convert grant to dataset-grain", text)
@@ -56,6 +75,7 @@ class TestAuditVersionGrantsCommand(TestCase):
         after = {
             "versions": DatasetVersion.objects.count(),
             "grants": Grant.objects.count(),
+            "sa_grants": ServiceAccountGrant.objects.count(),
             "tos": TOSDocument.objects.count(),
         }
         self.assertEqual(after, before)

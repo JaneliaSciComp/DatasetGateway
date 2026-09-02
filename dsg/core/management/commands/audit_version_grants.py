@@ -3,7 +3,7 @@
 from django.core.management.base import BaseCommand
 from django.db.models import Q
 
-from core.models import DatasetVersion, Grant
+from core.models import DatasetVersion, Grant, ServiceAccountGrant
 
 
 class Command(BaseCommand):
@@ -29,6 +29,31 @@ class Command(BaseCommand):
                 f"branch={grant.dataset_version.branch} "
                 f"ordinal={grant.dataset_version.ordinal if grant.dataset_version.ordinal is not None else 'MISSING'} "
                 f"permission={grant.permission.name} service={service} buckets={buckets}"
+            )
+
+        self.stdout.write("")
+        self.stdout.write("Version-scoped service-account grants")
+        sa_grants = (
+            ServiceAccountGrant.objects.filter(dataset_version__isnull=False)
+            .select_related(
+                "service_account", "dataset", "dataset_version", "permission", "service"
+            )
+            .order_by(
+                "dataset__name", "dataset_version__version", "service_account__name"
+            )
+        )
+        if not sa_grants:
+            self.stdout.write("  none")
+        for grant in sa_grants:
+            service = grant.service.name if grant.service_id else "*"
+            self.stdout.write(
+                "  "
+                f"service_account={grant.service_account.name} "
+                f"dataset={grant.dataset.name} "
+                f"version={grant.dataset_version.version} "
+                f"branch={grant.dataset_version.branch} "
+                f"ordinal={grant.dataset_version.ordinal if grant.dataset_version.ordinal is not None else 'MISSING'} "
+                f"permission={grant.permission.name} service={service}"
             )
 
         self.stdout.write("")

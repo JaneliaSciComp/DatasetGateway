@@ -127,6 +127,12 @@ class GroupAdmin(admin.ModelAdmin):
 class PermissionAdmin(admin.ModelAdmin):
     list_display = ("id", "name")
 
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj is not None:
+            fields.append("name")
+        return fields
+
 
 class ServiceTableInline(admin.TabularInline):
     model = ServiceTable
