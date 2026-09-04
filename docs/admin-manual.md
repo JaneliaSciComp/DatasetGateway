@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with setup, admin workflow, environment variable, and management command changes.
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-04
 ---
 
 # DatasetGateway Admin Manual
@@ -218,6 +218,8 @@ grant and does not make its base data writable.
   semantics. They are also used by the separate IAM provisioning subsystem. Adding,
   renaming, or deleting a bucket here immediately syncs bucket IAM for
   the dataset's users (see [Bucket IAM Synchronization](#bucket-iam-synchronization)).
+  For the end-to-end checklist that makes a bucket readable through
+  Neuroglancer, see [Neuroglancer (ngauth) Bucket Setup](#neuroglancer-ngauth-bucket-setup).
 - **Dataset versions** — the versioned releases. Each version can be
   linked to one or more dataset buckets via the Buckets M2M field.
 - **Grants** — users with `admin` permission on this dataset can manage
@@ -373,6 +375,200 @@ logins. You generally don't need to touch them.
 
 - **Email addresses** — email addresses associated with user accounts,
   managed by allauth. You generally don't need to edit these.
+
+---
+
+## Neuroglancer (ngauth) Bucket Setup
+
+DatasetGateway is an [ngauth](https://github.com/google/neuroglancer/tree/master/src/datasource/ngauth)
+server: Neuroglancer can open a private GCS bucket through it, with DSG
+deciding who may read and Google Cloud doing the actual serving. Getting a
+bucket to work takes a one-time deployment step plus four per-bucket steps,
+two of which are on the GCP side and cannot be done from the DSG admin
+console. This section is the checklist. Placeholders: `GATEWAY_PROJECT` is
+the GCP project that holds DSG's own identity, `BUCKET_PROJECT` is the project
+that owns the bucket (often a different one), `BUCKET` is the bare bucket
+name, and `https://viewer.example.org` is an origin that embeds Neuroglancer.
+
+### How the token path works
+
+A Neuroglancer layer source such as
+
+```text
+precomputed://gs+ngauth+https://dataset-gateway.mydomain.org/BUCKET/path/to/volume
+zarr3://gs+ngauth+https://dataset-gateway.mydomain.org/BUCKET/
+```
+
+names the DSG host and the bucket. The client then:
+
+1. Opens `/login?origin=<viewer origin>` in a popup. The user signs in with
+   Google and the popup posts a short-lived user token back to the viewer.
+   (`POST /token` is the cookie-based fallback for same-site callers.)
+2. Posts `{token, bucket}` to `/gcs_token`. DSG resolves the bucket name to
+   its **Dataset bucket** rows, authorizes the user from the dataset / grant /
+   TOS model (see [Datasets](#datasets); the check runs with no service scope,
+   so service-scoped grants do not count), and, if authorized, mints a GCS
+   access token **from DSG's own GCP identity**, downscoped via the Security
+   Token Service to `roles/storage.objectViewer` on that one bucket for about
+   an hour.
+3. Fetches objects directly from `storage.googleapis.com` with that token.
+   DSG is not in the data path.
+
+Three consequences drive the steps below:
+
+- **DSG's runtime identity must itself be able to read the bucket.** A
+  downscoped token can never exceed what the identity holds, so if the
+  identity has no binding on the bucket, DSG happily issues a token that GCS
+  then rejects. The DSG log shows `decision=issued`; the viewer shows an
+  authentication or permission error from `storage.googleapis.com`.
+- **Issuance is whole-bucket.** The token reads every object in the bucket,
+  so a bucket has exactly one audience: everyone authorized for any dataset
+  the bucket is attached to. Attaching one bucket to several datasets means
+  the union of their audiences. Never mix public and restricted data in one
+  bucket; use a separate bucket instead.
+- **The browser talks to GCS cross-origin**, so the bucket's CORS
+  configuration must admit every viewer origin.
+
+### One-time: DSG's runtime GCP identity
+
+DSG uses Google Application Default Credentials (ADC) for every GCP call
+(token minting and the [Bucket IAM Synchronization](#bucket-iam-synchronization)
+subsystem). This identity is unrelated to the OAuth *client* used for login;
+both may live in `secrets/` but they do different jobs.
+
+1. Create a dedicated service account in the gateway project. Grant it no
+   project-level roles; it gets per-bucket bindings only.
+
+   ```bash
+   gcloud iam service-accounts create dsg-ngauth --project=GATEWAY_PROJECT \
+     --display-name="DatasetGateway ngauth runtime"
+   ```
+
+2. Make it DSG's ADC. On a plain host, download a JSON key into `secrets/`
+   (mode 0600; the directory is git-ignored) and point `.env` at it:
+
+   ```bash
+   gcloud iam service-accounts keys create secrets/dsg-ngauth-key.json \
+     --iam-account=dsg-ngauth@GATEWAY_PROJECT.iam.gserviceaccount.com
+   chmod 600 secrets/dsg-ngauth-key.json
+   echo 'GOOGLE_APPLICATION_CREDENTIALS=secrets/dsg-ngauth-key.json' >> .env
+   ```
+
+   Restart DSG to pick up the variable. On GCE/GKE, attach the service
+   account to the workload instead of shipping a key. Without a usable ADC,
+   `/gcs_token` answers `503 Credential service unavailable`.
+
+3. Allow the viewer origins. `NGAUTH_ALLOWED_ORIGINS` (see
+   [Environment Variables Reference](#environment-variables-reference)) is a
+   regex that must *fully* match each embedding origin, e.g.
+   `^https://(viewer|viewer-dev)\.example\.org$`. A reverse proxy in front of
+   DSG must not add its own `Access-Control-Allow-Origin` header on the ngauth
+   endpoints; DSG emits the correct one itself.
+
+### Per bucket, step 1: approve the contents
+
+Before the runtime identity is granted on a bucket, confirm that
+**everything** in it is meant for that bucket's whole (union) audience.
+Listing the bucket and recording the approval in your rollout notes is
+enough. Also confirm the bucket does not have Requester Pays enabled: DSG
+sends no `userProject`, so a Requester Pays bucket cannot be served.
+
+### Per bucket, step 2: register it in DatasetGateway
+
+In the admin console, open (or create) the Dataset and add a **Dataset
+bucket** whose name is the bare bucket name (`BUCKET`, no `gs://`). If access
+is version-scoped, attach the bucket to the relevant Dataset versions too.
+Then make sure the intended users are covered:
+
+- a `Grant` or `Group dataset permission` with a blank **Service** field, or
+  the dataset's **Access mode** set to `Public` (or a version marked
+  **Is public**); and
+- the dataset's TOS document, if any, accepted by each user. `/gcs_token`
+  returns `tos_required` with a `tos_url` the viewer can open when acceptance
+  is missing.
+
+Registering first is safe: until step 4 the runtime identity cannot read the
+bucket, so no data is reachable yet.
+
+### Per bucket, step 3: bucket CORS
+
+```bash
+cat > cors.json <<'JSON'
+[{"origin": ["https://viewer.example.org"],
+  "method": ["GET", "HEAD"],
+  "responseHeader": ["Content-Type", "Range", "Authorization"],
+  "maxAgeSeconds": 3600}]
+JSON
+gcloud storage buckets update gs://BUCKET --cors-file=cors.json
+gcloud storage buckets describe gs://BUCKET --format="json(cors_config)"
+```
+
+List every origin that embeds Neuroglancer; in practice this is the same set
+as `NGAUTH_ALLOWED_ORIGINS`. `Range` matters because chunked formats issue
+range reads.
+
+### Per bucket, step 4: grant the runtime identity (in the bucket's project)
+
+Custom roles are project-scoped, so create the role once per bucket project
+and reuse it for later buckets there. The role is read-only and deliberately
+omits object create/delete **and** `storage.buckets.setIamPolicy`: the token
+path never writes IAM, and an identity that can rewrite bucket policy is a
+much larger blast radius than a read-serving gateway needs.
+
+```bash
+gcloud iam roles create dsgNgauthBucketManager --project=BUCKET_PROJECT \
+  --title="DSG ngauth bucket manager" \
+  --description="DatasetGateway ngauth runtime: read bucket metadata, IAM policy, and objects. No create, delete, or setIamPolicy." \
+  --permissions=storage.buckets.get,storage.buckets.getIamPolicy,storage.objects.get,storage.objects.list \
+  --stage=GA
+
+gcloud storage buckets add-iam-policy-binding gs://BUCKET \
+  --member=serviceAccount:dsg-ngauth@GATEWAY_PROJECT.iam.gserviceaccount.com \
+  --role=projects/BUCKET_PROJECT/roles/dsgNgauthBucketManager
+```
+
+Notes:
+
+- A freshly created custom role can take a minute to propagate. If the
+  binding fails with *"Role … does not exist in the resource's hierarchy"*,
+  retry unchanged.
+- The predefined `roles/storage.objectViewer` also works for the token path.
+  The custom role adds the bucket-metadata reads that the IAM reconcile
+  command uses to probe state.
+- The binding is compatible with uniform bucket-level access and enforced
+  public access prevention; a bucket-level grant to a service account is not
+  public access.
+- If the bucket's organization restricts sharing to specific domains, the
+  gateway project must be inside an allowed organization. A successful
+  `add-iam-policy-binding` confirms this.
+- If you also want the per-user [Bucket IAM Synchronization](#bucket-iam-synchronization)
+  subsystem to provision users on this bucket, that requires
+  `storage.buckets.setIamPolicy`, which this role omits by design. Decide
+  that separately and grant it through a distinct role.
+
+### Verify
+
+Every `/gcs_token` decision is logged at INFO regardless of `DSG_LOG_LEVEL`
+(`dsg/serve.log` for `pixi run serve-bg`, otherwise the service journal):
+
+```text
+GCS token decision user=EMAIL bucket=BUCKET decision=issued reason=covered
+```
+
+`reason` is `covered` (a grant or group permission), `public`, or
+`public-version`. Then open the layer in the viewer: first load should
+prompt the ngauth login popup, after which chunks render.
+
+| Symptom | Log `reason` / response | Cause and fix |
+|---------|------------------------|---------------|
+| Popup shows `badorigin`; `/token` or `/gcs_token` returns `403 Origin not allowed` | — | Viewer origin does not fully match `NGAUTH_ALLOWED_ORIGINS`. Fix the regex and restart. |
+| `403 Access denied` | `unknown_bucket` | No Dataset bucket row has this exact name. Register it (step 2). |
+| `403 Access denied` | `no_coverage` | User has no qualifying grant, group permission, or public coverage. Check the grant's **Service** field is blank. |
+| `403 tos_required` | `missing_tos` | User has not accepted the dataset's TOS. Send them the returned `tos_url`. |
+| `503 Credential service unavailable` | `adc_unavailable` | `GOOGLE_APPLICATION_CREDENTIALS` unset, unreadable, or not a service-account key. |
+| `502 Credential exchange failed` | `sts_response_error` | STS rejected the exchange. Check the key is current and the service account is not disabled. |
+| `decision=issued`, but the viewer reports an authentication or permission error from `storage.googleapis.com` | `issued` | The runtime identity is not granted on the bucket. Do step 4 and check `gcloud storage buckets get-iam-policy gs://BUCKET`. |
+| `decision=issued`, browser console shows a CORS error on `storage.googleapis.com` | `issued` | Bucket CORS is missing the viewer origin or the `Range`/`Authorization` response headers. Redo step 3. |
 
 ---
 
@@ -622,6 +818,7 @@ bindings.
 | `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative path to OAuth credentials file. In Docker, mount this file or use `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. |
 | `AUTH_COOKIE_DOMAIN` | (empty) | Set to `.example.org` to share the `dsg_token` cookie across subdomains. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins on ngauth endpoints. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | (empty; Google ADC default chain) | Path to the service-account key DSG uses as its own GCP identity for ngauth token minting and bucket IAM sync. See [Neuroglancer (ngauth) Bucket Setup](#neuroglancer-ngauth-bucket-setup). |
 | `TOS_RETURN_ALLOWED_ORIGINS` | (empty) | Comma-separated exact HTTP(S) origins allowed as `/web/tos/service-check/` return targets. Origins accepted by `NGAUTH_ALLOWED_ORIGINS` are also valid returns; adding an origin here does not grant ngauth CORS access. |
 | `DSG_ORIGIN` | (empty) | Public origin for CSRF trusted origins (e.g., `https://dataset-gateway.mydomain.org`). |
 | `DSG_PORT` | `8200` | Port for the development server. |

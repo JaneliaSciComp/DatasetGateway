@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update this index whenever docs are added, moved, or reclassified.
-last_reviewed: 2026-06-01
+last_reviewed: 2026-09-04
 ---
 
 # Documentation
@@ -28,8 +28,8 @@ is expected to track code changes.
 ## Living Docs
 
 - [User manual](user-manual.md) - end-user workflows, roles, login, TOS, and API use.
-- [Admin manual](admin-manual.md) - setup, Django admin, environment variables,
-  and management commands.
+- [Admin manual](admin-manual.md) - setup, Django admin, Neuroglancer (ngauth)
+  bucket setup, environment variables, and management commands.
 - [CAVE auth endpoints](cave-auth-endpoints.md) - current CAVE compatibility and
   SCIM provisioning reference.
 - [Clio support](clio-support.md) - current Clio integration behavior and migration
