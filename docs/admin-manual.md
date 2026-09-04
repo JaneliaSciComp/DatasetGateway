@@ -569,6 +569,7 @@ prompt the ngauth login popup, after which chunks render.
 | `502 Credential exchange failed` | `sts_response_error` | STS rejected the exchange. Check the key is current and the service account is not disabled. |
 | `decision=issued`, but the viewer reports an authentication or permission error from `storage.googleapis.com` | `issued` | The runtime identity is not granted on the bucket. Do step 4 and check `gcloud storage buckets get-iam-policy gs://BUCKET`. |
 | `decision=issued`, browser console shows a CORS error on `storage.googleapis.com` | `issued` | Bucket CORS is missing the viewer origin or the `Range`/`Authorization` response headers. Redo step 3. |
+| `decision=issued`, layer shows `…/info not found … HTTP error 404` (or `…/zarr.json … 404`) | `issued` | Auth is working: GCS answers 404 only to a caller that can read the bucket. The layer scheme does not match the data format. Use `precomputed://` for a volume that has an `info` file and `zarr3://` (or `zarr://`, which auto-detects) for a Zarr volume that has `zarr.json`; confirm the path with `gcloud storage ls gs://BUCKET/PATH`. |
 
 ---
 
