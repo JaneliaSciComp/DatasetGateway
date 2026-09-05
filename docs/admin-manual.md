@@ -383,9 +383,9 @@ logins. You generally don't need to touch them.
 DatasetGateway is an [ngauth](https://github.com/google/neuroglancer/tree/master/src/datasource/ngauth)
 server: Neuroglancer can open a private GCS bucket through it, with DSG
 deciding who may read and Google Cloud doing the actual serving. Getting a
-bucket to work takes a one-time deployment step plus four per-bucket steps,
-two of which are on the GCP side and cannot be done from the DSG admin
-console. This section is the checklist. Placeholders: `GATEWAY_PROJECT` is
+bucket to work takes a one-time deployment step plus four per-bucket steps
+(the CORS step is usually optional), two of which are on the GCP side and
+cannot be done from the DSG admin console. This section is the checklist. Placeholders: `GATEWAY_PROJECT` is
 the GCP project that holds DSG's own identity, `BUCKET_PROJECT` is the project
 that owns the bucket (often a different one), `BUCKET` is the bare bucket
 name, and `https://viewer.example.org` is an origin that embeds Neuroglancer.
@@ -426,8 +426,10 @@ Three consequences drive the steps below:
   the bucket is attached to. Attaching one bucket to several datasets means
   the union of their audiences. Never mix public and restricted data in one
   bucket; use a separate bucket instead.
-- **The browser talks to GCS cross-origin**, so the bucket's CORS
-  configuration must admit every viewer origin.
+- **The browser talks to GCS cross-origin.** Neuroglancer fetches through
+  the GCS JSON API, which answers CORS for any origin, so bucket CORS
+  configuration is not needed for Neuroglancer itself. It matters only if
+  some other browser client reads the bucket through XML-API URLs.
 
 ### One-time: DSG's runtime GCP identity
 
@@ -490,7 +492,17 @@ Then make sure the intended users are covered:
 Registering first is safe: until step 4 the runtime identity cannot read the
 bucket, so no data is reachable yet.
 
-### Per bucket, step 3: bucket CORS
+### Per bucket, step 3: bucket CORS (XML-API clients only)
+
+Neuroglancer's `gs+ngauth` sources fetch through the JSON API
+(`storage.googleapis.com/storage/v1/b/BUCKET/o/OBJECT?alt=media`), and GCS
+answers CORS for any origin on that endpoint regardless of bucket
+configuration. Verified: a bucket whose CORS listed only two origins still
+served a third origin's JSON-API preflight and GET with a matching
+`Access-Control-Allow-Origin`. Bucket CORS configuration applies to the XML
+API (`storage.googleapis.com/BUCKET/OBJECT`), so set it only when some
+browser client reads the bucket that way. Skip this step for a
+Neuroglancer-only bucket.
 
 ```bash
 cat > cors.json <<'JSON'
@@ -503,9 +515,8 @@ gcloud storage buckets update gs://BUCKET --cors-file=cors.json
 gcloud storage buckets describe gs://BUCKET --format="json(cors_config)"
 ```
 
-List every origin that embeds Neuroglancer; in practice this is the same set
-as `NGAUTH_ALLOWED_ORIGINS`. `Range` matters because chunked formats issue
-range reads.
+List every origin that reads the bucket through the XML API. `Range` matters
+because chunked formats issue range reads.
 
 ### Per bucket, step 4: grant the runtime identity (in the bucket's project)
 
@@ -568,7 +579,7 @@ prompt the ngauth login popup, after which chunks render.
 | `503 Credential service unavailable` | `adc_unavailable` | `GOOGLE_APPLICATION_CREDENTIALS` unset, unreadable, or not a service-account key. |
 | `502 Credential exchange failed` | `sts_response_error` | STS rejected the exchange. Check the key is current and the service account is not disabled. |
 | `decision=issued`, but the viewer reports an authentication or permission error from `storage.googleapis.com` | `issued` | The runtime identity is not granted on the bucket. Do step 4 and check `gcloud storage buckets get-iam-policy gs://BUCKET`. |
-| `decision=issued`, browser console shows a CORS error on `storage.googleapis.com` | `issued` | Bucket CORS is missing the viewer origin or the `Range`/`Authorization` response headers. Redo step 3. |
+| `decision=issued`, browser console shows a CORS error on `storage.googleapis.com` | `issued` | Only possible for clients using XML-API URLs (`storage.googleapis.com/BUCKET/…`); Neuroglancer's JSON-API fetches are exempt from bucket CORS. Add the origin and the `Range`/`Authorization` response headers in step 3. |
 | `decision=issued`, layer shows `…/info not found … HTTP error 404` (or `…/zarr.json … 404`) | `issued` | Auth is working: GCS answers 404 only to a caller that can read the bucket. The layer scheme does not match the data format. Use `precomputed://` for a volume that has an `info` file and `zarr3://` (or `zarr://`, which auto-detects) for a Zarr volume that has `zarr.json`; confirm the path with `gcloud storage ls gs://BUCKET/PATH`. |
 
 ---
