@@ -467,6 +467,12 @@ both may live in `secrets/` but they do different jobs.
    DSG must not add its own `Access-Control-Allow-Origin` header on the ngauth
    endpoints; DSG emits the correct one itself.
 
+DSG serves `Cross-Origin-Opener-Policy: unsafe-none` on `/login`, `/auth/login`,
+and every response under `/accounts/`, including redirects and error pages,
+so the login popup keeps its opener through the whole Google round trip.
+Everything else keeps `same-origin`. A reverse proxy must not add or replace
+`Cross-Origin-Opener-Policy` on those paths.
+
 ### Per bucket, step 1: approve the contents
 
 Before the runtime identity is granted on a bucket, confirm that

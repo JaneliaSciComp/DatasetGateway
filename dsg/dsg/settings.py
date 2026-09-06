@@ -56,6 +56,12 @@ MIDDLEWARE = [
     # Django itself refuses to serve /static/ (DEBUG=False). Must sit directly
     # after SecurityMiddleware and before everything else. See STORAGES below.
     "whitenoise.middleware.WhiteNoiseMiddleware",
+    # Responses run bottom-to-top: SecurityMiddleware applies COOP last with
+    # setdefault, preserving the header set below it. An unconditional assignment
+    # above SecurityMiddleware would also win; this placement keeps WhiteNoise
+    # directly after SecurityMiddleware in its required slot and keeps the
+    # override visibly downstream of the policy it relaxes.
+    "core.coop_middleware.PopupOpenerPolicyMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "core.cookie_middleware.DSGTokenCookieMiddleware",
     "django.middleware.common.CommonMiddleware",
