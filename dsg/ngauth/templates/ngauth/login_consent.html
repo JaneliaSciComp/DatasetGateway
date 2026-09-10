@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sign in to {{ client.name }}</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; line-height: 1.5; }
+        button { padding: 10px 20px; margin: 16px 8px 0 0; cursor: pointer; }
+        .allow { background: #245fc5; color: white; border: 1px solid #245fc5; border-radius: 4px; }
+        dd { margin: 0 0 12px; overflow-wrap: anywhere; }
+        dt { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Sign in to {{ client.name }}</h1>
+    <dl>
+        <dt>Your account</dt><dd>{{ user_email }}</dd>
+        <dt>Site owner</dt><dd>{{ client.owner }}</dd>
+        <dt>Requesting origin</dt><dd>{{ client.origin }}</dd>
+    </dl>
+    <p>This site will receive a 7-day DatasetGateway API key that signs requests to
+        neuPrint and other DSG-protected services as you; it is refused anywhere
+        it could create or read other tokens or act as an administrator.</p>
+    <p>Expires: {{ expires_at|date:"Y-m-d H:i T" }}. You can revoke this site's key from your DatasetGateway account page.</p>
+    <form action="/login" method="post">
+        {% csrf_token %}
+        <input type="hidden" name="origin" value="{{ client.origin }}">
+        <input type="hidden" name="token" value="api">
+        <label><input type="checkbox" name="remember" value="1"{% if remembered %} checked{% endif %}> Don't ask again for this site</label>
+        <p>Remembering this site allows it to receive the same key until it expires or you revoke it.</p>
+        <button class="allow" type="submit" name="decision" value="allow">Allow</button>
+        <button type="submit" name="decision" value="cancel">Cancel</button>
+    </form>
+</body>
+</html>

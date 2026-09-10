@@ -12,6 +12,8 @@ from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib.auth import logout as auth_logout
+from django.db import transaction
+from django.db.models import Q
 from django.http import (
     HttpResponse,
     HttpResponseBadRequest,
@@ -19,18 +21,21 @@ from django.http import (
     JsonResponse,
 )
 from django.shortcuts import render
+from django.utils import timezone
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.utils.http import url_has_allowed_host_and_scheme
 
+from cave_api.oauth_views import LOGIN_TOKEN_LIMIT
 from core.audit import log_audit
 from core.authz import (
     BucketAuthorizationStatus,
     build_tos_url,
     evaluate_bucket_authorization,
 )
-from core.models import APIKey, TOSAcceptance, TOSDocument, User
+from core.db import run_serialized_write
+from core.models import APIKey, ClientConsent, RegisteredClient, TOSAcceptance, TOSDocument, User
 from core.origins import is_origin_syntax_valid as _is_origin_syntax_valid
 
 from . import gcs, tokens
@@ -85,6 +90,65 @@ def _mint_temporary_user_token(user_email):
         expires=int(time.time()) + tokens.MAX_COOKIE_LIFETIME_SECONDS,
     )
     return tokens.encode_user_token(key, tokens.make_temporary_token(user_token))
+
+
+def _registered_client_for(origin):
+    return RegisteredClient.objects.filter(origin=origin, enabled=True).first()
+
+
+def _api_mode_user(request):
+    # A browser grant must not bootstrap another grant by being replayed as a
+    # cookie. Leave the existing ngauth viewer cookie resolution unchanged.
+    key = APIKey.objects.select_related("user").filter(
+        key=request.COOKIES.get(settings.AUTH_COOKIE_NAME, ""),
+        delegated_client__isnull=True,
+    ).first()
+    if key is None or key.is_expired or not key.user.is_enabled:
+        return None
+    return key.user
+
+
+def _remembered_key(user, client):
+    return APIKey.objects.filter(user=user, delegated_client=client).filter(
+        Q(expires_at__gt=timezone.now()) | Q(expires_at__isnull=True)
+    ).order_by("-created", "-pk").first()
+
+
+def _mint_delegated_api_key_atomic(user, client):
+    with transaction.atomic():
+        locked_user = User.objects.select_for_update().get(pk=user.pk)
+        keys = APIKey.objects.filter(user=locked_user, delegated_client=client)
+        keys.filter(expires_at__lte=timezone.now()).delete()
+        eviction_count = max(0, keys.count() - (LOGIN_TOKEN_LIMIT - 1))
+        if eviction_count:
+            oldest_ids = list(keys.order_by("created", "pk").values_list(
+                "pk", flat=True,
+            )[:eviction_count])
+            APIKey.objects.filter(pk__in=oldest_ids).delete()
+        return APIKey.objects.create(
+            user=locked_user, delegated_client=client,
+            description=f"Browser login token: {client.name} ({client.origin})",
+        )
+
+
+def _mint_delegated_api_key(user, client):
+    return run_serialized_write(_mint_delegated_api_key_atomic, user, client)
+
+
+def _api_mode_headers(response):
+    response["Cache-Control"] = "no-store, private"
+    response["Referrer-Policy"] = "no-referrer"
+    return response
+
+
+def _client_audit_state(client, key=None):
+    state = {"client_name": client.name, "client_origin": client.origin}
+    if key is not None:
+        state.update({
+            "expires_at": key.expires_at.isoformat() if key.expires_at else None,
+            "key_id": key.pk,
+        })
+    return state
 
 
 def _cors_headers(request):
@@ -163,8 +227,80 @@ class LoginStatusView(View):
     parameter this is just a human-readable status page.
     """
 
+    def dispatch(self, request, *args, **kwargs):
+        response = super().dispatch(request, *args, **kwargs)
+        if "token" in request.GET or request.method == "POST":
+            return _api_mode_headers(response)
+        return response
+
+    def _api_get(self, request, origin):
+        if not _is_origin_syntax_valid(origin):
+            return HttpResponseBadRequest("Invalid origin")
+        client = _registered_client_for(origin)
+        if client is None:
+            return render(request, "ngauth/login_popup.html", {
+                "origin": origin, "payload": "badorigin",
+            })
+        user = _api_mode_user(request)
+        if user is None:
+            return render(request, "ngauth/login_status.html", {
+                "logged_in": False, "token_kind": "api", "client": client,
+                "login_url": "/auth/login?" + urlencode({
+                    "next": "/login?" + urlencode({"origin": origin, "token": "api"}),
+                }),
+            })
+        remembered = ClientConsent.objects.filter(user=user, client=client).exists()
+        key = _remembered_key(user, client) if remembered else None
+        if key is not None:
+            APIKey.objects.filter(pk=key.pk).update(last_used=timezone.now())
+            log_audit(user, "api_token_redelivered", "APIKey", key.pk,
+                      after_state=_client_audit_state(client, key))
+            return render(request, "ngauth/login_popup.html", {
+                "origin": origin, "payload": {"token": key.key},
+            })
+        return render(request, "ngauth/login_consent.html", {
+            "user_email": user.email, "client": client, "remembered": remembered,
+            "expires_at": timezone.now() + timezone.timedelta(seconds=settings.AUTH_COOKIE_AGE),
+        })
+
+    def post(self, request):
+        if request.POST.get("token") != "api":
+            return HttpResponseBadRequest("Invalid token kind")
+        origin = request.POST.get("origin", "")
+        if not _is_origin_syntax_valid(origin):
+            return HttpResponseBadRequest("Invalid origin")
+        client = _registered_client_for(origin)
+        if client is None:
+            return render(request, "ngauth/login_popup.html", {
+                "origin": origin, "payload": "badorigin",
+            })
+        user = _api_mode_user(request)
+        if user is None:
+            return HttpResponse("Sign in again before allowing this site.", status=401)
+        decision = request.POST.get("decision")
+        if decision == "cancel":
+            return render(request, "ngauth/login_cancel.html")
+        if decision != "allow":
+            return HttpResponseBadRequest("Invalid decision")
+        key = _mint_delegated_api_key(user, client)
+        log_audit(user, "api_token_created", "APIKey", key.pk,
+                  after_state=_client_audit_state(client, key))
+        if request.POST.get("remember") == "1":
+            consent, created = ClientConsent.objects.get_or_create(user=user, client=client)
+            if created:
+                log_audit(user, "client_consent_remembered", "ClientConsent", consent.pk,
+                          after_state=_client_audit_state(client, key))
+        return render(request, "ngauth/login_popup.html", {
+            "origin": origin, "payload": {"token": key.key},
+        })
+
     def get(self, request):
         origin = request.GET.get("origin", "")
+        token_kind = request.GET.get("token")
+        if token_kind is not None:
+            if token_kind != "api":
+                return HttpResponseBadRequest("Invalid token kind")
+            return self._api_get(request, origin)
 
         if origin:
             # Settle the origin before touching the cookie or the database, so a

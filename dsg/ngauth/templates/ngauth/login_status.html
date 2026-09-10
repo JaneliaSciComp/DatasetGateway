@@ -9,6 +9,11 @@
     </style>
 </head>
 <body>
+    {% if token_kind == "api" %}
+        <h1>Sign in to {{ client.name }}</h1>
+        <p>Site owner: {{ client.owner }}</p>
+        <p>Requesting origin: <strong>{{ client.origin }}</strong></p>
+    {% endif %}
     {% if logged_in %}
         <h2>Logged in</h2>
         <p>You are logged in as <strong>{{ user_email }}</strong>.</p>
