@@ -3,20 +3,18 @@
 import logging
 import secrets
 import unicodedata
-from contextlib import nullcontext
 from datetime import timedelta
-from threading import Lock
-from time import sleep
 from urllib.parse import urlsplit
 
 from django.conf import settings
-from django.db import DatabaseError, OperationalError, connection, transaction
+from django.db import DatabaseError, transaction
 from django.http import HttpResponseRedirect, JsonResponse
 from django.utils import timezone
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.db import run_serialized_write
 from core.models import APIKey, User
 from core.permissions import DeniesDelegatedKeys, IsHumanUser
 
@@ -26,7 +24,6 @@ LOGIN_TOKEN_LIMIT = 10
 REDIRECT_ALLOWED_DOMAIN = "janelia.org"
 
 logger = logging.getLogger(__name__)
-_SQLITE_LOGIN_LOCK = Lock()
 
 
 def validate_redirect_url(redirect_url):
@@ -88,26 +85,9 @@ def _upsert_user_and_create_login_token_atomic(email, defaults, presented_token)
 
 def upsert_user_and_create_login_token(email, defaults, presented_token=None):
     """Update a user and atomically issue a bounded per-device session."""
-    # SQLite has no per-user row locks. Serialize callbacks within this process;
-    # the retry below handles a writer in another process.
-    lock = _SQLITE_LOGIN_LOCK if connection.vendor == "sqlite" else nullcontext()
-    with lock:
-        for attempt in range(5):
-            try:
-                return _upsert_user_and_create_login_token_atomic(
-                    email,
-                    defaults,
-                    presented_token,
-                )
-            except OperationalError as error:
-                sqlite_lock_error = (
-                    connection.vendor == "sqlite"
-                    and "locked" in str(error).lower()
-                )
-                if not sqlite_lock_error or attempt == 4:
-                    raise
-                # Retry the whole rolled-back transaction.
-                sleep(0.01 * (attempt + 1))
+    return run_serialized_write(
+        _upsert_user_and_create_login_token_atomic, email, defaults, presented_token,
+    )
 
 
 def get_or_create_default_long_lived_token(user):
