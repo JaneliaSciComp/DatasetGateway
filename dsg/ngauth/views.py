@@ -135,6 +135,18 @@ def _mint_delegated_api_key(user, client):
     return run_serialized_write(_mint_delegated_api_key_atomic, user, client)
 
 
+def _allow_delegated_grant(request, client):
+    """Resolve the cookie and mint inside the caller's serialized write.
+
+    SQLite shared-cache reads can collide with a concurrent APIKey write, so
+    the cookie lookup must share the mint's lock and retry boundary.
+    """
+    user = _api_mode_user(request)
+    if user is None:
+        return None
+    return _mint_delegated_api_key_atomic(user, client)
+
+
 def _api_mode_headers(response):
     response["Cache-Control"] = "no-store, private"
     response["Referrer-Policy"] = "no-referrer"
@@ -274,15 +286,18 @@ class LoginStatusView(View):
             return render(request, "ngauth/login_popup.html", {
                 "origin": origin, "payload": "badorigin",
             })
-        user = _api_mode_user(request)
+        decision = request.POST.get("decision")
+        if decision == "allow":
+            key = run_serialized_write(_allow_delegated_grant, request, client)
+            user = key.user if key is not None else None
+        else:
+            user = _api_mode_user(request)
         if user is None:
             return HttpResponse("Sign in again before allowing this site.", status=401)
-        decision = request.POST.get("decision")
         if decision == "cancel":
             return render(request, "ngauth/login_cancel.html")
         if decision != "allow":
             return HttpResponseBadRequest("Invalid decision")
-        key = _mint_delegated_api_key(user, client)
         log_audit(user, "api_token_created", "APIKey", key.pk,
                   after_state=_client_audit_state(client, key))
         if request.POST.get("remember") == "1":
