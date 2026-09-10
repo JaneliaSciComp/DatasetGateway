@@ -18,6 +18,7 @@ from .models import (
     APIKey,
     AuditLog,
     BucketIAMBinding,
+    ClientConsent,
     Dataset,
     DatasetBucket,
     DatasetTranslation,
@@ -27,6 +28,7 @@ from .models import (
     GroupDatasetPermission,
     Permission,
     PublicRoot,
+    RegisteredClient,
     Service,
     ServiceAccount,
     ServiceAccountGrant,
@@ -55,6 +57,25 @@ class APIKeyInline(admin.TabularInline):
     readonly_fields = ("key", "created", "last_used", "expires_at")
 
 
+class ClientConsentInline(admin.TabularInline):
+    model = ClientConsent
+    extra = 0
+    readonly_fields = ("client", "created")
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(RegisteredClient)
+class RegisteredClientAdmin(admin.ModelAdmin):
+    list_display = ("name", "origin", "owner", "enabled")
+    readonly_fields = ("allowed_services", "created")
+
+
 @admin.register(User)
 class UserAdmin(admin.ModelAdmin):
     list_display = ("id", "email", "name", "admin", "is_active", "created")
@@ -62,7 +83,7 @@ class UserAdmin(admin.ModelAdmin):
     search_fields = ("email", "name", "display_name")
     readonly_fields = ("password",)
     exclude = ("password",)
-    inlines = [AffiliationInline, UserGroupInline, APIKeyInline]
+    inlines = [AffiliationInline, UserGroupInline, APIKeyInline, ClientConsentInline]
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)

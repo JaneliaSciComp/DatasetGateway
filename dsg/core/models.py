@@ -513,10 +513,48 @@ def _default_expiry():
     return timezone.now() + timezone.timedelta(seconds=settings.AUTH_COOKIE_AGE)
 
 
+class RegisteredClient(models.Model):
+    """A web origin approved to request delegated browser sign-in keys."""
+
+    origin = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
+    owner = models.CharField(max_length=255)
+    enabled = models.BooleanField(default=True)
+    allowed_services = models.JSONField(
+        default=list, blank=True, help_text="reserved — not yet enforced"
+    )
+    created = models.DateTimeField(auto_now_add=True)
+
+    def clean(self):
+        super().clean()
+        from .origins import is_origin_syntax_valid
+
+        if not is_origin_syntax_valid(self.origin):
+            raise ValidationError({"origin": "Enter an exact HTTP(S) origin without a path."})
+
+    def __str__(self):
+        return f"{self.name} ({self.origin})"
+
+
+class ClientConsent(models.Model):
+    """Remembered permission to re-deliver an existing live client key."""
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="client_consents")
+    client = models.ForeignKey(RegisteredClient, on_delete=models.CASCADE)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = [("user", "client")]
+
+
 class APIKey(models.Model):
     """API token for authenticating requests."""
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="api_keys")
+    delegated_client = models.ForeignKey(
+        RegisteredClient, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="api_keys",
+    )
     key = models.CharField(max_length=128, unique=True, default=_generate_token, db_index=True)
     description = models.CharField(max_length=255, blank=True, default="")
     created = models.DateTimeField(auto_now_add=True)
