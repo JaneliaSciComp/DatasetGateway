@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with setup, admin workflow, environment variable, and management command changes.
-last_reviewed: 2026-09-04
+last_reviewed: 2026-09-10
 ---
 
 # DatasetGateway Admin Manual
@@ -389,6 +389,79 @@ cannot be done from the DSG admin console. This section is the checklist. Placeh
 the GCP project that holds DSG's own identity, `BUCKET_PROJECT` is the project
 that owns the bucket (often a different one), `BUCKET` is the bare bucket
 name, and `https://viewer.example.org` is an origin that embeds Neuroglancer.
+
+### Browser sign-in for registered web clients
+
+Static web clients such as CODA can request a browser sign-in key through
+`https://dsg.janelia.org/login?origin=https%3A%2F%2Fnavis-org.github.io&token=api`.
+The user signs in to DSG, reviews the requesting site's name, owner, origin,
+and the grant's expiry, then chooses **Allow** or **Cancel**. Allow is a
+CSRF-protected POST; loading the page never creates a browser grant. Allow
+posts `{token: …}` to the opener at the exact registered origin and closes
+the popup. Cancel closes it without sending a message. The key is never
+placed in a redirect URL.
+
+To register a client, open **CORE → Registered clients → Add** in the
+Django admin and set:
+
+- **Name:** the name shown in the consent page, for example `CODA`.
+- **Owner:** the maintainer's contact text, for example `Philipp Schlegel`.
+- **Origin:** the exact HTTP(S) origin, for example
+  `https://navis-org.github.io`, with no path, trailing slash, query, or
+  fragment. A local development site can use `http://localhost:<port>`.
+- **Enabled:** checked to permit issuance and remembered-key delivery.
+
+Matching is exact, not a regular expression. An empty registered-client
+table disables API-mode sign-in, and a missing or disabled client gets the
+`"badorigin"` popup message. The registration list is independent of
+`NGAUTH_ALLOWED_ORIGINS`; that setting continues to govern Neuroglancer's
+GCS-only temporary-token handshake without `token=api`. No environment
+setting is needed for browser API sign-in. **Allowed services** is stored
+as a JSON list but is read-only and **reserved — not yet enforced**.
+
+Web origins have no path component. In particular,
+`https://navis-org.github.io` covers **every GitHub Pages site under the
+navis-org organisation**, not just `/coda/`. Register an origin only when
+that entire origin is trusted to receive delegated credentials.
+
+A delegated key expires after `AUTH_COOKIE_AGE` (7 days by default) and can
+sign requests to neuPrint and other DSG-protected services using the user's
+service permissions. It does not inherit global administrator authority:
+identity and permission-cache responses report `admin: false`, and the
+native and legacy authorization endpoints do not take the global-admin
+shortcut. DSG refuses it at the four token-management endpoints, SCIM,
+and web-cookie authentication. It also cannot be used as a cookie to
+create or retrieve another browser grant. Per-service restriction is not
+implemented; the key can reach all DSG services the user can access.
+
+**Don't ask again for this site** stores a consent for that user and
+client. Later opens deliver the most recent live key for that client,
+updating its last-used time; they never mint another key. Once no live key
+remains, the consent page returns with the checkbox pre-ticked. Issuance
+purges expired keys for that user/client and keeps at most 10 live keys,
+evicting the oldest by creation time and ID. Other clients and the user's
+normal login and programmatic tokens are unaffected.
+
+On **My Account**, **Sites you have signed in from** lists browser grants
+with their client, origin, creation time, expiry, and a **Revoke** action.
+**Remembered sites → Forget this site** restores the consent prompt while
+leaving issued keys valid. Revoking a key likewise leaves remembered
+consent intact. Users can revoke or forget only their own entries.
+
+To stop new issuance and remembered delivery, untick the client's
+**Enabled** field; this takes effect on the next request. It does **not**
+revoke issued keys. Revoke those separately from the user's account page,
+or delete the client's API key rows in the admin. Disable rather than
+delete a registration while keys remain: the foreign key uses `SET_NULL`,
+so deleting the registration would remove their delegated-client marker.
+Delete its keys before deleting the registration itself.
+
+DSG rejects revoked keys immediately. neuPrintHTTP can continue accepting
+a previously validated identity until its cache expires (300 seconds by
+default), so allow that interval for revocation to reach cached requests.
+Consent, delivery, cancel, badorigin, and login pages in API mode carry
+`Cache-Control: no-store, private`, `Referrer-Policy: no-referrer`,
+`X-Frame-Options: DENY`, and `Cross-Origin-Opener-Policy: unsafe-none`.
 
 ### How the token path works
 
