@@ -29,6 +29,9 @@ class SCIMAuthentication(BaseAuthentication):
         if api_key.is_expired:
             raise AuthenticationFailed("Token has expired.")
 
+        if api_key.delegated_client_id is not None:
+            raise AuthenticationFailed("Delegated keys cannot access SCIM.")
+
         user = api_key.user
         if not user.is_enabled:
             raise AuthenticationFailed("User account is disabled.")

@@ -33,6 +33,7 @@ class TokenAuthentication(BaseAuthentication):
         return "Bearer"
 
     def authenticate(self, request):
+        request.auth_delegated_client = None
         token = self._extract_token(request)
         if token is None:
             return None
@@ -49,6 +50,15 @@ class TokenAuthentication(BaseAuthentication):
             if isinstance(principal, ServiceAccount):
                 raise AuthenticationFailed("Service account is disabled.")
             raise AuthenticationFailed("User account is disabled.")
+
+        request.auth_delegated_client = getattr(principal, "delegated_client", None)
+        if request.auth_delegated_client is not None:
+            # This User instance belongs only to this request. Never save it:
+            # every principal-level admin check must see the reduced authority.
+            principal.admin = False
+            # Do not read or overwrite the normal user's shared cache entry.
+            request.permission_cache = build_permission_cache(principal)
+            return (principal, token)
 
         # Attach cached permissions to the request for downstream views.
         # SA pks could collide with User pks, so namespace the cache key.
@@ -96,7 +106,7 @@ class TokenAuthentication(BaseAuthentication):
         from .models import APIKey, ServiceAccountToken
 
         try:
-            api_key = APIKey.objects.select_related("user").get(key=token)
+            api_key = APIKey.objects.select_related("user", "delegated_client").get(key=token)
         except APIKey.DoesNotExist:
             api_key = None
 
@@ -104,6 +114,7 @@ class TokenAuthentication(BaseAuthentication):
             if api_key.is_expired:
                 return None
             APIKey.objects.filter(pk=api_key.pk).update(last_used=timezone.now())
+            api_key.user.delegated_client = api_key.delegated_client
             return api_key.user
 
         try:

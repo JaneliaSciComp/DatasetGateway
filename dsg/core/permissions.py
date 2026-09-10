@@ -3,6 +3,13 @@
 from rest_framework.permissions import BasePermission
 
 
+class DeniesDelegatedKeys(BasePermission):
+    """Browser grants cannot create or read other credentials."""
+
+    def has_permission(self, request, view):
+        return getattr(request, "auth_delegated_client", None) is None
+
+
 class IsAdmin(BasePermission):
     """Allows access only to admin users."""
 
