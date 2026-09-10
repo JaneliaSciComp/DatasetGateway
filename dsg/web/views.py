@@ -174,7 +174,10 @@ def _get_web_user(request):
     if token:
         try:
             api_key = APIKey.objects.select_related("user").get(key=token)
-            cookie_user = api_key.user
+            # A delegated cookie cannot fall back to (or repair) a session.
+            if api_key.delegated_client_id is not None:
+                return None
+            cookie_user = None if api_key.is_expired else api_key.user
         except APIKey.DoesNotExist:
             cookie_user = None
         if cookie_user:
