@@ -10,6 +10,7 @@ from django.contrib.auth import logout as auth_logout
 from django.db.models import Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
 
@@ -23,6 +24,7 @@ from core.authz import (
 )
 from core.models import (
     APIKey,
+    ClientConsent,
     Dataset,
     DatasetVersion,
     Grant,
@@ -482,6 +484,12 @@ class MyAccountView(View):
         api_tokens = APIKey.objects.filter(
             user=user, expires_at__isnull=True
         ).order_by("-created")
+        delegated_tokens = APIKey.objects.filter(
+            user=user, delegated_client__isnull=False, expires_at__gt=timezone.now(),
+        ).select_related("delegated_client").order_by("-created", "-pk")
+        remembered_clients = ClientConsent.objects.filter(user=user).select_related(
+            "client"
+        ).order_by("client__name", "pk")
 
         return render(request, "web/my_account.html", {
             "user": user,
@@ -493,6 +501,8 @@ class MyAccountView(View):
             "is_admin": is_admin,
             "is_sc": is_sc,
             "api_tokens": api_tokens,
+            "delegated_tokens": delegated_tokens,
+            "remembered_clients": remembered_clients,
         })
 
     def post(self, request):
@@ -501,6 +511,42 @@ class MyAccountView(View):
             return redirect("/auth/login")
 
         action = request.POST.get("action", "")
+
+        if action == "revoke_delegated":
+            token_id = request.POST.get("token_id", "")
+            try:
+                token = APIKey.objects.select_related("delegated_client").get(
+                    pk=int(token_id), user=user, delegated_client__isnull=False,
+                )
+            except (APIKey.DoesNotExist, ValueError, TypeError):
+                messages.error(request, "Token not found.")
+                return redirect("web-my-account")
+            before = {
+                "client_name": token.delegated_client.name,
+                "client_origin": token.delegated_client.origin,
+                "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+            }
+            token.delete()
+            log_audit(user, "api_token_revoked", "APIKey", token_id, before_state=before)
+            messages.success(request, "Site token revoked.")
+            return redirect("web-my-account")
+
+        if action == "forget_client":
+            client_id = request.POST.get("client_id", "")
+            try:
+                consent = ClientConsent.objects.select_related("client").get(
+                    client_id=int(client_id), user=user,
+                )
+            except (ClientConsent.DoesNotExist, ValueError, TypeError):
+                messages.error(request, "Remembered site not found.")
+                return redirect("web-my-account")
+            consent_id = consent.pk
+            before = {"client_name": consent.client.name, "client_origin": consent.client.origin}
+            consent.delete()
+            log_audit(user, "client_consent_forgotten", "ClientConsent", consent_id,
+                      before_state=before)
+            messages.success(request, "Site forgotten. Existing site tokens remain valid.")
+            return redirect("web-my-account")
 
         if action == "create_token":
             description = request.POST.get("description", "").strip()

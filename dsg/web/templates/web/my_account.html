@@ -26,6 +26,59 @@
 <p>No dataset access.</p>
 {% endif %}
 
+<h2>Sites you have signed in from</h2>
+<p>These sites can sign requests to DSG-protected services as you until their key expires.
+    Revoke a key to end its access. Services may take up to their cache lifetime to notice.</p>
+{% if delegated_tokens %}
+<table>
+    <tr><th>Client</th><th>Origin</th><th>Created</th><th>Expires</th><th></th></tr>
+    {% for token in delegated_tokens %}
+    <tr>
+        <td>{{ token.delegated_client.name }}</td>
+        <td>{{ token.delegated_client.origin }}</td>
+        <td>{{ token.created|date:"Y-m-d H:i T" }}</td>
+        <td>{{ token.expires_at|date:"Y-m-d H:i T" }}</td>
+        <td>
+            <form method="post" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="revoke_delegated">
+                <input type="hidden" name="token_id" value="{{ token.pk }}">
+                <button type="submit" class="btn btn-sm btn-danger">Revoke</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No active site tokens.</p>
+{% endif %}
+
+<h2>Remembered sites</h2>
+<p>Remembered sites can receive an existing live key without asking again.
+    Forgetting a site restores the consent prompt; it does not revoke its keys.</p>
+{% if remembered_clients %}
+<table>
+    <tr><th>Client</th><th>Origin</th><th>Remembered</th><th></th></tr>
+    {% for consent in remembered_clients %}
+    <tr>
+        <td>{{ consent.client.name }}</td>
+        <td>{{ consent.client.origin }}</td>
+        <td>{{ consent.created|date:"Y-m-d H:i T" }}</td>
+        <td>
+            <form method="post" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="forget_client">
+                <input type="hidden" name="client_id" value="{{ consent.client_id }}">
+                <button type="submit" class="btn btn-sm">Forget this site</button>
+            </form>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p>No remembered sites.</p>
+{% endif %}
+
 <h2>API Tokens</h2>
 <p style="color: #666;">
     Long-lived tokens for programmatic access (e.g. CAVEclient). Treat
