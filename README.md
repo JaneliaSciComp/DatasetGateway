@@ -179,12 +179,38 @@ pixi run -e dev python -m pytest -q -p integration.pytest_plugin --run-joined \
 Use `--go /path/to/go` if needed. The harness builds a root-package Go test
 driver, trusts its generated loopback TLS certificate, and exercises real DSG
 consent, identity and authorization with a counting fake query store. Google
-and IAM operations require no accounts. No production settings or `.env` are
-loaded. Ordinary tests never launch Go or consult `--neuprint-repo`.
+and IAM operations require no accounts. Synthetic settings are established
+before Django initialization; no serving scripts or `.env` are loaded.
+Ordinary tests never launch Go or consult `--neuprint-repo`.
 Missing prerequisites, redirects, startup timeouts and skipped/deselected joined
 cases are failures. The JSON report contains statuses and backend counts, never
 credentials. Metadata cache warmups through `GetMain` are reported separately
 from custom-query execution through `GetDataset`.
+
+Run the complete pre-deployment gate from `dsg/`:
+
+```bash
+pixi run -e dev python scripts/test-predeploy.py --neuprint-repo ../../neuPrintHTTP
+```
+
+This runs the full DSG suite with route observation, the Go suite, and the
+complete joined module. It requires existing `gpg`, its matching `gpgconf`,
+and Go; it never installs dependencies. Go resolves from `--go`, `$GO`, PATH,
+then the matching toolchain in the host's module cache. Dependency files must
+remain unchanged. Each phase has a timeout, and interruption terminates its
+subprocesses. Both repository revisions, sanitized logs, route coverage and
+joined measurements go to `.pytest_cache/predeploy/` by default.
+Use `--help` for path and timeout options. `--joined-file-db` selects disposable
+file-backed SQLite if shared-cache locking needs investigation.
+
+The revocation check uses the real owner account action, checks immediate DSG
+rejection, then polls the same public query every 250 ms with a five-second
+deadline and a one-second driver cache TTL. Its report records poll timings,
+statuses and backend counts. It never refreshes identity during that window.
+To prove the gate detects an auth bypass, append `--self-check`: it enables
+the driver's existing `disable-auth` option and requires the invalid-Bearer
+query to succeed and reach the backend. Verified fault detection prints
+`SELF-CHECK DETECTED` and exits **1**; a startup or unrelated failure exits **2**.
 
 ## Production deployment
 

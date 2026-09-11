@@ -18,7 +18,7 @@ from django.utils import timezone
 from core.models import (APIKey, AuditLog, ClientConsent, Dataset, DatasetTranslation,
                          DatasetVersion, Grant, Permission, RegisteredClient, Service,
                          TOSAcceptance, TOSDocument, User)
-from integration.support import Driver, HarnessError, build_driver, resolve_go, resolve_repo
+from integration.support import Driver, LockGuard, build_driver, resolve_go, resolve_repo
 
 pytestmark = pytest.mark.django_db(transaction=True)
 ORIGIN = "http://127.0.0.1:8765"
@@ -104,11 +104,11 @@ class World:
         return self.driver.request("/api/custom/custom", bearer=key, timeout=timeout,
                                    data={"dataset": self.names[label], "cypher": QUERY, "version": "0.5.0"})
 
-    def backend(self):
+    def backend(self, *, timeout=3):
         # Production metadata warmers call GetMain during startup. Every call is
         # retained in the control surface; custom's GetDataset calls are the
         # backend executions attributable to the tested HTTP route.
-        return [row for row in self.driver.state()["queries"] if row["accessor"] == "GetDataset"]
+        return [row for row in self.driver.state(timeout=timeout)["queries"] if row["accessor"] == "GetDataset"]
 
     def successful_query(self, label, key, email):
         before = len(self.backend())
@@ -130,9 +130,13 @@ def world(transactional_db):
 @pytest.fixture(scope="session")
 def driver_binary(request, tmp_path_factory):
     repo = resolve_repo(request.config.getoption("neuprint_repo"))
-    go, version = resolve_go(repo, request.config.getoption("go"))
-    print(f"Joined Go: {go} ({version})")
-    binary = build_driver(repo, go, tmp_path_factory.mktemp("neuprint-build") / "neuprint-predeploy.test")
+    guard = LockGuard(repo)
+    try:
+        go, version = resolve_go(repo, request.config.getoption("go"))
+        print(f"Joined Go: {go} ({version})")
+        binary = build_driver(repo, go, tmp_path_factory.mktemp("neuprint-build") / "neuprint-predeploy.test")
+    finally:
+        guard.check()
     return repo, binary
 
 
@@ -272,3 +276,47 @@ def test_consent_rejection_yields_no_key(joined, measure, decision):
     assert not ClientConsent.objects.exists()
     assert joined.backend() == []
     measure(joined, decision)
+
+
+def test_revocation_expires_cached_public_query(joined, measure):
+    import time
+
+    key = joined.issue()
+    status, profile, _ = joined.driver.request("/profile", bearer=key.key)
+    assert status == 200
+    assert profile["Email"] == joined.user.email
+    joined.successful_query("public", key.key, joined.user.email)
+    joined.revoke(key)
+    # Cookie-free native authentication must refuse the revoked key immediately.
+    fresh = Client()
+    native = fresh.get("/api/dsg/v1/user", HTTP_AUTHORIZATION="Bearer " + key.key)
+    assert native.status_code == 401
+    assert not fresh.cookies
+    started = time.monotonic()
+    deadline = started + 5
+    polls = []
+
+    def request_timeout():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            pytest.fail("Revoked key still accepted after the five-second deadline", pytrace=False)
+        return min(1, remaining)
+
+    # No /profile, identity refresh, or cache-flush call occurs in this window.
+    # The control endpoint only reads fake datastore counters.
+    while True:
+        before = len(joined.backend(timeout=request_timeout()))
+        status, _, _ = joined.query("public", key.key, timeout=request_timeout())
+        after = len(joined.backend(timeout=request_timeout()))
+        elapsed = time.monotonic() - started
+        polls.append({"elapsed_seconds": round(elapsed, 4), "status": status, "backend_delta": after - before})
+        if status == 401:
+            assert after == before
+            assert elapsed <= 5
+            break
+        assert status == 200
+        assert after == before + 1
+        next_poll = min(deadline, started + len(polls) * 0.25)
+        time.sleep(max(0, next_poll - time.monotonic()))
+    measure(joined, "revocation", native_status=401, poll_interval_seconds=0.25,
+            elapsed_seconds=round(elapsed, 4), polls=polls)

@@ -256,8 +256,8 @@ class Driver:
                 raise HarnessError(f"Loopback response was not JSON (status {status})") from None
             return status, decoded, dict(response.headers)
 
-    def state(self):
-        status, data, _ = self.request("/__predeploy/state")
+    def state(self, *, timeout=3):
+        status, data, _ = self.request("/__predeploy/state", timeout=timeout)
         if status != 200:
             raise HarnessError(f"Driver state endpoint returned {status}")
         return data
