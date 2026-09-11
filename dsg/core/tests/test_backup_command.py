@@ -9,9 +9,11 @@ default uses the identical filter mechanism.
 
 import json
 import os
+import shlex
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -22,43 +24,64 @@ from django.test import override_settings
 from core import backup
 
 GPG = shutil.which("gpg")
-pytestmark = pytest.mark.skipif(GPG is None, reason="gpg not installed")
+
+
+def _run_gpg_command(args, *, timeout):
+    try:
+        subprocess.run(args, check=True, capture_output=True, text=True, timeout=timeout)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        pytest.fail(f"GPG fixture command failed: {args!r}\nstderr: {exc.stderr}")
 
 
 # --- fixtures ---------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def gpg_filters(tmp_path_factory):
+def gpg_filters():
     """A temp gpg keyring; yields encrypt/decrypt filter command strings."""
-    home = tmp_path_factory.mktemp("gnupg")
-    home.chmod(0o700)
-    params = home / "params"
-    params.write_text(
-        "%no-protection\n"
-        "Key-Type: RSA\nKey-Length: 2048\n"
-        "Name-Real: DSG Backup Test\nName-Email: dsg-backup-test@example.org\n"
-        "Expire-Date: 0\n%commit\n"
-    )
+    if GPG is None:
+        pytest.skip("gpg not installed")
+    # Use gpgconf from the same installation, including Homebrew symlinks.
+    gpgconf = Path(GPG).resolve().with_name("gpgconf")
+    if not gpgconf.is_file() or not os.access(gpgconf, os.X_OK):
+        pytest.fail(f"Matching gpgconf executable missing: {gpgconf}")
+
+    home = Path(tempfile.mkdtemp(prefix="dsg-gpg-", dir="/tmp"))
     saved = os.environ.get("GNUPGHOME")
-    os.environ["GNUPGHOME"] = str(home)
     try:
-        subprocess.run(
+        home.chmod(0o700)
+        assert len(os.fsencode(home / "S.gpg-agent.browser")) <= 100
+        params = home / "params"
+        params.write_text(
+            "%no-protection\n"
+            "Key-Type: RSA\nKey-Length: 2048\n"
+            "Name-Real: DSG Backup Test\nName-Email: dsg-backup-test@example.org\n"
+            "Expire-Date: 0\n%commit\n"
+        )
+        os.environ["GNUPGHOME"] = str(home)
+        _run_gpg_command(
             [GPG, "--batch", "--gen-key", str(params)],
-            check=True, capture_output=True,
+            timeout=30,
         )
         yield {
             "encrypt": (
-                f"{GPG} --batch --yes --trust-model always --encrypt "
+                f"{shlex.quote(GPG)} --batch --yes --trust-model always --encrypt "
                 "--recipient dsg-backup-test@example.org"
             ),
-            "decrypt": f"{GPG} --batch --yes --pinentry-mode loopback --decrypt",
+            "decrypt": f"{shlex.quote(GPG)} --batch --yes --pinentry-mode loopback --decrypt",
             "home": str(home),
         }
     finally:
-        if saved is None:
-            os.environ.pop("GNUPGHOME", None)
-        else:
-            os.environ["GNUPGHOME"] = saved
+        try:
+            _run_gpg_command(
+                [str(gpgconf), "--homedir", str(home), "--kill", "gpg-agent"],
+                timeout=10,
+            )
+        finally:
+            if saved is None:
+                os.environ.pop("GNUPGHOME", None)
+            else:
+                os.environ["GNUPGHOME"] = saved
+            shutil.rmtree(home)
 
 
 def _make_db(path: Path, rows=("alice", "bob", "carol")):
