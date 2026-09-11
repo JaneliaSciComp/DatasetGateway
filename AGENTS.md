@@ -30,6 +30,7 @@ DatasetGateway/              ← git root
     ├── manage.py
     ├── Dockerfile
     ├── scripts/          ← setup wizard, serve, deploy scripts
+    ├── integration/      ← opt-in DSG/neuPrintHTTP regression harness
     ├── dsg/      ← Django settings package
     ├── core/             ← shared models, middleware
     ├── cave_api/         ← CAVE-compatible auth endpoints

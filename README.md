@@ -167,6 +167,25 @@ node IDs to `.pytest_cache/route-observations.json` (or `--route-observations=PA
 It records no credentials or bodies. This is request coverage, not branch or
 assertion coverage.
 
+The fixture-based DSG/neuPrintHTTP checks are opt-in and use disposable settings
+loaded before Django starts. From `dsg/`, with an existing offline Go toolchain:
+
+```bash
+pixi run -e dev python -m pytest -q -p integration.pytest_plugin --run-joined \
+  integration/coda_neuprint_check.py --neuprint-repo ../../neuPrintHTTP \
+  --joined-report .pytest_cache/joined.json
+```
+
+Use `--go /path/to/go` if needed. The harness builds a root-package Go test
+driver, trusts its generated loopback TLS certificate, and exercises real DSG
+consent, identity and authorization with a counting fake query store. Google
+and IAM operations require no accounts. No production settings or `.env` are
+loaded. Ordinary tests never launch Go or consult `--neuprint-repo`.
+Missing prerequisites, redirects, startup timeouts and skipped/deselected joined
+cases are failures. The JSON report contains statuses and backend counts, never
+credentials. Metadata cache warmups through `GetMain` are reported separately
+from custom-query execution through `GetDataset`.
+
 ## Production deployment
 
 DatasetGateway is designed for a single-server Docker deployment behind a

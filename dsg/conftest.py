@@ -10,4 +10,4 @@ def api_client():
     return APIClient()
 
 
-pytest_plugins = ["core.tests.route_inventory"]
+pytest_plugins = ["core.tests.route_inventory", "integration.pytest_plugin"]
