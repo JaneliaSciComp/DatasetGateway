@@ -46,6 +46,9 @@ pixi run serve-bg
 pixi run stop-serve   # to stop
 ```
 
+`serve.log` is never rotated by the server itself; for a long-running detached
+instance see "serve.log rotation" in [docs/admin-manual.md](docs/admin-manual.md).
+
 ### Option B: Docker production
 
 ```bash

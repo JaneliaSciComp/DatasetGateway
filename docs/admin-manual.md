@@ -94,6 +94,84 @@ pixi run deploy
 If `.env` doesn't exist yet, the setup wizard runs automatically.
 The admin console is at `/admin/`.
 
+### serve.log rotation (detached dev server, interim)
+
+`pixi run serve-bg` appends everything Django logs — request lines,
+`dsg.authz` decisions and the `ngauth.views` token-issuance records — to
+`dsg/serve.log` and never rotates it. Until serving moves to gunicorn under
+systemd (where journald owns retention), rotate it with `logrotate` and ship
+the rotated files to the same nearline directory that holds the SQLite
+backups. Three files under `dsg/scripts/` do this:
+
+| File | Role |
+|---|---|
+| `datasetgateway-logrotate.conf` | logrotate stanza: `copytruncate`, `size 50M`, plaintext, rotated copies in `dsg/logs/serve.log-YYYYmmddTHHMMSS` |
+| `datasetgateway-logrotate.service` / `.timer` | oneshot + daily timer: run logrotate, then the shipper |
+| `ship-rotated-logs.sh` | copy every `dsg/logs/serve.log-*` to `$DSG_BACKUP_DIR/logs/`, verify sha256 on the target, then keep only the two newest locally |
+
+**Why `copytruncate`.** `serve.sh --detach` starts the server with
+`nohup … >> serve.log 2>&1 &`, so the process holds one `O_APPEND` descriptor
+on `serve.log` for its whole life and never reopens it. logrotate therefore
+*copies* the content out and truncates the original in place; the next write
+lands at the new end of file, with no restart, no signal and no sparse gap.
+Rename-and-recreate rotation would leave the server writing to the renamed
+file forever. The only loss is whatever the server writes between the copy
+and the truncate (typically nothing; at most a line or two under load).
+
+**Retention.** Rotated files are uncompressed and unencrypted, both locally
+and on nearline (the nearline directory carries the same owner and group as
+`serve.log`). The shipper keeps the two newest rotated files in `dsg/logs/`
+for quick reading and deletes older ones *only after* their nearline copy has
+been verified; nearline keeps everything. The stanza's `rotate 60` is just a
+cap on unshipped backlog if nearline is unreachable for weeks. `size 50M` is
+a threshold checked once a day, not a ceiling.
+
+**Install (root, one session).** Requires `DSG_BACKUP_DIR` in `dsg/.env`
+(see [Backups](backups.md)) and that directory to exist — the shipper refuses
+to create the nearline root, so an unmounted share fails loudly instead of
+filling the local disk. Placeholders are the same as in
+`datasetgateway-backup.service`.
+
+```bash
+cd /path/to/DatasetGateway/dsg
+sed -e 's#<path-to>#/path/to#g' -e 's#<dsg-user>#USER#g' -e 's#<dsg-group>#GROUP#g' \
+    scripts/datasetgateway-logrotate.conf > /etc/dsg/datasetgateway-logrotate.conf
+cp scripts/datasetgateway-logrotate.service scripts/datasetgateway-logrotate.timer /etc/systemd/system/
+# edit User=, Group=, WorkingDirectory=, EnvironmentFile= and the ExecStart/ExecStartPost paths
+systemctl daemon-reload
+systemctl enable --now datasetgateway-logrotate.timer
+systemctl list-timers datasetgateway-logrotate.timer
+```
+
+`systemctl start datasetgateway-logrotate.service` runs a check by hand; it
+rotates only if `serve.log` is above 50 MB and then ships. Failures are in
+`journalctl -u datasetgateway-logrotate` and `systemctl status`.
+
+**Bootstrap an oversized existing `serve.log`.** If the file is already far
+above the threshold, move its history to nearline *before* enabling the
+timer, running as the service user (not root, so the state file and
+`dsg/logs/` are owned correctly):
+
+```bash
+cd /path/to/DatasetGateway/dsg
+logrotate --force --state "$PWD/logrotate.state" /etc/dsg/datasetgateway-logrotate.conf
+ls -l /proc/$(cat serve.pid)/fd | grep serve.log     # still the live file
+set -a; . ./.env; set +a
+scripts/ship-rotated-logs.sh                          # copies logs/serve.log-<stamp> to $DSG_BACKUP_DIR/logs/
+sha256sum logs/serve.log-* "$DSG_BACKUP_DIR"/logs/serve.log-*   # pairs must match
+```
+
+Do not use `gzip … && truncate` or `> serve.log` shortcuts: they leave the
+history outside `dsg/logs/`, where the shipper never looks.
+
+**Remove at the gunicorn cutover.** When `datasetgateway.service` replaces
+`serve-bg`, run `scripts/ship-rotated-logs.sh` one last time (with
+`DSG_LOG_KEEP_LOCAL=0` to flush the local copies), then
+`systemctl disable --now datasetgateway-logrotate.timer`, delete the two
+units and `/etc/dsg/datasetgateway-logrotate.conf`, and `daemon-reload`.
+journald owns local retention from then on; whether journal exports keep
+going to nearline is decided at that cutover.
+
 ### Full database reset
 
 To start completely fresh:
