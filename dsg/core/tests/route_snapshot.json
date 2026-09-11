@@ -1,0 +1,412 @@
+[
+  {
+    "route": "/",
+    "method": "GET",
+    "view": "ngauth.views.IndexView"
+  },
+  {
+    "route": "/activate",
+    "method": "POST",
+    "view": "ngauth.views.ActivateView"
+  },
+  {
+    "route": "/api/dsg/v1/authorize",
+    "method": "POST",
+    "view": "native_api.views.AuthorizeView"
+  },
+  {
+    "route": "/api/dsg/v1/datasets",
+    "method": "GET",
+    "view": "native_api.views.DatasetsView"
+  },
+  {
+    "route": "/api/dsg/v1/datasets/<str:name>/versions",
+    "method": "GET",
+    "view": "native_api.views.DatasetVersionsView"
+  },
+  {
+    "route": "/api/dsg/v1/groups/<str:name>/members",
+    "method": "GET",
+    "view": "native_api.views.GroupMembersView"
+  },
+  {
+    "route": "/api/dsg/v1/user",
+    "method": "GET",
+    "view": "native_api.views.UserView"
+  },
+  {
+    "route": "/api/v1/authorize",
+    "method": "GET",
+    "view": "cave_api.oauth_views.AuthorizeView"
+  },
+  {
+    "route": "/api/v1/authorize",
+    "method": "POST",
+    "view": "cave_api.oauth_views.AuthorizeView"
+  },
+  {
+    "route": "/api/v1/check-access",
+    "method": "POST",
+    "view": "auth_api.views.AuthorizeDecisionView"
+  },
+  {
+    "route": "/api/v1/create_token",
+    "method": "POST",
+    "view": "cave_api.oauth_views.CreateTokenView"
+  },
+  {
+    "route": "/api/v1/datasets",
+    "method": "GET",
+    "view": "auth_api.views.DatasetsListView"
+  },
+  {
+    "route": "/api/v1/datasets/<slug:slug>/versions",
+    "method": "GET",
+    "view": "auth_api.views.DatasetVersionsView"
+  },
+  {
+    "route": "/api/v1/groups/<str:group_name>/members",
+    "method": "GET",
+    "view": "cave_api.views.GroupMembersView"
+  },
+  {
+    "route": "/api/v1/logout",
+    "method": "GET",
+    "view": "cave_api.oauth_views.LogoutView"
+  },
+  {
+    "route": "/api/v1/logout",
+    "method": "POST",
+    "view": "cave_api.oauth_views.LogoutView"
+  },
+  {
+    "route": "/api/v1/long_lived_token",
+    "method": "GET",
+    "view": "cave_api.oauth_views.LongLivedTokenView"
+  },
+  {
+    "route": "/api/v1/oauth2callback",
+    "method": "GET",
+    "view": "cave_api.oauth_views.OAuth2CallbackView"
+  },
+  {
+    "route": "/api/v1/refresh_token",
+    "method": "GET",
+    "view": "cave_api.oauth_views.RefreshTokenView"
+  },
+  {
+    "route": "/api/v1/service/<str:namespace>/table/<str:table_id>/dataset",
+    "method": "GET",
+    "view": "cave_api.views.TableDatasetView"
+  },
+  {
+    "route": "/api/v1/table/<str:table_id>/has_public",
+    "method": "GET",
+    "view": "cave_api.views.TableHasPublicView"
+  },
+  {
+    "route": "/api/v1/table/<str:table_id>/root/<int:root_id>/is_public",
+    "method": "GET",
+    "view": "cave_api.views.RootIsPublicView"
+  },
+  {
+    "route": "/api/v1/table/<str:table_id>/root_all_public",
+    "method": "POST",
+    "view": "cave_api.views.RootAllPublicView"
+  },
+  {
+    "route": "/api/v1/user",
+    "method": "GET",
+    "view": "cave_api.views.UserListView"
+  },
+  {
+    "route": "/api/v1/user/<int:user_id>/permissions",
+    "method": "GET",
+    "view": "cave_api.views.UserPermissionsView"
+  },
+  {
+    "route": "/api/v1/user/cache",
+    "method": "GET",
+    "view": "cave_api.views.UserCacheView"
+  },
+  {
+    "route": "/api/v1/user/token",
+    "method": "GET",
+    "view": "cave_api.oauth_views.UserTokensView"
+  },
+  {
+    "route": "/api/v1/username",
+    "method": "GET",
+    "view": "cave_api.views.UsernameView"
+  },
+  {
+    "route": "/api/v1/whoami",
+    "method": "GET",
+    "view": "auth_api.views.WhoAmIView"
+  },
+  {
+    "route": "/auth/login",
+    "method": "GET",
+    "view": "ngauth.views.AuthLoginView"
+  },
+  {
+    "route": "/auth/scim/v2/Datasets",
+    "method": "GET",
+    "view": "scim.views.DatasetListView"
+  },
+  {
+    "route": "/auth/scim/v2/Datasets",
+    "method": "POST",
+    "view": "scim.views.DatasetListView"
+  },
+  {
+    "route": "/auth/scim/v2/Datasets/<str:scim_id>",
+    "method": "DELETE",
+    "view": "scim.views.DatasetDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Datasets/<str:scim_id>",
+    "method": "GET",
+    "view": "scim.views.DatasetDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Datasets/<str:scim_id>",
+    "method": "PATCH",
+    "view": "scim.views.DatasetDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Datasets/<str:scim_id>",
+    "method": "PUT",
+    "view": "scim.views.DatasetDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Groups",
+    "method": "GET",
+    "view": "scim.views.GroupListView"
+  },
+  {
+    "route": "/auth/scim/v2/Groups",
+    "method": "POST",
+    "view": "scim.views.GroupListView"
+  },
+  {
+    "route": "/auth/scim/v2/Groups/<str:scim_id>",
+    "method": "DELETE",
+    "view": "scim.views.GroupDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Groups/<str:scim_id>",
+    "method": "GET",
+    "view": "scim.views.GroupDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Groups/<str:scim_id>",
+    "method": "PATCH",
+    "view": "scim.views.GroupDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Groups/<str:scim_id>",
+    "method": "PUT",
+    "view": "scim.views.GroupDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/ResourceTypes",
+    "method": "GET",
+    "view": "scim.views.ResourceTypesView"
+  },
+  {
+    "route": "/auth/scim/v2/Schemas",
+    "method": "GET",
+    "view": "scim.views.SchemasView"
+  },
+  {
+    "route": "/auth/scim/v2/ServiceProviderConfig",
+    "method": "GET",
+    "view": "scim.views.ServiceProviderConfigView"
+  },
+  {
+    "route": "/auth/scim/v2/Users",
+    "method": "GET",
+    "view": "scim.views.UserListView"
+  },
+  {
+    "route": "/auth/scim/v2/Users",
+    "method": "POST",
+    "view": "scim.views.UserListView"
+  },
+  {
+    "route": "/auth/scim/v2/Users/<str:scim_id>",
+    "method": "DELETE",
+    "view": "scim.views.UserDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Users/<str:scim_id>",
+    "method": "GET",
+    "view": "scim.views.UserDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Users/<str:scim_id>",
+    "method": "PATCH",
+    "view": "scim.views.UserDetailView"
+  },
+  {
+    "route": "/auth/scim/v2/Users/<str:scim_id>",
+    "method": "PUT",
+    "view": "scim.views.UserDetailView"
+  },
+  {
+    "route": "/gcs_token",
+    "method": "OPTIONS",
+    "view": "ngauth.views.GCSTokenView"
+  },
+  {
+    "route": "/gcs_token",
+    "method": "POST",
+    "view": "ngauth.views.GCSTokenView"
+  },
+  {
+    "route": "/health",
+    "method": "GET",
+    "view": "ngauth.views.HealthView"
+  },
+  {
+    "route": "/login",
+    "method": "GET",
+    "view": "ngauth.views.LoginStatusView"
+  },
+  {
+    "route": "/login",
+    "method": "POST",
+    "view": "ngauth.views.LoginStatusView"
+  },
+  {
+    "route": "/logout",
+    "method": "POST",
+    "view": "ngauth.views.LogoutView"
+  },
+  {
+    "route": "/success",
+    "method": "GET",
+    "view": "ngauth.views.SuccessView"
+  },
+  {
+    "route": "/token",
+    "method": "OPTIONS",
+    "view": "ngauth.views.TokenView"
+  },
+  {
+    "route": "/token",
+    "method": "POST",
+    "view": "ngauth.views.TokenView"
+  },
+  {
+    "route": "/web/dataset-admins/<slug:dataset>",
+    "method": "GET",
+    "view": "web.views.DatasetAdminManageView"
+  },
+  {
+    "route": "/web/dataset-admins/<slug:dataset>",
+    "method": "POST",
+    "view": "web.views.DatasetAdminManageView"
+  },
+  {
+    "route": "/web/datasets",
+    "method": "GET",
+    "view": "web.views.DatasetsView"
+  },
+  {
+    "route": "/web/grants/<slug:dataset>",
+    "method": "GET",
+    "view": "web.views.GrantManageView"
+  },
+  {
+    "route": "/web/grants/<slug:dataset>",
+    "method": "POST",
+    "view": "web.views.GrantManageView"
+  },
+  {
+    "route": "/web/group/<slug:group_name>/",
+    "method": "GET",
+    "view": "web.views.GroupDashboardView"
+  },
+  {
+    "route": "/web/group/<slug:group_name>/",
+    "method": "POST",
+    "view": "web.views.GroupDashboardView"
+  },
+  {
+    "route": "/web/logout",
+    "method": "POST",
+    "view": "web.views.LogoutView"
+  },
+  {
+    "route": "/web/my-account",
+    "method": "GET",
+    "view": "web.views.MyAccountView"
+  },
+  {
+    "route": "/web/my-account",
+    "method": "POST",
+    "view": "web.views.MyAccountView"
+  },
+  {
+    "route": "/web/public-roots/<slug:dataset>",
+    "method": "GET",
+    "view": "web.views.PublicRootManageView"
+  },
+  {
+    "route": "/web/public-roots/<slug:dataset>",
+    "method": "POST",
+    "view": "web.views.PublicRootManageView"
+  },
+  {
+    "route": "/web/service-accounts",
+    "method": "GET",
+    "view": "web.views.ServiceAccountListView"
+  },
+  {
+    "route": "/web/service-accounts",
+    "method": "POST",
+    "view": "web.views.ServiceAccountListView"
+  },
+  {
+    "route": "/web/service-accounts/<slug:name>",
+    "method": "GET",
+    "view": "web.views.ServiceAccountDetailView"
+  },
+  {
+    "route": "/web/service-accounts/<slug:name>",
+    "method": "POST",
+    "view": "web.views.ServiceAccountDetailView"
+  },
+  {
+    "route": "/web/tos/<int:tos_id>/accept",
+    "method": "GET",
+    "view": "web.views.TOSAcceptView"
+  },
+  {
+    "route": "/web/tos/<int:tos_id>/accept",
+    "method": "POST",
+    "view": "web.views.TOSAcceptView"
+  },
+  {
+    "route": "/web/tos/<str:invite_token>/",
+    "method": "GET",
+    "view": "web.views.TOSLandingView"
+  },
+  {
+    "route": "/web/tos/<str:invite_token>/",
+    "method": "POST",
+    "view": "web.views.TOSLandingView"
+  },
+  {
+    "route": "/web/tos/service-check/",
+    "method": "GET",
+    "view": "web.views.TOSServiceCheckView"
+  },
+  {
+    "route": "/web/tos/service-check/",
+    "method": "POST",
+    "view": "web.views.TOSServiceCheckView"
+  }
+]

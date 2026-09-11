@@ -157,6 +157,16 @@ cd dsg
 pixi run -e dev python -m pytest
 ```
 
+Collection always checks the explicit first-party HTTP methods against
+`dsg/core/tests/route_snapshot.json`. Review that snapshot when adding or removing
+a method. Django admin, allauth, and inherited HEAD/OPTIONS are excluded.
+To measure which passing tests request each method, run the full suite from
+`dsg/` with `pixi run -e dev python -m pytest -q --observe-routes`.
+The observer rejects filtered runs and writes route, method, status and test
+node IDs to `.pytest_cache/route-observations.json` (or `--route-observations=PATH`).
+It records no credentials or bodies. This is request coverage, not branch or
+assertion coverage.
+
 ## Production deployment
 
 DatasetGateway is designed for a single-server Docker deployment behind a
