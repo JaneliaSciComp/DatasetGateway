@@ -1,0 +1,52 @@
+# systemd unit that rotates the detached dev server's serve.log and ships the
+# rotated files to nearline (oneshot). INTERIM: remove at the gunicorn cutover.
+#
+# This is the *trigger target* for datasetgateway-logrotate.timer (daily). It
+# runs logrotate with scripts/datasetgateway-logrotate.conf (copytruncate, see
+# that file for why), then scripts/ship-rotated-logs.sh, which copies every
+# logs/serve.log-* to $DSG_BACKUP_DIR/logs/, verifies sha256 on the target and
+# only then trims local copies down to the two newest. Rotation happens even if
+# shipping fails (the service then shows failed, the files stay local, the next
+# run retries). TimeoutStartSec bounds a hung nearline mount so a stuck run can
+# never block the next day's rotation.
+#
+# Install (as root, adjust the placeholders <...> for your host):
+#   1. install -d -m 0755 /etc/dsg   # already present if backups are configured
+#   2. sed -e 's#<path-to>#/path/to#g' -e 's#<dsg-user>#USER#g' -e 's#<dsg-group>#GROUP#g' \
+#          scripts/datasetgateway-logrotate.conf > /etc/dsg/datasetgateway-logrotate.conf
+#   3. cp scripts/datasetgateway-logrotate.service /etc/systemd/system/
+#      cp scripts/datasetgateway-logrotate.timer   /etc/systemd/system/
+#   4. edit User=, Group=, WorkingDirectory=, EnvironmentFile= and the paths in
+#      ExecStart/ExecStartPost below (match datasetgateway-backup.service)
+#   5. DSG_BACKUP_DIR must be set in .env and the directory must exist
+#      (the shipper refuses to create the nearline root; see .env.example)
+#   6. if serve.log is already far above 50M, bootstrap by hand BEFORE enabling
+#      the timer (docs/admin-manual.md, "serve.log rotation"): as the service user
+#        logrotate --force --state <path-to>/DatasetGateway/dsg/logrotate.state /etc/dsg/datasetgateway-logrotate.conf
+#        cd <path-to>/DatasetGateway/dsg && set -a && . ./.env && set +a && scripts/ship-rotated-logs.sh
+#   7. systemctl daemon-reload
+#   8. systemctl enable --now datasetgateway-logrotate.timer
+#   9. systemctl start datasetgateway-logrotate.service   # one manual run (rotates only if > 50M)
+#  10. journalctl -u datasetgateway-logrotate -f           # logs / failures
+#
+# A failed run exits non-zero and is visible in `journalctl -u datasetgateway-logrotate`
+# and `systemctl status datasetgateway-logrotate`.
+
+[Unit]
+Description=DatasetGateway serve.log rotation and nearline shipping (oneshot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=<dsg-user>
+Group=<dsg-group>
+# Directory containing manage.py / serve.log / .env (the dsg/ package dir).
+WorkingDirectory=<path-to>/DatasetGateway/dsg
+# DSG_BACKUP_DIR (nearline root) comes from here; see .env.example.
+EnvironmentFile=<path-to>/DatasetGateway/dsg/.env
+# Private state file beside the log so no root-owned state is involved.
+ExecStart=/usr/sbin/logrotate --state <path-to>/DatasetGateway/dsg/logrotate.state /etc/dsg/datasetgateway-logrotate.conf
+ExecStartPost=<path-to>/DatasetGateway/dsg/scripts/ship-rotated-logs.sh
+# Copies of up to ~50 MB files to shared storage; never let one run pile onto the next.
+TimeoutStartSec=1800

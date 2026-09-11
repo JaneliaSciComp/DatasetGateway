@@ -1,0 +1,28 @@
+# systemd timer checking the detached dev server's serve.log for rotation daily.
+#
+# Pairs with datasetgateway-logrotate.service (Type=oneshot). See that unit's
+# header for the full install steps. In short:
+#   systemctl daemon-reload
+#   systemctl enable --now datasetgateway-logrotate.timer
+#   systemctl list-timers datasetgateway-logrotate.timer   # confirm next fire
+#
+# Daily is only the *check* cadence: the stanza rotates when serve.log exceeds
+# 50M, so the file may sit between 50M and a day's growth above it. Deliberately
+# no Requires= on the service: Unit= alone schedules it, and an ordinary failed
+# run neither stops this timer nor is started by touching the timer.
+
+[Unit]
+Description=Check DatasetGateway serve.log for rotation daily
+
+[Timer]
+# Early morning, off the top of the hour (hourly backup) and clear of the
+# 03:45 IAM reconcile.
+OnCalendar=*-*-* 04:15:00
+# If the host was off/asleep at the scheduled time, run as soon as it's back.
+Persistent=true
+# Small jitter against shared nearline storage.
+RandomizedDelaySec=300
+Unit=datasetgateway-logrotate.service
+
+[Install]
+WantedBy=timers.target

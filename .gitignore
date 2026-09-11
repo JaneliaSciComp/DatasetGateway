@@ -15,3 +15,5 @@ secrets/
 codebases/
 serve.log
 serve.pid
+logrotate.state
+dsg/logs/
