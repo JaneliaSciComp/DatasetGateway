@@ -45,7 +45,10 @@ def gpg_filters():
     if not gpgconf.is_file() or not os.access(gpgconf, os.X_OK):
         pytest.fail(f"Matching gpgconf executable missing: {gpgconf}")
 
-    home = Path(tempfile.mkdtemp(prefix="dsg-gpg-", dir="/tmp"))
+    home = Path(tempfile.mkdtemp(prefix="dsg-gpg-"))
+    if len(os.fsencode(home / "S.gpg-agent.browser")) > 100:
+        shutil.rmtree(home)
+        home = Path(tempfile.mkdtemp(prefix="dsg-gpg-", dir="/tmp"))
     saved = os.environ.get("GNUPGHOME")
     try:
         home.chmod(0o700)
