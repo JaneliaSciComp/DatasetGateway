@@ -78,7 +78,9 @@ def _ast_to_q(expr, attr_map):
             return Q()
 
         # Get attribute name from path
-        attr_name = str(attr_path)
+        attr_name = attr_path.attr_name
+        if attr_path.sub_attr:
+            attr_name += f".{attr_path.sub_attr.value}"
         case_insensitive = getattr(attr_path, "case_insensitive", False)
 
         operator = expr.value if hasattr(expr, "value") else "eq"
