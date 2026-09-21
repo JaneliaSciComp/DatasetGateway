@@ -149,7 +149,11 @@ def _allow_delegated_grant(request, client):
 
 def _api_mode_headers(response):
     response["Cache-Control"] = "no-store, private"
-    response["Referrer-Policy"] = "no-referrer"
+    # same-origin, not no-referrer: browsers send "Origin: null" on a form POST
+    # from a no-referrer document, and CsrfViewMiddleware rejects that origin,
+    # so the consent form could never be submitted. same-origin still withholds
+    # the URL from cross-origin destinations, and the key never appears in a URL.
+    response["Referrer-Policy"] = "same-origin"
     return response
 
 

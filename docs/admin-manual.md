@@ -538,8 +538,11 @@ DSG rejects revoked keys immediately. neuPrintHTTP can continue accepting
 a previously validated identity until its cache expires (300 seconds by
 default), so allow that interval for revocation to reach cached requests.
 Consent, delivery, cancel, badorigin, and login pages in API mode carry
-`Cache-Control: no-store, private`, `Referrer-Policy: no-referrer`,
+`Cache-Control: no-store, private`, `Referrer-Policy: same-origin`,
 `X-Frame-Options: DENY`, and `Cross-Origin-Opener-Policy: unsafe-none`.
+The referrer policy is deliberately `same-origin` rather than `no-referrer`:
+browsers send `Origin: null` on a form POST from a `no-referrer` document,
+and Django's CSRF origin check would then refuse the consent form.
 
 ### How the token path works
 

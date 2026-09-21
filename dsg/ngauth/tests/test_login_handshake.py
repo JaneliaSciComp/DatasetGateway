@@ -226,7 +226,7 @@ CODA_ORIGIN = "https://navis-org.github.io"
 
 def _assert_api_headers(response):
     assert response["Cache-Control"] == "no-store, private"
-    assert response["Referrer-Policy"] == "no-referrer"
+    assert response["Referrer-Policy"] == "same-origin"
     assert response["X-Frame-Options"] == "DENY"
     assert response["Cross-Origin-Opener-Policy"] == "unsafe-none"
 
@@ -277,6 +277,32 @@ class APILoginMixin:
 class TestAPILogin(APILoginMixin, TestCase):
     def setUp(self):
         self.setup_login()
+
+    def _browser_shaped_post(self, origin_header):
+        # Browsers add an Origin header to every same-origin form POST, and
+        # CsrfViewMiddleware rejects an Origin matching neither the host nor
+        # CSRF_TRUSTED_ORIGINS. Django's test client sends no Origin, so this
+        # models what a real browser does.
+        self.get_consent()
+        data = {"origin": CODA_ORIGIN, "token": "api", "decision": "allow",
+                "csrfmiddlewaretoken": self.client.cookies["csrftoken"].value}
+        return self.client.post("/login", data, secure=True, HTTP_ORIGIN=origin_header)
+
+    def test_browser_shaped_secure_allow_passes_csrf_origin_check(self):
+        before = APIKey.objects.count()
+        response = self._browser_shaped_post("https://testserver")
+        key = APIKey.objects.get(user=self.user, delegated_client=self.registered)
+        _assert_delivery(response, key)
+        self.assertEqual(APIKey.objects.count(), before + 1)
+
+    def test_null_origin_post_is_rejected_by_csrf_and_mints_nothing(self):
+        # "Origin: null" is what a browser sends from a document served with
+        # Referrer-Policy: no-referrer; the same-origin policy asserted in
+        # _assert_api_headers exists so the consent page never triggers this.
+        before = APIKey.objects.count()
+        response = self._browser_shaped_post("null")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(APIKey.objects.count(), before)
 
     def test_consent_get_and_repeated_get_head_never_mint(self):
         before = APIKey.objects.count()
