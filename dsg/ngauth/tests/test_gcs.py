@@ -132,14 +132,11 @@ class TestBoundedGCSToken(SimpleTestCase):
 
                 self.assertEqual(str(raised.exception), "sts_unavailable")
 
-    def test_get_gcs_token_never_probes_per_user_bucket_iam(self):
-        with (
-            patch(
-                "ngauth.gcs.generate_bounded_access_token",
-                return_value="bounded",
-            ) as mint,
-            patch("ngauth.gcs.probe_storage_permission") as probe,
-        ):
+    def test_get_gcs_token_mints_a_bucket_bounded_token(self):
+        with patch(
+            "ngauth.gcs.generate_bounded_access_token",
+            return_value="bounded",
+        ) as mint:
             token = gcs.get_gcs_token_for_user(
                 "user@example.org",
                 "bucket-a",
@@ -147,4 +144,3 @@ class TestBoundedGCSToken(SimpleTestCase):
 
         self.assertEqual(token, "bounded")
         mint.assert_called_once_with("bucket-a")
-        probe.assert_not_called()

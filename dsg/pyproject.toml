@@ -16,7 +16,6 @@ dependencies = [
     "django-allauth[socialaccount]>=65.0",
     "google-auth>=2.0",
     "google-auth-oauthlib>=1.0",
-    "google-cloud-storage>=2.0",
     "gunicorn>=22.0",
     "whitenoise>=6.7",
     "scim2-filter-parser>=0.5",
@@ -70,10 +69,6 @@ description = "Create or promote a user to admin (replaces createsuperuser)"
 [tool.pixi.tasks.backup]
 cmd = "bash scripts/manage.sh backup_db"
 description = "Take an encrypted, tiered SQLite backup to nearline (see docs/backups.md)"
-
-[tool.pixi.tasks.iamsync]
-cmd = "bash scripts/manage.sh sync_bucket_iam"
-description = "Reconcile GCS bucket IAM bindings with effective permissions (see docs/admin-manual.md)"
 
 [tool.pixi.tasks.restore]
 cmd = "bash scripts/manage.sh restore_db"

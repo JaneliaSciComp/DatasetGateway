@@ -12,9 +12,7 @@ from rest_framework.test import APIClient
 from core.models import (
     APIKey,
     AuditLog,
-    BucketIAMBinding,
     Dataset,
-    DatasetBucket,
     DatasetTranslation,
     DatasetVersion,
     Group,
@@ -556,10 +554,9 @@ class TestNativeAuthorize(TestCase):
         self.client.cookies[settings.AUTH_COOKIE_NAME] = self.api_key.key
         path = urlsplit(first["tos_url"]).path + "?" + urlsplit(first["tos_url"]).query
         self.client.get(path)
-        with patch("ngauth.gcs.add_user_to_bucket"), patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post("/web/tos/service-check/", {
-                "next": "https://service.example.org/return?x=1",
-            })
+        resp = self.client.post("/web/tos/service-check/", {
+            "next": "https://service.example.org/return?x=1",
+        })
         self.assertEqual(resp.status_code, 302)
         self.assertTrue(TOSAcceptance.objects.filter(user=self.user, tos_document=tos).exists())
         self.assertTrue(Grant.objects.filter(
@@ -891,9 +888,7 @@ class TestNativeAuthorize(TestCase):
     @override_settings(
         TOS_RETURN_ALLOWED_ORIGINS=("https://service.example.org",)
     )
-    def test_version_tos_round_trip_provisions_anchor_bucket(self):
-        bucket = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-v1")
-        self.v1.buckets.add(bucket)
+    def test_version_tos_round_trip(self):
         Grant.objects.create(
             user=self.user, dataset=self.dataset, dataset_version=self.v1,
             permission=self.view_perm,
@@ -913,18 +908,11 @@ class TestNativeAuthorize(TestCase):
         get_resp = self.client.get(path)
         self.assertContains(get_resp, "Version TOS")
 
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = "created"
-            resp = self.client.post("/web/tos/service-check/", {
-                "next": "https://service.example.org/return?x=1",
-            })
+        resp = self.client.post("/web/tos/service-check/", {
+            "next": "https://service.example.org/return?x=1",
+        })
 
         self.assertEqual(resp.status_code, 302)
-        mock_add.assert_called_with("bucket-v1", "user@example.org")
-        self.assertTrue(BucketIAMBinding.objects.filter(
-            bucket_name="bucket-v1", email="user@example.org",
-        ).exists())
         self.assertTrue(TOSAcceptance.objects.filter(
             user=self.user, tos_document=version_tos,
         ).exists())
@@ -960,12 +948,10 @@ class TestNativeAuthorize(TestCase):
         split_url = urlsplit(decision["tos_url"])
         get_resp = self.client.get(split_url.path + "?" + split_url.query)
         self.assertContains(get_resp, "No Return TOS")
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            post_resp = self.client.post(
-                "/web/tos/service-check/",
-                {"has_explicit_next": "0"},
-            )
+        post_resp = self.client.post(
+            "/web/tos/service-check/",
+            {"has_explicit_next": "0"},
+        )
 
         self.assertEqual(post_resp.status_code, 200)
         self.assertContains(post_resp, "Terms Accepted")

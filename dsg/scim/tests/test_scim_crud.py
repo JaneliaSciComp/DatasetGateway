@@ -1,7 +1,5 @@
 """Integration tests for SCIM 2.0 CRUD endpoints."""
 
-from unittest.mock import patch
-
 import pytest
 from django.core.cache import cache
 from django.test import TestCase
@@ -9,12 +7,8 @@ from rest_framework.test import APIClient
 
 from core.models import (
     APIKey,
-    BucketIAMBinding,
     Dataset,
-    DatasetBucket,
-    Grant,
     Group,
-    Permission,
     ServiceTable,
     User,
     UserGroup,
@@ -298,10 +292,8 @@ class TestSCIMUserCRUD(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(UserGroup.objects.filter(user=user, group=group).exists())
 
-    @patch("ngauth.gcs.remove_user_from_bucket", return_value=True)
-    def test_delete_user_deprovisions_owned_bindings(self, mock_remove):
+    def test_delete_user(self):
         user = User.objects.create(email="del@example.org", name="del")
-        BucketIAMBinding.objects.create(bucket_name="bucket-a", email=user.email)
         from scim.utils import generate_scim_id
         user.scim_id = generate_scim_id(user.pk, "User")
         user.save(update_fields=["scim_id"])
@@ -311,13 +303,6 @@ class TestSCIMUserCRUD(TestCase):
         )
         self.assertEqual(resp.status_code, 204)
         self.assertFalse(User.objects.filter(pk=user.pk).exists())
-        self.assertFalse(
-            BucketIAMBinding.objects.filter(email="del@example.org").exists()
-        )
-        self.assertEqual(
-            {(c.args[0], c.args[1]) for c in mock_remove.call_args_list},
-            {("bucket-a", "del@example.org")},
-        )
 
     def test_get_nonexistent_user(self):
         resp = self.client.get(
@@ -327,10 +312,7 @@ class TestSCIMUserCRUD(TestCase):
 
 
 @pytest.mark.django_db
-class TestSCIMUserFlagIAM(TestCase):
-    """SCIM is_active/admin flips fan out per-user bucket IAM inline,
-    including the user's user-type service accounts."""
-
+class TestSCIMUserActiveFlag(TestCase):
     def setUp(self):
         cache.clear()
         self.client = APIClient()
@@ -340,14 +322,9 @@ class TestSCIMUserFlagIAM(TestCase):
         self.api_key = APIKey.objects.create(user=self.admin, key="scim-tok")
 
         from scim.utils import generate_scim_id
-        self.view_perm, _ = Permission.objects.get_or_create(name="view")
-        self.ds_a = Dataset.objects.create(name="ds-a")
-        DatasetBucket.objects.create(dataset=self.ds_a, name="bucket-a")
         self.user = User.objects.create(email="user@example.org", name="user")
         self.user.scim_id = generate_scim_id(self.user.pk, "User")
         self.user.save(update_fields=["scim_id"])
-        Grant.objects.create(user=self.user, dataset=self.ds_a, permission=self.view_perm)
-        BucketIAMBinding.objects.create(bucket_name="bucket-a", email="user@example.org")
 
     def _auth(self):
         return {"HTTP_AUTHORIZATION": f"Bearer {self.api_key.key}"}
@@ -365,66 +342,19 @@ class TestSCIMUserFlagIAM(TestCase):
             **self._auth(),
         )
 
-    @patch("ngauth.gcs.add_user_to_bucket")
-    @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_patch_active_false_removes_user_iam(self, mock_remove, mock_add):
-        mock_remove.return_value = True
+    def test_patch_active_false_disables_user(self):
         resp = self._patch_active(False)
         self.assertEqual(resp.status_code, 200)
-        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
-        self.assertEqual(removed, {("bucket-a", "user@example.org")})
-        mock_add.assert_not_called()
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
 
-    @patch("ngauth.gcs.add_user_to_bucket")
-    @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_patch_active_true_readds_user_iam(self, mock_remove, mock_add):
-        mock_add.return_value = "created"
+    def test_patch_active_true_reenables_user(self):
         self.user.is_active = False
         self.user.save()
         resp = self._patch_active(True)
         self.assertEqual(resp.status_code, 200)
-        added = {(c.args[0], c.args[1]) for c in mock_add.call_args_list}
-        self.assertEqual(added, {("bucket-a", "user@example.org")})
-        mock_remove.assert_not_called()
-
-    @patch("ngauth.gcs.add_user_to_bucket")
-    @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_put_admin_flip_resyncs(self, mock_remove, mock_add):
-        from scim.serializers import USER_EXTENSION
-        mock_add.return_value = "created"
-        mock_remove.return_value = True
-        resp = self.client.put(
-            f"/auth/scim/v2/Users/{self.user.scim_id}",
-            {
-                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User", USER_EXTENSION],
-                "userName": self.user.email,
-                USER_EXTENSION: {"admin": True},
-            },
-            format="json",
-            **self._auth(),
-        )
-        self.assertEqual(resp.status_code, 200)
-        # Promoted admins are never provisioned per-user
-        removed = {(c.args[0], c.args[1]) for c in mock_remove.call_args_list}
-        self.assertEqual(removed, {("bucket-a", "user@example.org")})
-
-    @patch("ngauth.gcs.add_user_to_bucket")
-    @patch("ngauth.gcs.remove_user_from_bucket")
-    def test_patch_unrelated_change_does_not_sync(self, mock_remove, mock_add):
-        resp = self.client.patch(
-            f"/auth/scim/v2/Users/{self.user.scim_id}",
-            {
-                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-                "Operations": [
-                    {"op": "replace", "path": "displayName", "value": "Renamed"}
-                ],
-            },
-            format="json",
-            **self._auth(),
-        )
-        self.assertEqual(resp.status_code, 200)
-        mock_add.assert_not_called()
-        mock_remove.assert_not_called()
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.is_active)
 
 
 @pytest.mark.django_db

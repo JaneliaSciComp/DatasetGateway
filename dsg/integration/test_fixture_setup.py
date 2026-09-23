@@ -1,7 +1,6 @@
 """In-process checks of the joined seed/consent fixtures; no Go or sockets."""
 
 import json
-from unittest.mock import patch
 
 import pytest
 from django.test import Client
@@ -39,10 +38,8 @@ def test_joined_terms_fixture_persists_real_acceptance():
     world = World()
     key = world.issue()
     browser = world.browser()
-    with patch("core.iam.sync_user_dataset_iam") as iam:
-        response = world.post(browser, f"/web/tos/{world.terms.pk}/accept", {})
+    response = world.post(browser, f"/web/tos/{world.terms.pk}/accept", {})
     assert response.status_code == 302
-    iam.assert_called_once_with(world.user, world.datasets["tos"])
     assert TOSAcceptance.objects.filter(user=world.user, tos_document=world.terms).exists()
     assert decision(world, "tos", key) == "allow"
 

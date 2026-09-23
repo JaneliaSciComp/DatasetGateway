@@ -377,7 +377,7 @@ class LogoutView(View):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class ActivateView(View):
-    """POST /activate — TOS acceptance + bucket IAM provisioning."""
+    """POST /activate — TOS acceptance."""
 
     def post(self, request):
         user_email = _get_user_from_cookie(request)
@@ -435,11 +435,6 @@ class ActivateView(View):
                     "decision": "legacy_bucket_ignored",
                 },
             )
-
-        # Sync IAM for dataset-scoped TOS
-        if tos_doc.dataset:
-            from core.iam import sync_user_dataset_iam
-            sync_user_dataset_iam(user, tos_doc.dataset)
 
         return JsonResponse({"status": "activated"})
 

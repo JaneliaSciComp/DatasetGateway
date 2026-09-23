@@ -143,8 +143,8 @@ def driver_binary(request, tmp_path_factory):
 @pytest.fixture
 def joined(world, live_server, driver_binary, tmp_path, request):
     repo, binary = driver_binary
-    # Fail on any accidental cloud credential discovery. TOS IAM is mocked
-    # explicitly at its call site; native DSG HTTP calls remain real.
+    # Fail on any accidental cloud credential discovery; native DSG HTTP calls
+    # remain real.
     with patch("google.auth.default", side_effect=AssertionError("Unexpected cloud operation")):
         world.driver = Driver(binary, repo, tmp_path, live_server.url, list(world.names.values()),
                               disable_auth=request.config.getoption("joined_self_check"))
@@ -225,10 +225,8 @@ def test_tos_acceptance_recovers_query(joined, measure):
     page = browser.get(f"/web/tos/{joined.terms.pk}/accept")
     assert page.status_code == 200
     assert not page.context["already_accepted"]
-    with patch("core.iam.sync_user_dataset_iam") as iam:
-        response = joined.post(browser, f"/web/tos/{joined.terms.pk}/accept", {})
+    response = joined.post(browser, f"/web/tos/{joined.terms.pk}/accept", {})
     assert response.status_code == 302
-    iam.assert_called_once_with(joined.user, joined.datasets["tos"])
     assert TOSAcceptance.objects.filter(user=joined.user, tos_document=joined.terms).count() == 1
     assert AuditLog.objects.filter(action="tos_accepted").count() == 1
     joined.successful_query("tos", key.key, joined.user.email)

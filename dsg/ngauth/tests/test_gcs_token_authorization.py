@@ -10,7 +10,6 @@ from django.test import TestCase
 
 from core.models import (
     APIKey,
-    BucketIAMBinding,
     Dataset,
     DatasetBucket,
     DatasetVersion,
@@ -65,11 +64,8 @@ class TestGCSTokenAuthorization(TestCase):
             content_type="application/json",
         )
 
-    @patch("ngauth.gcs.probe_storage_permission")
     @patch("ngauth.gcs.get_gcs_token_for_user", return_value="bounded-token")
-    def test_grant_and_tos_issue_without_bucket_iam_binding(
-        self, mock_get_token, mock_probe,
-    ):
+    def test_grant_and_tos_issue_token(self, mock_get_token):
         tos = TOSDocument.objects.create(
             name="Private terms",
             text="Terms",
@@ -78,17 +74,12 @@ class TestGCSTokenAuthorization(TestCase):
         self.dataset.tos = tos
         self.dataset.save(update_fields=["tos"])
         TOSAcceptance.objects.create(user=self.user, tos_document=tos)
-        self.assertFalse(BucketIAMBinding.objects.filter(
-            bucket_name=self.bucket.name,
-            email=self.user.email,
-        ).exists())
 
         response = self._post()
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"token": "bounded-token"})
         mock_get_token.assert_called_once_with(self.user.email, self.bucket.name)
-        mock_probe.assert_not_called()
 
     @patch("ngauth.gcs.get_gcs_token_for_user")
     def test_unknown_bucket_is_denied_before_any_gcs_call(self, mock_get_token):
@@ -236,15 +227,11 @@ class TestGCSTokenAuthorization(TestCase):
         self.assertEqual(pending.status_code, 403)
         self.assertEqual(pending.json()["error"], "tos_required")
 
-        with (
-            patch("ngauth.gcs.add_user_to_bucket"),
-            patch("ngauth.gcs.remove_user_from_bucket"),
-        ):
-            activation = self.client.post(
-                "/activate",
-                data=json.dumps({"tos_id": tos.pk}),
-                content_type="application/json",
-            )
+        activation = self.client.post(
+            "/activate",
+            data=json.dumps({"tos_id": tos.pk}),
+            content_type="application/json",
+        )
         self.assertEqual(activation.status_code, 200)
         self.assertTrue(TOSAcceptance.objects.filter(
             user=self.user,

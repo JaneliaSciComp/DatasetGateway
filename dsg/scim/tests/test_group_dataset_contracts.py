@@ -1,7 +1,5 @@
 """List/PUT contracts preserve omitted fields and reject unauthorized writes."""
 
-from unittest.mock import patch
-
 import pytest
 
 from core.models import (
@@ -99,8 +97,7 @@ def test_group_put_scalar_fields_and_audit(api_client, admin_headers, group, pay
     member = User.objects.create(email="retained@example.org")
     UserGroup.objects.create(user=member, group=group, is_admin=True)
     before_members = list(UserGroup.objects.values())
-    with patch("core.iam.sync_group_datasets_for_user") as sync:
-        response = api_client.put(f"{BASE}/Groups/{group.scim_id}", payload, format="json", **admin_headers)
+    response = api_client.put(f"{BASE}/Groups/{group.scim_id}", payload, format="json", **admin_headers)
     assert response.status_code == 200
     group.refresh_from_db()
     assert (group.name, group.external_id) == (expected_name, expected_external)
@@ -108,7 +105,6 @@ def test_group_put_scalar_fields_and_audit(api_client, admin_headers, group, pay
     assert response.json()["externalId"] == expected_external
     assert response.json()["schemas"] == [GROUP_SCHEMA]
     assert list(UserGroup.objects.values()) == before_members
-    sync.assert_not_called()
     changed = (expected_name, expected_external) != ("original", "external-group")
     assert AuditLog.objects.filter(action="group_updated").count() == int(changed)
     assert not AuditLog.objects.filter(action__in=["member_added", "member_removed"]).exists()
@@ -124,15 +120,14 @@ def test_group_put_scalar_fields_and_audit(api_client, admin_headers, group, pay
 
 
 @pytest.mark.parametrize("member_names", [["retained", "added"], []])
-def test_group_put_replaces_members_and_syncs_union(api_client, admin_headers, group, member_names):
+def test_group_put_replaces_members(api_client, admin_headers, group, member_names):
     users = {name: User.objects.create(email=f"{name}@example.org", scim_id=f"user-{name}")
              for name in ("removed", "retained", "added")}
     for name in ("removed", "retained"):
         UserGroup.objects.create(user=users[name], group=group)
-    with patch("core.iam.sync_group_datasets_for_user") as sync:
-        response = api_client.put(f"{BASE}/Groups/{group.scim_id}", {
-            "members": [{"value": users[name].scim_id} for name in member_names],
-        }, format="json", **admin_headers)
+    response = api_client.put(f"{BASE}/Groups/{group.scim_id}", {
+        "members": [{"value": users[name].scim_id} for name in member_names],
+    }, format="json", **admin_headers)
     assert response.status_code == 200
     assert set(UserGroup.objects.filter(group=group).values_list("user__email", flat=True)) == {
         users[name].email for name in member_names
@@ -140,10 +135,6 @@ def test_group_put_replaces_members_and_syncs_union(api_client, admin_headers, g
     assert {member["value"] for member in response.json()["members"]} == {
         users[name].scim_id for name in member_names
     }
-    affected = {users[name].pk for name in {"removed", "retained"} | set(member_names)}
-    assert sync.call_count == len(affected)
-    assert {call.args[0].pk for call in sync.call_args_list} == affected
-    assert all(call.args[1] == group for call in sync.call_args_list)
     removed = list(AuditLog.objects.filter(action="member_removed"))
     added = list(AuditLog.objects.filter(action="member_added"))
     assert len(removed) == 2
@@ -213,12 +204,10 @@ def test_dataset_put_replaces_service_table_resolution(api_client, admin_headers
 @pytest.mark.parametrize("resource", ["Groups", "Datasets"])
 def test_put_missing_resource_has_no_effect(api_client, admin_headers, group, dataset, resource):
     before = state()
-    with patch("core.iam.sync_group_datasets_for_user") as sync:
-        response = api_client.put(f"{BASE}/{resource}/missing", {}, format="json", **admin_headers)
+    response = api_client.put(f"{BASE}/{resource}/missing", {}, format="json", **admin_headers)
     assert response.status_code == 404
     assert response.json()["status"] == "404"
     assert response.json()["detail"] == ("Group not found" if resource == "Groups" else "Dataset not found")
-    sync.assert_not_called()
     assert state() == before
 
 
@@ -234,15 +223,13 @@ def test_scim_access_rejection_does_not_mutate(api_client, group, dataset, crede
         key = APIKey.objects.create(user=user, delegated_client=registered if credential == "delegated" else None)
         headers["HTTP_AUTHORIZATION"] = f"Bearer {key.key}"
     before = state()
-    with patch("core.iam.sync_group_datasets_for_user") as sync:
-        if operation == "list_groups":
-            response = api_client.get(f"{BASE}/Groups", **headers)
-        elif operation == "put_group":
-            response = api_client.put(f"{BASE}/Groups/{group.scim_id}", {"displayName": "forbidden", "members": []}, format="json", **headers)
-        else:
-            response = api_client.put(f"{BASE}/Datasets/{dataset.scim_id}", {"name": "forbidden", "serviceTables": []}, format="json", **headers)
+    if operation == "list_groups":
+        response = api_client.get(f"{BASE}/Groups", **headers)
+    elif operation == "put_group":
+        response = api_client.put(f"{BASE}/Groups/{group.scim_id}", {"displayName": "forbidden", "members": []}, format="json", **headers)
+    else:
+        response = api_client.put(f"{BASE}/Datasets/{dataset.scim_id}", {"name": "forbidden", "serviceTables": []}, format="json", **headers)
     assert response.status_code == 401
     assert response["WWW-Authenticate"] == "Bearer"
     assert set(response.json()) == {"detail"}
-    sync.assert_not_called()
     assert state() == before

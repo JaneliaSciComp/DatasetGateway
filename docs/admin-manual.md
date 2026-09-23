@@ -307,10 +307,7 @@ grant and does not make its base data writable.
 - **Dataset buckets** — the GCS buckets associated with this dataset.
   These mappings are the authoritative entry point for Neuroglancer token
   authorization; the same bucket name on several datasets declares union
-  semantics. They are also used by the separate IAM provisioning subsystem. Adding,
-  renaming, or deleting a bucket here immediately syncs bucket IAM for
-  the dataset's users (see [Bucket IAM Synchronization](#bucket-iam-synchronization)).
-  For the end-to-end checklist that makes a bucket readable through
+  semantics. For the end-to-end checklist that makes a bucket readable through
   Neuroglancer, see [Neuroglancer (ngauth) Bucket Setup](#neuroglancer-ngauth-bucket-setup).
 - **Dataset versions** — the versioned releases. Each version can be
   linked to one or more dataset buckets via the Buckets M2M field.
@@ -582,6 +579,17 @@ names the DSG host and the bucket. The client then:
 3. Fetches objects directly from `storage.googleapis.com` with that token.
    DSG is not in the data path.
 
+DSG never adds users to bucket IAM. (Earlier releases also synced per-user
+`roles/storage.objectViewer` bindings; that subsystem was retired in
+September 2026 and migration `0017` drops its `bucket_iam_binding` ledger.
+Any user binding still present on a bucket was placed by hand or by that old
+code and is not removed automatically.) Earlier releases still query that
+table, so apply `0017` only while no older server process is running
+(`git pull`, then `pixi run stop-serve && pixi run python manage.py migrate &&
+pixi run serve-bg`), and before rolling back to an earlier release run
+`pixi run python manage.py migrate core 0016` from this one; it recreates the
+empty table.
+
 Three consequences drive the steps below:
 
 - **DSG's runtime identity must itself be able to read the bucket.** A
@@ -601,9 +609,8 @@ Three consequences drive the steps below:
 
 ### One-time: DSG's runtime GCP identity
 
-DSG uses Google Application Default Credentials (ADC) for every GCP call
-(token minting and the [Bucket IAM Synchronization](#bucket-iam-synchronization)
-subsystem). This identity is unrelated to the OAuth *client* used for login;
+DSG uses Google Application Default Credentials (ADC) for its only GCP call,
+token minting. This identity is unrelated to the OAuth *client* used for login;
 both may live in `secrets/` but they do different jobs.
 
 1. Create a dedicated service account in the gateway project. Grant it no
@@ -703,8 +710,8 @@ much larger blast radius than a read-serving gateway needs.
 ```bash
 gcloud iam roles create dsgNgauthBucketManager --project=BUCKET_PROJECT \
   --title="DSG ngauth bucket manager" \
-  --description="DatasetGateway ngauth runtime: read bucket metadata, IAM policy, and objects. No create, delete, or setIamPolicy." \
-  --permissions=storage.buckets.get,storage.buckets.getIamPolicy,storage.objects.get,storage.objects.list \
+  --description="DatasetGateway ngauth runtime: read bucket metadata and objects. No create, delete, or setIamPolicy." \
+  --permissions=storage.buckets.get,storage.objects.get,storage.objects.list \
   --stage=GA
 
 gcloud storage buckets add-iam-policy-binding gs://BUCKET \
@@ -718,18 +725,16 @@ Notes:
   binding fails with *"Role … does not exist in the resource's hierarchy"*,
   retry unchanged.
 - The predefined `roles/storage.objectViewer` also works for the token path.
-  The custom role adds the bucket-metadata reads that the IAM reconcile
-  command uses to probe state.
+  Roles created before September 2026 also carry
+  `storage.buckets.getIamPolicy`, which only the retired per-user IAM
+  reconcile used; it can be dropped with
+  `gcloud iam roles update dsgNgauthBucketManager --project=BUCKET_PROJECT --remove-permissions=storage.buckets.getIamPolicy`.
 - The binding is compatible with uniform bucket-level access and enforced
   public access prevention; a bucket-level grant to a service account is not
   public access.
 - If the bucket's organization restricts sharing to specific domains, the
   gateway project must be inside an allowed organization. A successful
   `add-iam-policy-binding` confirms this.
-- If you also want the per-user [Bucket IAM Synchronization](#bucket-iam-synchronization)
-  subsystem to provision users on this bucket, that requires
-  `storage.buckets.setIamPolicy`, which this role omits by design. Decide
-  that separately and grant it through a distinct role.
 
 ### Verify
 
@@ -758,239 +763,6 @@ prompt the ngauth login popup, after which chunks render.
 
 ---
 
-## Bucket IAM Synchronization
-
-This subsystem is not an authorization gate for ngauth `/gcs_token`.
-That endpoint authorizes from DSG's dataset/grant/TOS model and mints a
-one-bucket read credential without checking the requesting user's bucket
-IAM. IAM synchronization remains available for clients that access GCS
-under their own Google identity.
-
-DSG grants and revokes per-user GCS bucket IAM (`core/iam.py`) at
-`(user, bucket)` grain. A user is provisioned on a bucket only when the
-bucket is in the union of that user's qualifying DSG permission sources for
-the dataset, after TOS gates are applied:
-
-```
-user enabled (active)
-AND dataset TOS accepted, if any
-AND bucket reached by a qualifying Grant or Group dataset permission
-AND no unaccepted active version TOS blocks that bucket
-```
-
-Global admins are skipped (they use service-account auth, not per-user
-bucket IAM). `ServiceAccount`-model accounts (organization robots) are
-never added to bucket IAM.
-
-Only DSG permissions that GCS can safely express are qualifying bucket-IAM
-sources:
-
-- A direct `Grant` with explicitly attached buckets provisions exactly
-  those buckets. This is the escape hatch for rare service-scoped or
-  role-scoped cases that really need bucket access.
-- Otherwise, a direct `Grant` qualifies only when its permission is one of
-  `view`, `edit`, `manage`, or `admin` and its `service` is blank. A
-  dataset-grain grant reaches all dataset buckets. A version-scoped grant
-  reaches registered anchors on the same branch with `ordinal <=` the
-  grant anchor's ordinal; if the grant anchor has no ordinal, it reaches
-  only that anchor's own buckets.
-- A `Group dataset permission` qualifies only when its permission is one of
-  `view`, `edit`, `manage`, or `admin` and its `service` is blank. Group
-  permissions are dataset-grain and reach all dataset buckets.
-- Service-scoped grants without explicit buckets and named-role grants such
-  as `annotation_editor` provision no bucket IAM. They are capability
-  statements for the native decision API, not GCS policy inputs.
-
-Version-scoped TOS documents gate bucket IAM per bucket. An active
-version-scoped, non-service TOS blocks an anchor until the user accepts it. A bucket attached to anchors is
-excluded only when all of its anchor attachments are blocked; a bucket with
-no anchor attachment is never blocked by version TOS. Service-scoped TOS
-documents do not affect bucket IAM because GCS cannot express the service
-scope.
-
-**Every mutation surface syncs inline.** Web-UI grant/TOS/group flows,
-SCIM provisioning, and the Django admin console all converge IAM as part
-of the mutation: editing Grants, Group dataset permissions, TOS
-acceptances, user↔group memberships, Dataset buckets, DatasetVersion bucket
-attachments, a dataset's TOS, grant bucket attachments, or moving/editing a
-TOS document between datasets or versions triggers the appropriate
-add/remove calls, including bulk "delete selected" actions, retargeted rows
-(the old user/dataset pair is deprovisioned), and bucket renames/moves (the
-old bucket name is deprovisioned first). Flipping a user's **Active** or
-**Admin** flag (Django admin or SCIM `active`) resyncs every dataset where
-they hold a permission source — disabling a user removes their bucket IAM
-everywhere, including their user-type service accounts', and also cuts off
-their tokens, web login, and ngauth endpoints; re-enabling re-adds IAM
-wherever the full rule passes. GCS
-calls are synchronous best-effort: failures are logged, never raised, so
-a large fan-out (e.g. adding a bucket to a dataset with many users) may
-take a moment but cannot block the save.
-
-**DSG removes only bindings it created.** The `BucketIAMBinding` admin table
-is a provenance ledger for GCS `roles/storage.objectViewer` bucket IAM
-bindings that DSG actually created. The invariant is:
-
-```
-removals <= BucketIAMBinding rows <= bindings DSG created
-```
-
-When DSG provisions a user, it first asks GCS to add the member. A
-confirmed create writes a ledger row. If GCS reports that the member was
-already present, DSG treats the access as foreign and records no row. That
-means a hand-added bucket binding is not claimed and will not be removed
-later if the DSG rule says the user should not have access. Failed adds
-write no row.
-
-All removal paths check the ledger first. If no row exists, DSG makes no
-GCS remove call. If a row exists, DSG removes the member from the bucket
-and deletes the row only after confirmed success; failures keep the row so
-the reconcile can retry. Deleting a ledger row manually in the admin is a
-deliberate "disown" operation: DSG will stop removing that binding.
-Adding a ledger row manually is a deliberate "claim" operation: DSG may
-remove that bucket/user pair during a later sync.
-
-**Required preflight before enabling this migration in production:** run the
-version-grant audit and choose a remediation for every row it reports:
-
-```bash
-pixi run python manage.py audit_version_grants
-```
-
-The command lists version-scoped `Grant` rows and `DatasetVersion` anchors
-that are public or referenced by grants/TOS documents. For each row, choose
-one of four remediations before rollout: convert the grant to dataset-grain,
-attach explicit buckets to the grant, set the anchor's `branch` and
-`ordinal`, or accept the narrowed reach. This is migration-visible because
-old version-scoped grants used to provision every dataset bucket; after this
-change, they provision only the anchor reach described above.
-
-DSG only ever adds users it enumerates from its own tables, and it removes
-only ledger-owned rows. Bucket IAM is treated as a **superset** of DSG
-state, so members it cannot derive from its own tables or did not create
-(e.g. hand-added collaborators) are never touched. No sync path scans a
-bucket policy to discover users or decide removals.
-
-**A scheduled reconcile is the backstop for DSG-visible rows.** Because
-inline calls are best-effort, run the reconcile command periodically:
-
-```bash
-pixi run iamsync                                    # all datasets
-bash scripts/manage.sh sync_bucket_iam --dry-run    # preview only
-bash scripts/manage.sh sync_bucket_iam --dataset DS # one dataset
-```
-
-For production, install the bundled systemd templates
-`scripts/datasetgateway-iamsync.{service,timer}` (daily at 03:45; see
-the unit headers for install steps, mirroring the backup units).
-
-The reconcile command walks users currently enumerable from DSG tables
-(direct Grants or memberships in groups with dataset permissions) and
-probes each derived `(user, bucket)` pair. It does not enumerate bucket IAM
-members. Its report categories are:
-
-- `ADD` — DSG created a missing binding and recorded a ledger row.
-- `REASSERT` — a ledger-owned binding was missing and DSG recreated it.
-- `SATISFIED (foreign)` — access already exists but DSG has no ledger row,
-  so the binding is left unclaimed.
-- `REMOVE` — DSG removed a ledger-owned binding.
-- `SKIP (not DSG-owned)` — access exists but DSG has no ledger row, so no
-  removal is attempted.
-- `PRUNE ledger` — DSG had a row, but a definitive probe showed the
-  binding is gone; the row is removed without a GCS write.
-- `ORPHAN REMOVE` — a ledger row is no longer reachable from the current
-  DSG graph (for example, the user was deleted or a bucket was renamed);
-  DSG removes the owned binding and deletes the row.
-- `PROBE-FAIL` — DSG could not read the pair's state. This counts as a
-  failure in both real and `--dry-run` mode; a dry-run with probe failures
-  exits non-zero because it was not a reliable preview.
-
-`--dry-run` performs no GCS writes and no ledger writes or deletes. It
-still reports planned adds/removes/prunes/orphans and exits non-zero on
-probe failures.
-
-If a binding should be removed but is not ledger-owned, remove it manually
-with the Google Cloud console or:
-
-```bash
-gcloud storage buckets remove-iam-policy-binding gs://BUCKET \
-  --member=user:EMAIL --role=roles/storage.objectViewer
-```
-
-Alternatively, add a `BucketIAMBinding` row to deliberately claim the pair
-and then delete it through a hooked DSG surface (web UI, Django admin, or
-SCIM) so the normal remove path runs.
-
-**Phase A production deploy checklist.** Run on the production host from
-the repo's `dsg/` directory; `bash scripts/manage.sh` auto-detects a local
-vs Docker deployment.
-
-1. Deploy the release containing migrations `0010` and `0011`, then
-   restart the service:
-
-   ```bash
-   sudo systemctl restart datasetgateway    # systemd/gunicorn deployment
-   # or, for Docker:
-   pixi run deploy                          # rebuilds, runs migrations
-   ```
-
-2. Pause the scheduled reconcile so nothing fires before the audit is
-   complete (skip if the iamsync timer was never installed):
-
-   ```bash
-   sudo systemctl disable --now datasetgateway-iamsync.timer
-   systemctl list-timers datasetgateway-iamsync.timer   # confirm: no next fire
-   ```
-
-3. Apply migrations and confirm `0011_bucketiambinding` is applied
-   (`pixi run deploy` already migrated; still confirm):
-
-   ```bash
-   bash scripts/manage.sh migrate
-   bash scripts/manage.sh showmigrations core | tail -3   # expect [X] 0011_bucketiambinding
-   ```
-
-4. Run the version-grant audit and complete one of the four remediations
-   above for every reported row (convert the grant to dataset-grain,
-   attach explicit buckets, set the anchor's `branch`/`ordinal`, or
-   accept the narrowed reach):
-
-   ```bash
-   bash scripts/manage.sh audit_version_grants
-   ```
-
-5. Preview the reconcile and review every `SKIP (not DSG-owned)`,
-   `SATISFIED (foreign)`, `PRUNE ledger`, `ORPHAN REMOVE`, and
-   `PROBE-FAIL` line against the category descriptions above. A non-zero
-   exit means probe failures made the preview incomplete — resolve them
-   and re-run the dry-run before proceeding:
-
-   ```bash
-   bash scripts/manage.sh sync_bucket_iam --dry-run
-   ```
-
-6. Run the real reconcile (the ledger starts empty, so this first run
-   records every binding DSG creates from here on):
-
-   ```bash
-   bash scripts/manage.sh sync_bucket_iam
-   ```
-
-7. Resume the scheduled reconcile:
-
-   ```bash
-   sudo systemctl enable --now datasetgateway-iamsync.timer
-   systemctl list-timers datasetgateway-iamsync.timer   # confirm next fire time
-   ```
-
-8. Record the audit output, remediation decisions, and reconcile summary
-   in the Phase A rollout notes.
-
-The ledger must land before the first production reconcile. It starts empty
-and correct only while DSG has not yet created production bucket IAM
-bindings.
-
----
-
 ## Environment Variables Reference
 
 | Variable | Default | Purpose |
@@ -1004,7 +776,7 @@ bindings.
 | `CLIENT_CREDENTIALS_PATH` | `secrets/client_credentials.json` | Alternative path to OAuth credentials file. In Docker, mount this file or use `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. |
 | `AUTH_COOKIE_DOMAIN` | (empty) | Set to `.example.org` to share the `dsg_token` cookie across subdomains. |
 | `NGAUTH_ALLOWED_ORIGINS` | `^https?://.*\.neuroglancer\.org$` | Regex for allowed CORS origins on ngauth endpoints. |
-| `GOOGLE_APPLICATION_CREDENTIALS` | (empty; Google ADC default chain) | Path to the service-account key DSG uses as its own GCP identity for ngauth token minting and bucket IAM sync. See [Neuroglancer (ngauth) Bucket Setup](#neuroglancer-ngauth-bucket-setup). |
+| `GOOGLE_APPLICATION_CREDENTIALS` | (empty; Google ADC default chain) | Path to the service-account key DSG uses as its own GCP identity for ngauth token minting. See [Neuroglancer (ngauth) Bucket Setup](#neuroglancer-ngauth-bucket-setup). |
 | `TOS_RETURN_ALLOWED_ORIGINS` | (empty) | Comma-separated exact HTTP(S) origins allowed as `/web/tos/service-check/` return targets. Origins accepted by `NGAUTH_ALLOWED_ORIGINS` are also valid returns; adding an origin here does not grant ngauth CORS access. |
 | `DSG_ORIGIN` | (empty) | Public origin for CSRF trusted origins (e.g., `https://dataset-gateway.mydomain.org`). |
 | `DSG_PORT` | `8200` | Port for the development server. |
@@ -1030,7 +802,6 @@ inside a Docker container.
 | `bash scripts/manage.sh import_csv FILE --dataset DS` | Import users from CSV and grant `view` on one dataset. |
 | `bash scripts/manage.sh import_clio_auth FILE` | Import users, datasets, and grants from a Clio export JSON. Note: `--dry-run` is currently not a no-write preview. |
 | `bash scripts/manage.sh import_neuprint_auth FILE --datasets DS [DS ...]` | Import neuPrint `authorized.json`. |
-| `bash scripts/manage.sh sync_bucket_iam [--dataset DS] [--dry-run]` | Reconcile GCS bucket IAM bindings (also `pixi run iamsync`; schedule via `scripts/datasetgateway-iamsync.{service,timer}`). |
 | `pixi run setup` | Interactive setup wizard — generates `.env`. |
 | `pixi run serve` | Start the development server (runs setup if `.env` is missing). |
 | `pixi run serve-bg` | Start the dev server detached; logs to `dsg/serve.log`, PID in `dsg/serve.pid`. |

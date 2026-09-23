@@ -182,7 +182,7 @@ pixi run -e dev python -m pytest -q -p integration.pytest_plugin --run-joined \
 Use `--go /path/to/go` if needed. The harness builds a root-package Go test
 driver, trusts its generated loopback TLS certificate, and exercises real DSG
 consent, identity and authorization with a counting fake query store. Google
-and IAM operations require no accounts. Synthetic settings are established
+operations require no accounts. Synthetic settings are established
 before Django initialization; no serving scripts or `.env` are loaded.
 Ordinary tests never launch Go or consult `--neuprint-repo`.
 Missing prerequisites, redirects, startup timeouts and skipped/deselected joined
@@ -259,12 +259,9 @@ prerequisites are the same either way:
 - Keep `GUNICORN_WORKERS=1` while `CACHES` is the per-process `LocMemCache`
   (the permission cache is not shared across workers); raise it only after
   moving to a shared cache backend.
-- Install the scheduled-maintenance systemd timer templates:
+- Install the scheduled-maintenance systemd timer template
   `scripts/datasetgateway-backup.{service,timer}` (hourly encrypted DB
-  backups; see [docs/backups.md](docs/backups.md)) and
-  `scripts/datasetgateway-iamsync.{service,timer}` (daily GCS bucket-IAM
-  reconcile backstop; see
-  [docs/admin-manual.md](docs/admin-manual.md#bucket-iam-synchronization)).
+  backups; see [docs/backups.md](docs/backups.md)).
 
 ## Environment variables
 

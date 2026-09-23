@@ -8,7 +8,6 @@ from django.test import TestCase, override_settings
 from core.models import (
     APIKey,
     AuditLog,
-    BucketIAMBinding,
     Dataset,
     DatasetBucket,
     DatasetVersion,
@@ -928,159 +927,8 @@ class TestTOSLandingPublic(_WebTestBase):
 
 
 @pytest.mark.django_db
-class TestTOSLandingBucketIAM(_WebTestBase):
-    """Bucket IAM provisioning on TOS acceptance via sync_user_dataset_iam."""
-
-    def setUp(self):
-        super().setUp()
-        self.dataset.access_mode = Dataset.ACCESS_PUBLIC
-        self.dataset.save()
-        self.tos = TOSDocument.objects.create(
-            name="Bucket TOS", text="Terms.",
-            dataset=self.dataset, invite_token="bucket-tok-789",
-        )
-        self.dataset.tos = self.tos
-        self.dataset.save()
-        self.bucket_a = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
-        self.bucket_b = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-b")
-        self.dv1 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1",
-        )
-        self.dv1.buckets.add(self.bucket_a)
-        self.dv2 = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v2",
-        )
-        self.dv2.buckets.add(self.bucket_b)
-        self.dv_empty = DatasetVersion.objects.create(
-            dataset=self.dataset, version="v3",
-        )
-
-    def test_bucket_iam_called_per_version(self):
-        from unittest.mock import patch
-
-        self._login(self.regular_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = "created"
-            self.client.post("/web/tos/bucket-tok-789/")
-
-        called_buckets = sorted(c.args[0] for c in mock_add.call_args_list)
-        self.assertEqual(called_buckets, ["bucket-a", "bucket-b"])
-        for call in mock_add.call_args_list:
-            self.assertEqual(call.args[1], "regular@example.org")
-        rows = set(BucketIAMBinding.objects.values_list("bucket_name", "email"))
-        self.assertEqual(rows, {
-            ("bucket-a", "regular@example.org"),
-            ("bucket-b", "regular@example.org"),
-        })
-
-    def test_empty_bucket_skipped(self):
-        from unittest.mock import patch
-
-        self._login(self.regular_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = "created"
-            self.client.post("/web/tos/bucket-tok-789/")
-
-        called_buckets = [c.args[0] for c in mock_add.call_args_list]
-        self.assertNotIn("", called_buckets)
-
-
-@pytest.mark.django_db
-class TestGrantIAMSync(_WebTestBase):
-    """Grant create/revoke triggers IAM sync."""
-
-    def setUp(self):
-        super().setUp()
-        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
-        DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1",
-        )
-
-    def test_grant_create_triggers_iam_sync(self):
-        from unittest.mock import patch
-
-        self._login(self.sc_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = "created"
-            self.client.post(f"/web/grants/{self.dataset.name}", {
-                "action": "grant",
-                "email": "regular@example.org",
-                "permission": self.view_perm.pk,
-            })
-        mock_add.assert_called_with("bucket-a", "regular@example.org")
-
-    def test_grant_revoke_triggers_iam_sync(self):
-        from unittest.mock import patch
-
-        g = Grant.objects.create(
-            user=self.regular_user, dataset=self.dataset,
-            permission=self.view_perm,
-        )
-        BucketIAMBinding.objects.create(
-            bucket_name="bucket-a", email="regular@example.org",
-        )
-        self._login(self.sc_key)
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket") as mock_remove:
-            mock_remove.return_value = True
-            self.client.post(f"/web/grants/{self.dataset.name}", {
-                "action": "revoke", "grant_id": g.pk,
-            })
-        mock_remove.assert_called_with("bucket-a", "regular@example.org")
-
-
-@pytest.mark.django_db
-class TestGroupMembershipIAMSync(_WebTestBase):
-    """Group membership changes trigger IAM sync for group dataset permissions."""
-
-    def setUp(self):
-        super().setUp()
-        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
-        DatasetVersion.objects.create(
-            dataset=self.dataset, version="v1",
-        )
-        GroupDatasetPermission.objects.create(
-            group=self.group_a, dataset=self.dataset, permission=self.view_perm,
-        )
-
-    def test_add_member_triggers_iam_sync(self):
-        from unittest.mock import patch
-
-        new_user = User.objects.create(email="new@example.org")
-        self._login(self.group_admin_a_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = "created"
-            self.client.post(f"/web/group/{self.group_a.name}/", {
-                "action": "add_member",
-                "email": "new@example.org",
-            })
-        mock_add.assert_called_with("bucket-a", "new@example.org")
-
-    def test_remove_member_triggers_iam_sync(self):
-        from unittest.mock import patch
-
-        ug = UserGroup.objects.get(user=self.regular_user, group=self.group_a)
-        BucketIAMBinding.objects.create(
-            bucket_name="bucket-a", email="regular@example.org",
-        )
-        self._login(self.group_admin_a_key)
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket") as mock_remove:
-            mock_remove.return_value = True
-            self.client.post(f"/web/group/{self.group_a.name}/", {
-                "action": "remove_member",
-                "member_id": ug.pk,
-            })
-        mock_remove.assert_called_with("bucket-a", "regular@example.org")
-
-
-@pytest.mark.django_db
-class TestTOSAcceptViewIAM(_WebTestBase):
-    """POST /web/tos/<id>/accept audits once and retries dataset IAM sync."""
+class TestTOSAcceptView(_WebTestBase):
+    """POST /web/tos/<id>/accept records and audits the acceptance once."""
 
     def setUp(self):
         super().setUp()
@@ -1089,51 +937,28 @@ class TestTOSAcceptViewIAM(_WebTestBase):
         )
         self.dataset.tos = self.tos
         self.dataset.save()
-        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         Grant.objects.create(
             user=self.regular_user, dataset=self.dataset, permission=self.view_perm,
         )
 
-    def test_first_acceptance_audits_and_syncs(self):
-        from unittest.mock import patch
-
+    def test_first_acceptance_audits(self):
         self._login(self.regular_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = "created"
-            resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
+        resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
 
         self.assertEqual(resp.status_code, 302)
-        mock_add.assert_called_once_with("bucket-a", "regular@example.org")
-        self.assertTrue(BucketIAMBinding.objects.filter(
-            bucket_name="bucket-a", email="regular@example.org",
-        ).exists())
         self.assertEqual(
             AuditLog.objects.filter(
                 action="tos_accepted", target_type="TOSAcceptance",
             ).count(), 1,
         )
 
-    def test_repost_retries_iam_but_does_not_duplicate_audit(self):
-        from unittest.mock import patch
-
+    def test_repost_does_not_duplicate_acceptance_or_audit(self):
         self._login(self.regular_key)
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.side_effect = ["failed", "created"]
-            self.client.post(f"/web/tos/{self.tos.pk}/accept")
-            resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
+        self.client.post(f"/web/tos/{self.tos.pk}/accept")
+        resp = self.client.post(f"/web/tos/{self.tos.pk}/accept")
 
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(mock_add.call_count, 2)
-        self.assertEqual(
-            [call.args for call in mock_add.call_args_list],
-            [("bucket-a", "regular@example.org"), ("bucket-a", "regular@example.org")],
-        )
         self.assertEqual(AuditLog.objects.filter(action="tos_accepted").count(), 1)
-        self.assertTrue(BucketIAMBinding.objects.filter(
-            bucket_name="bucket-a", email="regular@example.org",
-        ).exists())
         self.assertEqual(
             TOSAcceptance.objects.filter(
                 user=self.regular_user, tos_document=self.tos,
@@ -1477,8 +1302,6 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertContains(resp, "Cell Typing")
 
     def test_post_accepts_all_and_redirects(self):
-        from unittest.mock import patch
-
         self._login(self.regular_key)
 
         session = self.client.session
@@ -1486,9 +1309,7 @@ class TestTOSServiceCheck(_WebTestBase):
         session["tos_check_next"] = "/return/"
         session.save()
 
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post("/web/tos/service-check/")
+        resp = self.client.post("/web/tos/service-check/")
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, "/return/")
@@ -1501,9 +1322,6 @@ class TestTOSServiceCheck(_WebTestBase):
         ).exists())
 
     def test_post_drops_already_accepted_session_document(self):
-        from unittest.mock import patch
-
-        DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
         self._login(self.regular_key)
 
         session = self.client.session
@@ -1511,23 +1329,15 @@ class TestTOSServiceCheck(_WebTestBase):
         session["tos_check_next"] = "/return/"
         session.save()
 
-        with patch("ngauth.gcs.add_user_to_bucket") as mock_add, \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            mock_add.return_value = "failed"
-            self.client.post("/web/tos/service-check/")
+        self.client.post("/web/tos/service-check/")
 
-            session = self.client.session
-            session["tos_check_ids"] = [self.general_tos.pk]
-            session["tos_check_next"] = "/return/"
-            session.save()
-            resp = self.client.post("/web/tos/service-check/")
+        session = self.client.session
+        session["tos_check_ids"] = [self.general_tos.pk]
+        session["tos_check_next"] = "/return/"
+        session.save()
+        resp = self.client.post("/web/tos/service-check/")
 
         self.assertEqual(resp.status_code, 302)
-        self.assertEqual(mock_add.call_count, 1)
-        self.assertEqual(
-            [call.args for call in mock_add.call_args_list],
-            [("bucket-a", "regular@example.org")],
-        )
         self.assertEqual(AuditLog.objects.filter(action="tos_accepted").count(), 1)
         self.assertEqual(
             TOSAcceptance.objects.filter(
@@ -1550,8 +1360,6 @@ class TestTOSServiceCheck(_WebTestBase):
     )
     def test_query_param_post_redirects_to_next(self):
         """POST after query-param GET redirects to the next URL, not /."""
-        from unittest.mock import patch
-
         self._login(self.regular_key)
         # GET loads the TOS page with query params (no session)
         self.client.get(
@@ -1559,12 +1367,10 @@ class TestTOSServiceCheck(_WebTestBase):
             "&next=https://celltyping.example.com/graph/fish"
         )
 
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post(
-                "/web/tos/service-check/",
-                {"next": "https://celltyping.example.com/graph/fish"},
-            )
+        resp = self.client.post(
+            "/web/tos/service-check/",
+            {"next": "https://celltyping.example.com/graph/fish"},
+        )
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, "https://celltyping.example.com/graph/fish")
@@ -1588,8 +1394,6 @@ class TestTOSServiceCheck(_WebTestBase):
         user returns to the correct dataset after accepting TOS.
         """
         from html import escape
-        from unittest.mock import patch
-
         self._login(self.regular_key)
 
         redirect_url = "https://neuprint-test.example.com/?dataset=hemibrain%3Av1.2.1&tab=graph"
@@ -1607,9 +1411,7 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertContains(resp, escape(redirect_url))
 
         # POST (via session) should redirect to the exact URL
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post("/web/tos/service-check/")
+        resp = self.client.post("/web/tos/service-check/")
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, redirect_url)
@@ -1619,8 +1421,6 @@ class TestTOSServiceCheck(_WebTestBase):
     )
     def test_redirect_preserves_query_string_via_form(self):
         """Same as above but simulates the browser POST with the hidden field value."""
-        from unittest.mock import patch
-
         self._login(self.regular_key)
 
         redirect_url = "https://neuprint-test.example.com/?dataset=hemibrain%3Av1.2.1&tab=graph"
@@ -1631,12 +1431,10 @@ class TestTOSServiceCheck(_WebTestBase):
         session.save()
 
         # Simulate browser form submission with the hidden 'next' field
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post(
-                "/web/tos/service-check/",
-                {"next": redirect_url},
-            )
+        resp = self.client.post(
+            "/web/tos/service-check/",
+            {"next": redirect_url},
+        )
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, redirect_url)
@@ -1646,8 +1444,6 @@ class TestTOSServiceCheck(_WebTestBase):
         NGAUTH_ALLOWED_ORIGINS=r"$^",
     )
     def test_disallowed_query_next_is_treated_as_absent(self):
-        from unittest.mock import patch
-
         self._login(self.regular_key)
         target = "https://evil.example/steal?token=secret"
         with self.assertLogs("web.views", level="WARNING") as logs:
@@ -1665,9 +1461,7 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertIn("https://evil.example", "\n".join(logs.output))
         self.assertNotIn("/steal?token=secret", "\n".join(logs.output))
 
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post("/web/tos/service-check/")
+        resp = self.client.post("/web/tos/service-check/")
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Terms Accepted")
         self.assertFalse(resp.has_header("Location"))
@@ -1677,16 +1471,12 @@ class TestTOSServiceCheck(_WebTestBase):
         NGAUTH_ALLOWED_ORIGINS=r"$^",
     )
     def test_disallowed_post_next_is_treated_as_absent(self):
-        from unittest.mock import patch
-
         self._login(self.regular_key)
         self._set_tos_session([self.general_tos.pk])
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post(
-                "/web/tos/service-check/",
-                {"next": "https://evil.example/post-target"},
-            )
+        resp = self.client.post(
+            "/web/tos/service-check/",
+            {"next": "https://evil.example/post-target"},
+        )
 
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Terms Accepted")
@@ -1697,8 +1487,6 @@ class TestTOSServiceCheck(_WebTestBase):
         NGAUTH_ALLOWED_ORIGINS=r"$^",
     )
     def test_disallowed_session_next_is_treated_as_absent(self):
-        from unittest.mock import patch
-
         self._login(self.regular_key)
         self._set_tos_session(
             [self.general_tos.pk],
@@ -1710,12 +1498,10 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertNotContains(resp, 'name="next"')
         self.assertFalse(self.client.session["tos_check_has_explicit_next"])
 
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post(
-                "/web/tos/service-check/",
-                {"has_explicit_next": "0"},
-            )
+        resp = self.client.post(
+            "/web/tos/service-check/",
+            {"has_explicit_next": "0"},
+        )
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Terms Accepted")
 
@@ -1770,17 +1556,13 @@ class TestTOSServiceCheck(_WebTestBase):
         NGAUTH_ALLOWED_ORIGINS=r"https://ngauth-client\.example",
     )
     def test_ngauth_allowed_origin_is_also_a_valid_return(self):
-        from unittest.mock import patch
-
         self._login(self.regular_key)
         target = "https://ngauth-client.example/return?dataset=test"
         self._set_tos_session([self.general_tos.pk], target)
 
         resp = self.client.get("/web/tos/service-check/")
         self.assertContains(resp, "https://ngauth-client.example/return")
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post("/web/tos/service-check/")
+        resp = self.client.post("/web/tos/service-check/")
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, target)
@@ -1941,8 +1723,6 @@ class TestTOSServiceCheck(_WebTestBase):
         ).exists())
 
     def test_no_next_post_confirms_acceptance_and_creates_public_grant(self):
-        from unittest.mock import patch
-
         public = Dataset.objects.create(
             name="public-confirmation",
             access_mode=Dataset.ACCESS_PUBLIC,
@@ -1957,9 +1737,7 @@ class TestTOSServiceCheck(_WebTestBase):
         self._login(self.regular_key)
         self._set_tos_session([public_tos.pk])
 
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post("/web/tos/service-check/")
+        resp = self.client.post("/web/tos/service-check/")
 
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, "Terms Accepted")
@@ -1982,13 +1760,9 @@ class TestTOSServiceCheck(_WebTestBase):
         self.assertContains(resp, "No Terms Pending")
 
     def test_explicit_root_next_still_redirects(self):
-        from unittest.mock import patch
-
         self._login(self.regular_key)
         self._set_tos_session([self.general_tos.pk], "/")
-        with patch("ngauth.gcs.add_user_to_bucket"), \
-             patch("ngauth.gcs.remove_user_from_bucket"):
-            resp = self.client.post("/web/tos/service-check/")
+        resp = self.client.post("/web/tos/service-check/")
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp.url, "/")

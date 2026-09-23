@@ -239,9 +239,6 @@ class UserDetailView(SCIMBaseView):
         after = {k: getattr(user, k) for k in fields}
         log_audit(request.user, "user_updated", "User", user.pk,
                   before_state=before, after_state=after)
-        if any(before.get(k) != after.get(k) for k in ("is_active", "admin")):
-            from core.iam import sync_user_iam
-            sync_user_iam(user)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def patch(self, request, scim_id):
@@ -267,8 +264,6 @@ class UserDetailView(SCIMBaseView):
                             log_audit(request.user, "member_added", "UserGroup",
                                       f"{user.pk}:{group.pk}",
                                       after_state={"user": user.email, "group": group.name})
-                            from core.iam import sync_group_datasets_for_user
-                            sync_group_datasets_for_user(user, group)
                     except Group.DoesNotExist:
                         pass
 
@@ -281,13 +276,10 @@ class UserDetailView(SCIMBaseView):
                         user=user, group__scim_id=group_scim_id
                     ).select_related("group").first()
                     if ug:
-                        removed_group = ug.group
                         log_audit(request.user, "member_removed", "UserGroup",
                                   f"{user.pk}:{ug.group.pk}",
                                   before_state={"user": user.email, "group": ug.group.name})
                         ug.delete()
-                        from core.iam import sync_group_datasets_for_user
-                        sync_group_datasets_for_user(user, removed_group)
 
             elif op_type == "replace":
                 if isinstance(value, dict):
@@ -305,9 +297,6 @@ class UserDetailView(SCIMBaseView):
         if before != after:
             log_audit(request.user, "user_updated", "User", user.pk,
                       before_state=before, after_state=after)
-        if any(before[k] != after[k] for k in ("is_active", "admin")):
-            from core.iam import sync_user_iam
-            sync_user_iam(user)
         return Response(UserSCIMSerializer.to_scim(user))
 
     def delete(self, request, scim_id):
@@ -315,30 +304,10 @@ class UserDetailView(SCIMBaseView):
         if not user:
             return scim_error(404, detail="User not found")
 
-        captured_emails = [user.email]
-
         log_audit(request.user, "user_deleted", "User", user.pk, before_state={
             "email": user.email, "name": user.name, "admin": user.admin,
         })
         user.delete()
-
-        from core.iam import deprovision_binding
-        from core.models import BucketIAMBinding
-
-        rows = list(
-            BucketIAMBinding.objects.filter(email__in=captured_emails).values_list(
-                "bucket_name", "email",
-            )
-        )
-        for bucket, email in rows:
-            try:
-                deprovision_binding(bucket, email)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception(
-                    "Failed to remove deleted user from bucket",
-                    extra={"email": email, "bucket": bucket},
-                )
         return Response(status=204)
 
 
@@ -444,24 +413,15 @@ class GroupDetailView(SCIMBaseView):
 
         # Replace members
         if "members" in request.data:
-            old_member_users = list(
-                User.objects.filter(user_groups__group=group)
+            old_members = set(
+                UserGroup.objects.filter(group=group).values_list("user__email", flat=True)
             )
-            old_members = set(u.email for u in old_member_users)
             UserGroup.objects.filter(group=group).delete()
             for email in old_members:
                 log_audit(request.user, "member_removed", "UserGroup",
                           f"{email}:{group.pk}",
                           before_state={"user": email, "group": group.name})
             GroupListView._sync_members(None, request.user, group, request.data["members"])
-            new_members = set(
-                UserGroup.objects.filter(group=group).values_list("user__email", flat=True)
-            )
-            # Sync IAM for removed and added members
-            from core.iam import sync_group_datasets_for_user
-            affected_emails = old_members | new_members
-            for u in User.objects.filter(email__in=affected_emails):
-                sync_group_datasets_for_user(u, group)
 
         return Response(GroupSCIMSerializer.to_scim(group))
 
@@ -486,8 +446,6 @@ class GroupDetailView(SCIMBaseView):
                             log_audit(request.user, "member_added", "UserGroup",
                                       f"{member_user.pk}:{group.pk}",
                                       after_state={"user": member_user.email, "group": group.name})
-                            from core.iam import sync_group_datasets_for_user
-                            sync_group_datasets_for_user(member_user, group)
                     except User.DoesNotExist:
                         pass
 
@@ -501,13 +459,10 @@ class GroupDetailView(SCIMBaseView):
                         group=group, user__scim_id=user_scim_id
                     ).select_related("user").first()
                     if ug:
-                        removed_user = ug.user
                         log_audit(request.user, "member_removed", "UserGroup",
                                   f"{ug.user.pk}:{group.pk}",
                                   before_state={"user": ug.user.email, "group": group.name})
                         ug.delete()
-                        from core.iam import sync_group_datasets_for_user
-                        sync_group_datasets_for_user(removed_user, group)
 
             elif op_type == "replace":
                 if isinstance(value, dict):
@@ -526,24 +481,13 @@ class GroupDetailView(SCIMBaseView):
         group = self._get_group(scim_id)
         if not group:
             return scim_error(404, detail="Group not found")
-        # Capture members and affected datasets before delete
-        member_users = list(User.objects.filter(user_groups__group=group))
-        from core.models import GroupDatasetPermission, Dataset
-        affected_dataset_ids = list(
-            GroupDatasetPermission.objects.filter(group=group)
-            .values_list("dataset_id", flat=True).distinct()
+        members = list(
+            User.objects.filter(user_groups__group=group).values_list("email", flat=True)
         )
-        affected_datasets = list(Dataset.objects.filter(pk__in=affected_dataset_ids))
-        members = [u.email for u in member_users]
         log_audit(request.user, "group_deleted", "Group", group.pk, before_state={
             "name": group.name, "members": members,
         })
         group.delete()
-        # Sync IAM for former members on affected datasets
-        from core.iam import sync_user_dataset_iam
-        for u in member_users:
-            for ds in affected_datasets:
-                sync_user_dataset_iam(u, ds)
         return Response(status=204)
 
 

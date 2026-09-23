@@ -79,7 +79,7 @@ DatasetGateway resolves the requested bucket through every matching
 dataset-bucket mapping, then applies the same grant containment rules as
 the native authorization API, including group grants, bucket and version
 scope, and TOS at the same covered anchor. Service-scoped grants do not
-authorize a direct GCS token, and no per-user bucket IAM probe is made.
+authorize a direct GCS token, and users are never added to bucket IAM.
 For a public dataset, an enabled user needs no grant, but must still accept
 any applicable TOS; a pending TOS response includes the DSG acceptance URL.
 
@@ -110,8 +110,8 @@ accepted.
 The ngauth `POST /activate` endpoint accepts `tos_id` as its only
 actionable field. A legacy caller-chosen `bucket` value cannot provision
 access: bucket-only requests are rejected, and a `bucket` field alongside
-a valid `tos_id` is ignored. Dataset-scoped TOS acceptance may still run
-the separately maintained, DSG-derived bucket IAM synchronization path.
+a valid `tos_id` is ignored. Acceptance only records the TOS; it changes
+no bucket IAM.
 
 ---
 
@@ -486,4 +486,3 @@ All commands are run from the `dsg/` directory.
 | `python manage.py import_csv FILE --dataset DS` | Custom | Import a CSV of users and grant `view` on one dataset |
 | `python manage.py import_clio_auth FILE` | Custom | Import clio-store auth data from exported JSON (see [Clio integration](clio-support.md)); `--dry-run` is currently not a no-write preview |
 | `python manage.py import_neuprint_auth FILE --datasets DS [DS ...]` | Custom | Import neuPrint authorized.json (see [neuPrint integration](#neuprint)) |
-| `python manage.py sync_bucket_iam [--dataset DS] [--dry-run]` | Custom | Reconcile GCS bucket IAM with effective user permissions |

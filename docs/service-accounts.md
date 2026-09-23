@@ -1,7 +1,7 @@
 ---
 doc_status: living-reference
 sync_policy: Update with service account model, token, permission, UI, and audit behavior changes.
-last_reviewed: 2026-09-01
+last_reviewed: 2026-09-23
 ---
 
 # Service Accounts
@@ -98,7 +98,7 @@ service account. Treat it like a password.
   token revocation endpoint.
 - **Receive ngauth GCS tokens.** Browser-mediated bucket access via
   `ngauth` is human-only. Service accounts call DSG endpoints directly
-  with their bearer token; they do not get per-user GCS IAM bindings.
+  with their bearer token.
 - **Be a global admin.** `admin` is hard-coded to `False` on
   ServiceAccount.
 - **Be created or managed by anyone except a global admin.** All
@@ -296,18 +296,13 @@ with a User pk does not poison either cache.
 ### Auth surfaces that are deliberately no-ops for service accounts
 
 - **`ngauth`** issues GCS tokens by looking up `APIKey` directly, so
-  service-account tokens simply do not match. SAs are never given GCS
-  bucket IAM bindings.
+  service-account tokens simply do not match.
 - **`scim`** uses its own `SCIMAuthentication` path and requires a
   non-expired `APIKey` for an active `User` with `admin=True`;
   service-account tokens are not accepted for SCIM provisioning.
 - **`web`** views resolve the session user via `_get_web_user()` against
   the User table, which a service-account token cannot satisfy. SAs
   cannot reach any web page.
-- **`core/iam.py`** (per-user GCS bucket IAM sync) is only called from
-  the user-grant create/revoke paths in `web/views.py`, never from the
-  service-account-grant paths. Service-account access is enforced at
-  the gateway, not at the bucket.
 
 ### Lifecycle: disable is reversible, delete cascades
 
