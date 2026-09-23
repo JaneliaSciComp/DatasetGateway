@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with setup, admin workflow, environment variable, and management command changes.
-last_reviewed: 2026-09-10
+last_reviewed: 2026-09-23
 ---
 
 # DatasetGateway Admin Manual
@@ -51,12 +51,26 @@ warm/mutate/read smoke check shows no SQLite lock errors.
 pixi run make-admin user@example.com
 ```
 
-This works for both local and Docker deployments — it automatically
+This bootstraps the first admin from a shell, before anyone can reach the
+admin console. It works for both local and Docker deployments — it automatically
 detects a running container. It creates the user if they don't exist, sets `admin=True`, and
-prompts for a password (needed to log into the Django admin console at
-`/admin/`). If the user already exists (e.g., from an import or OAuth
+prompts for a password. If the user already exists (e.g., from an import or OAuth
 login), it promotes them and adds a password. Use `--no-password` to skip
 the password prompt, or `--remove` to revoke admin status.
+
+After that, promote admins in the admin console: open **Core › Users**, find
+the person, check **Admin**, and save (uncheck it to revoke). The person needs a
+user row first, so have them sign in with Google once, or import them. Prefer
+the checkbox day to day: it needs no shell on the server and records who made
+the change in the admin history. From a shell, `make-admin EMAIL --no-password`
+does the same promotion and also works for someone who has not signed in yet
+(their first Google sign-in attaches to the row by email).
+
+Admins sign in with Google: `/admin/` redirects to a login page whose
+**Sign in with Google** button returns them to the admin console. The email +
+password form below that button only works for accounts given a Django password
+by `make-admin`; keep one such account (typically the bootstrap admin) as a
+break-glass door in case Google sign-in is unavailable.
 
 ### 3. (Optional) Import Clio auth data
 
@@ -92,7 +106,7 @@ pixi run deploy
 ```
 
 If `.env` doesn't exist yet, the setup wizard runs automatically.
-The admin console is at `/admin/`.
+The admin console is at `/admin/` (sign in with the Google button).
 
 ### serve.log rotation (detached dev server, interim)
 

@@ -1,7 +1,7 @@
 ---
 doc_status: living
 sync_policy: Update with user-facing workflow, role, login, TOS, and API behavior changes.
-last_reviewed: 2026-08-10
+last_reviewed: 2026-09-23
 ---
 
 # DatasetGateway User Manual
@@ -13,16 +13,20 @@ scope of access and management capability.
 
 | Role | How to assign | Dataset scope | User scope |
 |------|--------------|---------------|------------|
-| **Global admin** | `python manage.py make_admin user@example.com` (sets `user.admin=True`) | All datasets | All users |
+| **Global admin** | Check **Admin** on the user in `/admin/`, or `python manage.py make_admin user@example.com` (sets `user.admin=True`) | All datasets | All users |
 | **Dataset admin (SC)** | Grant with `admin` permission on a dataset | Assigned datasets only | All users on that dataset |
 | **Team lead** | Grant with `manage` permission on a dataset + `UserGroup.is_admin=True` | Datasets where they have `manage` | Only users in their group |
 | **Regular user** | No special role | N/A | N/A |
 
-A **global admin** is a `User` with `admin=True`. Create or promote one with
-`pixi run make-admin user@example.com` or `python manage.py make_admin
-user@example.com` from the `dsg/` directory. That command can also set a
-password for the Django admin console at `/admin/`. The password is only used
-for the admin console; all other login flows use Google OAuth.
+A **global admin** is a `User` with `admin=True`. An existing admin promotes
+someone by checking **Admin** on their user in the Django admin console
+(`/admin/`, **Core › Users**). From a shell, `pixi run make-admin
+user@example.com` or `python manage.py make_admin user@example.com` (from the
+`dsg/` directory) creates or promotes one; it is how the first admin is
+bootstrapped. Admins sign in to `/admin/` with its **Sign in with Google**
+button. `make_admin` can also set a Django password for the admin console's
+email + password form, kept as a break-glass door; all other login flows use
+Google OAuth.
 
 ### Permission hierarchy
 
@@ -164,8 +168,8 @@ no web UI for dataset creation.
 
 ### 1. Log into the Django admin panel
 
-Go to `/admin/` and log in with the admin-console credentials set by
-`make_admin`.
+Go to `/admin/` and click **Sign in with Google** (or use the break-glass
+password set by `make_admin`).
 
 ### 2. Create a TOS document (optional)
 

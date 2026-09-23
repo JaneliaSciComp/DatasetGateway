@@ -1,0 +1,25 @@
+{% extends "admin/login.html" %}
+{% comment %}
+Overrides Django's admin login page (a same-name extends resolves to the
+built-in template, which this directory shadows). Admins are Google
+identities whose accounts have no usable password, so Google sign-in comes
+first; the stock password form stays below as the break-glass door for
+accounts given a Django password with `make-admin`.
+{% endcomment %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+  .login #google-login a.button { display: inline-block; padding: 10px 15px; }
+  .login .login-divider { margin: 1.5em 0 0.5em; text-align: center; color: var(--body-quiet-color); }
+</style>
+{% endblock %}
+
+{% block content %}
+{% url 'admin:index' as admin_index %}
+{# `next` is "" when the admin view rejected the supplied value; AuthLoginView re-validates it. #}
+<div class="submit-row" id="google-login">
+  <a class="button" href="{% url 'ngauth-auth-login' %}?next={{ next|default:admin_index|urlencode }}">Sign in with Google</a>
+</div>
+<p class="login-divider">or log in with a DSG admin password</p>
+{{ block.super }}
+{% endblock %}
