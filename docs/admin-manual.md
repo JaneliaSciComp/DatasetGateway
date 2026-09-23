@@ -325,15 +325,34 @@ datasets.
 
 | Field | Meaning |
 |-------|---------|
-| **Version** | Version string (e.g., `v1`, `2026-01`). |
-| **Buckets** | The GCS buckets linked to this version (selected from the dataset's bucket list). |
-| **Prefix** | Optional path prefix within the bucket. |
+| **Version** | Version string exactly as services send it (e.g., `v0.7`, `2026-01`). Unique within the dataset. |
+| **Branch** | Release line; `main` unless versions fork. Ordinals compare only within a branch. |
+| **Ordinal** | Optional integer order within the branch; when set, grants and **Is public** on this version also cover lower-ordinal versions of the same branch. Unique within the dataset and branch. |
+| **Buckets** | The GCS buckets linked to this version (selected from the dataset's bucket list). Attaching a bucket to any version makes `/gcs_token` check access against those versions instead of the whole dataset. |
+| **Prefix** | Optional path prefix within the bucket. Informational: tokens cover the whole bucket. |
 | **Is public** | Grants anonymous callers and enabled human principals `view` access to this version and, when ordinals are set, its same-branch ancestors. It does not make the dataset-grain target public or grant write access. |
 
 Terms are evaluated at the version a user requests. A version-grain TOS on a
 public version does not follow `is_public` ancestry to that version's ancestors.
 Use a dataset-grain TOS for a gated public release that must cover its ancestry
 (or a service-and-dataset-scoped TOS when the gate is service-specific).
+
+See [Setting Up Dataset Versions](#setting-up-dataset-versions) for the
+procedure.
+
+### Dataset translations
+
+Map a service's own dataset names (and optionally versions) to DSG datasets
+and versions. Needed only when a service's vocabulary differs from DSG's, such
+as DVID node UUIDs or a neuPrint dataset named differently from DSG's.
+
+| Field | Meaning |
+|-------|---------|
+| **Service** | The service whose requests are translated. |
+| **Client name** | The dataset name that service sends. |
+| **Client version** | The version string it sends. Blank for a name-level translation, which maps only the name; the version is then looked up among the target dataset's versions. |
+| **Dataset** | The DSG dataset. |
+| **Dataset version** | Required when **Client version** is set, blank otherwise; must belong to **Dataset**. |
 
 ### Group dataset permissions
 
@@ -464,6 +483,174 @@ logins. You generally don't need to touch them.
 
 - **Email addresses** — email addresses associated with user accounts,
   managed by allauth. You generally don't need to edit these.
+
+---
+
+## Setting Up Dataset Versions
+
+A **dataset version** is a named, static release of a dataset, such as
+`fish2` `v0.7`. Register one whenever a service asks DSG about a specific
+version (neuPrint's `fish2:v0.7`, Clio's `dataset:version`) so that grants,
+the public flag and TOS can be scoped to it. Field reference:
+[Dataset versions](#dataset-versions) and
+[Dataset translations](#dataset-translations).
+
+### How a service's dataset reference resolves
+
+Every authorization request names a service, a dataset name, and optionally a
+version. neuPrintHTTP, for example, sends `fish2:v0.7` as name `fish2` plus
+version `v0.7`, and plain `fish2` with no version. DSG resolves the pair in
+this order (`resolve_dataset_reference` in `core/authz.py`):
+
+1. A [Dataset translation](#dataset-translations) for that service with the
+   same name and version: its dataset version.
+2. A name-level translation for that service (no version): its dataset, then
+   the version lookup in step 4 against that dataset.
+3. Otherwise, the Dataset whose **Name** equals the requested name.
+4. The version: the Dataset version whose **Version** equals the requested
+   string exactly. Failing that, an all-digit string is read as an ordinal
+   on the requested branch (default `main`). Anything else does not resolve.
+
+A request without a version targets the dataset as a whole (dataset grain).
+
+**An unregistered version is denied to everyone, admins included.** When the
+version does not resolve, `POST /api/dsg/v1/authorize` answers `deny` before
+looking at any grant or public flag. The response looks like any other
+denial; only DSG's decision log records the reason (`unknown-translation`).
+Register the version before pointing a service at it.
+
+### Add a static version
+
+Open **Core › Datasets › (dataset)** and add a row under **Dataset versions**
+(or use **Core › Dataset versions › Add**):
+
+| Field | What to enter |
+|---|---|
+| **Version** | Exactly the string the service sends, e.g. `v0.7`. Case and punctuation matter. Unique within the dataset. |
+| **Branch** | `main` for a linear series of releases. |
+| **Ordinal** | Blank unless grants or the public flag on this version should also reach earlier versions (see below). Unique within the dataset and branch. |
+| **Buckets** | Usually none; see [Buckets](#buckets-and-neuroglancer-tokens). |
+| **Prefix** | Optional note of where the version lives in its bucket. Not enforced: tokens always cover the whole bucket. |
+| **Is public** | Leave unticked until the release is announced (see below). |
+
+No grants are needed for existing users when their grants have a blank
+**Dataset version**: a dataset-wide grant covers every version, including
+ones added later. The import commands (`import_neuprint_auth`, `import_csv`)
+create dataset-wide grants.
+
+### Ordinals: how far a grant or the public flag reaches
+
+An ordinal places versions of one branch in order (for example `6` for
+`v0.6`, `7` for `v0.7`). A grant scoped to a version, or that version's
+**Is public** flag, covers:
+
+| The version's Ordinal | Covers |
+|---|---|
+| Blank | Only that exact version. |
+| Set | That version and every same-branch version with a lower or equal ordinal. |
+
+Neither ever covers the dataset as a whole: a request for plain `fish2` needs
+a dataset-wide grant, or the dataset's **Access mode** set to `Public`. A
+version without an ordinal is never covered by another version's reach.
+
+Leave Ordinal blank by default. Set ordinals when a later release should
+carry its audience back to earlier ones, for example so that making `v0.7`
+public also publishes `v0.6`. Services whose **Version eval mode** is `DAG`
+(intended for DVID) can receive `service_eval` decisions with ordinal anchors
+for cross-branch questions; linear services (neuPrint, Clio) always get a
+final answer.
+
+### Make a version public
+
+Tick **Is public** on the version. Anonymous callers, enabled users and
+service accounts then get `view`, never write, on that version (and, with an
+ordinal, its ancestors), subject to TOS. The dataset can stay `Closed`: its
+other versions and plain dataset-grain requests remain invite-only.
+
+### Terms of service
+
+| Gate | Set up as | Applies to |
+|---|---|---|
+| Dataset-wide | TOS document with **Dataset** set, **Dataset version** and **Service** blank. Saving it makes it the dataset's **Tos**. | Every request for the dataset, any version |
+| One version | TOS document with **Dataset version** set and **Dataset** blank | Requests that resolve to exactly that version |
+| One service | TOS document with **Dataset** and **Service** set | That service's requests for the dataset |
+
+Leave **Dataset** blank on a version TOS: a document with **Dataset** set and
+no **Service** is saved as the dataset's **Tos**, which gates every version.
+
+A version TOS does not follow ordinal reach: publishing `v0.7` with an
+ordinal opens `v0.6` without `v0.7`'s version TOS. Use a dataset-wide TOS for
+a gated release that must cover its ancestors.
+
+### When a service needs a Dataset translation
+
+Only when the service's names differ from DSG's. neuPrint and Clio usually
+send the canonical dataset name and the version string, so most of their
+datasets need none; an exception such as neuPrint's `manc` for DSG's `MANC`
+needs a name-level translation. DVID sends node UUIDs, so fish2's DVID service
+has translations mapping its UUIDs to `fish2` and to `fish2` `v0.6`. A
+name-level translation (blank
+**Client version**) renames the dataset but still needs a Dataset version
+matching whatever version string the service sends.
+
+### Buckets and Neuroglancer tokens
+
+`/gcs_token` decides by bucket, not by the version a viewer is looking at. For
+each Dataset bucket row with the requested name:
+
+- **Attached to no version:** access is checked against the dataset as a
+  whole. Dataset-wide grants and a `Public` dataset qualify; grants scoped to
+  a version and public versions do not.
+- **Attached to one or more versions:** access is checked against each
+  attached version in turn, with the ordinal reach above. A grant on `v0.7`
+  with ordinals reaches a bucket attached to `v0.6`; a grant on `v0.6` does
+  not reach a bucket attached to `v0.7`.
+
+Tokens cover the whole bucket, so keep one audience per bucket (see
+[How the token path works](#how-the-token-path-works)). When a new version's
+data goes into the same bucket, decide whether the bucket should stay
+attached to the old version, move to the new one, or be attached to no
+version. Detaching the last version switches that bucket back to
+dataset-wide checks.
+
+### Replace and retire a version (example: fish2 `v0.6` → `v0.7`)
+
+1. Add the `v0.7` row (Version `v0.7`, Branch `main`, Ordinal blank). Do this
+   before the service starts sending `fish2:v0.7`.
+2. Dataset-wide grants carry over. Grants scoped to `v0.6`, and a TOS
+   scoped to `v0.6`, do not: re-create them for `v0.7` if still wanted.
+3. Review bucket attachments as described above.
+4. Retire `v0.6` by unticking **Is public** (and setting **Retired date** on
+   a version TOS, if any). Keep the row: services or old links may still ask
+   for `fish2:v0.6`, and the row costs nothing.
+
+**Deleting a version row is permanent and cascades** to its version-scoped
+grants, service-account grants, Dataset translations and TOS documents, and
+through those TOS documents to users' TOS acceptance records. The admin's
+delete confirmation page lists everything that will go; read it before
+confirming.
+
+### Verify
+
+Anonymous (no token): only public versions return `allow`.
+
+```bash
+curl -s -X POST https://dsg.janelia.org/api/dsg/v1/authorize \
+  -H 'Content-Type: application/json' \
+  -d '{"service":"neuprint-fish2","entries":[{"name":"fish2","version":"v0.7"}]}'
+```
+
+`deny` here means "not public" or "not registered"; the two look the same.
+With a signed-in token (a user's or a service account's that can see the
+dataset), list the registered rows:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://dsg.janelia.org/api/dsg/v1/datasets/fish2/versions?service=neuprint-fish2"
+```
+
+Each entry shows `version`, `branch`, `ordinal` and `is_public`. A user's own
+decision for a version is the authorize call above with their token.
 
 ---
 

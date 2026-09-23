@@ -28,8 +28,9 @@ is expected to track code changes.
 ## Living Docs
 
 - [User manual](user-manual.md) - end-user workflows, roles, login, TOS, and API use.
-- [Admin manual](admin-manual.md) - setup, Django admin, Neuroglancer (ngauth)
-  bucket setup, environment variables, and management commands.
+- [Admin manual](admin-manual.md) - setup, Django admin, dataset versions,
+  Neuroglancer (ngauth) bucket setup, environment variables, and management
+  commands.
 - [CAVE auth endpoints](cave-auth-endpoints.md) - current CAVE compatibility and
   SCIM provisioning reference.
 - [Clio support](clio-support.md) - current Clio integration behavior and migration
