@@ -14,6 +14,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.audit import log_audit
 from core.db import run_serialized_write
 from core.models import APIKey, User
 from core.permissions import DeniesDelegatedKeys, IsHumanUser
@@ -442,6 +443,67 @@ class LongLivedTokenView(APIView):
 
     def get(self, request):
         api_key = get_or_create_default_long_lived_token(request.user)
+        return Response({"token": api_key.key})
+
+
+def _rotate_default_long_lived_token_atomic(user):
+    with transaction.atomic():
+        revoked = list(
+            APIKey.objects.select_for_update()
+            .filter(
+                user=user,
+                description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+                expires_at__isnull=True,
+            )
+            .values_list("pk", flat=True)
+        )
+        APIKey.objects.filter(pk__in=revoked).delete()
+        api_key = APIKey.objects.create(
+            user=user,
+            description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+            expires_at=None,
+        )
+    return api_key, revoked
+
+
+def rotate_default_long_lived_token(user):
+    """Revoke the user's default long-lived token(s) and issue a replacement.
+
+    Returns ``(new_api_key, revoked_pks)``. Other tokens (login sessions,
+    explicitly created tokens, delegated site tokens) are untouched.
+    """
+    return run_serialized_write(_rotate_default_long_lived_token_atomic, user)
+
+
+class LongLivedTokenRotateView(APIView):
+    """POST /api/v1/long_lived_token/rotate
+
+    Revoke the authenticated user's default long-lived token and return a
+    new one as ``{"token": ...}``. The request must authenticate with an
+    ``Authorization: Bearer`` header, not the ``dsg_token`` cookie: browsers
+    never attach that header on their own, so a cross-site form POST cannot
+    rotate a user's token. Services that cache token validation keep honoring
+    the old token until their caches expire.
+    """
+
+    permission_classes = [IsAuthenticated, IsHumanUser, DeniesDelegatedKeys]
+
+    def post(self, request):
+        auth_header = request.META.get("HTTP_AUTHORIZATION", "")
+        header_token = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+        if not header_token or header_token != request.auth:
+            return Response(
+                {"detail": "Token rotation requires an Authorization: Bearer header."},
+                status=403,
+            )
+
+        api_key, revoked = rotate_default_long_lived_token(request.user)
+        log_audit(
+            request.user, "api_token_rotated", "APIKey", api_key.pk,
+            before_state={"revoked_token_ids": revoked},
+            after_state={"user": request.user.email,
+                         "description": DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION},
+        )
         return Response({"token": api_key.key})
 
 

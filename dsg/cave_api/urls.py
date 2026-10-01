@@ -47,6 +47,11 @@ urlpatterns = [
         oauth_views.LongLivedTokenView.as_view(),
         name="long-lived-token",
     ),
+    path(
+        "long_lived_token/rotate",
+        oauth_views.LongLivedTokenRotateView.as_view(),
+        name="long-lived-token-rotate",
+    ),
     path("user/token", oauth_views.UserTokensView.as_view(), name="user-tokens"),
     path("refresh_token", oauth_views.RefreshTokenView.as_view(), name="refresh-token"),
 ]

@@ -116,3 +116,123 @@ class TestLongLivedTokenView(TestCase):
         resp = self.client.get(self.URL, **self._auth())
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["token"], old.key)
+
+
+@pytest.mark.django_db
+class TestLongLivedTokenRotateView(TestCase):
+    URL = "/api/v1/long_lived_token/rotate"
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create(email="alice@example.org", name="alice")
+        self.login_key = APIKey.objects.create(
+            user=self.user, description="OAuth login token", key="tok-login-alice",
+        )
+        self.custom_key = APIKey.objects.create(
+            user=self.user, description="my script", expires_at=None, key="tok-custom-alice",
+        )
+        self.default_key = APIKey.objects.create(
+            user=self.user,
+            description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+            expires_at=None,
+            key="tok-default-alice",
+        )
+
+    def _bearer(self, key):
+        return {"HTTP_AUTHORIZATION": f"Bearer {key}"}
+
+    def _default_tokens(self):
+        return APIKey.objects.filter(
+            user=self.user,
+            description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+            expires_at__isnull=True,
+        )
+
+    def test_unauthenticated_returns_401(self):
+        self.assertEqual(self.client.post(self.URL).status_code, 401)
+
+    def test_get_is_not_allowed(self):
+        resp = self.client.get(self.URL, **self._bearer(self.default_key.key))
+        self.assertEqual(resp.status_code, 405)
+
+    def test_rotate_replaces_default_token(self):
+        resp = self.client.post(self.URL, **self._bearer(self.default_key.key))
+        self.assertEqual(resp.status_code, 200)
+        new = resp.json()["token"]
+        self.assertTrue(new)
+        self.assertNotEqual(new, self.default_key.key)
+
+        self.assertEqual(list(self._default_tokens().values_list("key", flat=True)), [new])
+        # The old token no longer authenticates; the new one does and is what
+        # the get-or-create endpoint now returns.
+        old_resp = self.client.get(
+            "/api/v1/long_lived_token", **self._bearer(self.default_key.key)
+        )
+        self.assertEqual(old_resp.status_code, 401)
+        new_resp = self.client.get("/api/v1/long_lived_token", **self._bearer(new))
+        self.assertEqual(new_resp.status_code, 200)
+        self.assertEqual(new_resp.json()["token"], new)
+
+    def test_rotate_leaves_other_tokens_alone(self):
+        self.client.post(self.URL, **self._bearer(self.login_key.key))
+        self.assertTrue(APIKey.objects.filter(pk=self.login_key.pk).exists())
+        self.assertTrue(APIKey.objects.filter(pk=self.custom_key.pk).exists())
+        self.assertFalse(APIKey.objects.filter(pk=self.default_key.pk).exists())
+
+    def test_rotate_removes_duplicate_default_rows(self):
+        APIKey.objects.create(
+            user=self.user,
+            description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+            expires_at=None,
+            key="tok-default-dup",
+        )
+        resp = self.client.post(self.URL, **self._bearer(self.login_key.key))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._default_tokens().count(), 1)
+
+    def test_rotate_creates_token_when_none_exists(self):
+        self.default_key.delete()
+        resp = self.client.post(self.URL, **self._bearer(self.login_key.key))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._default_tokens().get().key, resp.json()["token"])
+
+    def test_cookie_only_authentication_is_refused(self):
+        self.client.cookies["dsg_token"] = self.login_key.key
+        resp = self.client.post(self.URL)
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(APIKey.objects.filter(pk=self.default_key.pk).exists())
+
+    def test_cookie_plus_other_bearer_is_refused(self):
+        # The cookie wins authentication, so the header did not authenticate.
+        self.client.cookies["dsg_token"] = self.login_key.key
+        resp = self.client.post(self.URL, **self._bearer(self.default_key.key))
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(APIKey.objects.filter(pk=self.default_key.pk).exists())
+
+    def test_rotation_is_audited(self):
+        from core.models import AuditLog
+
+        resp = self.client.post(self.URL, **self._bearer(self.default_key.key))
+        new_key = APIKey.objects.get(key=resp.json()["token"])
+        entry = AuditLog.objects.get(action="api_token_rotated")
+        self.assertEqual(str(entry.target_id), str(new_key.pk))
+        self.assertEqual(entry.before_state, {"revoked_token_ids": [self.default_key.pk]})
+
+    def test_delegated_key_is_refused(self):
+        from core.models import RegisteredClient
+
+        site = RegisteredClient.objects.create(
+            origin="https://navis-org.github.io", name="CODA", owner="Philipp",
+        )
+        delegated = APIKey.objects.create(user=self.user, delegated_client=site)
+        resp = self.client.post(self.URL, **self._bearer(delegated.key))
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(APIKey.objects.filter(pk=self.default_key.pk).exists())
+
+    def test_service_account_is_refused(self):
+        from core.models import ServiceAccount, ServiceAccountToken
+
+        sa = ServiceAccount.objects.create(name="ci-bot")
+        ServiceAccountToken.objects.create(service_account=sa, description="ci", key="tok-sa")
+        resp = self.client.post(self.URL, **self._bearer("tok-sa"))
+        self.assertEqual(resp.status_code, 403)

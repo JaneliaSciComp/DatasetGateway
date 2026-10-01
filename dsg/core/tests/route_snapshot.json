@@ -85,6 +85,11 @@
     "view": "cave_api.oauth_views.LongLivedTokenView"
   },
   {
+    "route": "/api/v1/long_lived_token/rotate",
+    "method": "POST",
+    "view": "cave_api.oauth_views.LongLivedTokenRotateView"
+  },
+  {
     "route": "/api/v1/oauth2callback",
     "method": "GET",
     "view": "cave_api.oauth_views.OAuth2CallbackView"
