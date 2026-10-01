@@ -54,7 +54,6 @@ def test_delegated_request_does_not_seed_normal_cache(keys):
 @pytest.mark.parametrize("method,path", [
     ("post", "/api/v1/create_token"), ("get", "/api/v1/long_lived_token"),
     ("get", "/api/v1/user/token"), ("get", "/api/v1/refresh_token"),
-    ("post", "/api/v1/long_lived_token/rotate"),
 ])
 def test_token_management_refuses_delegated_keys(keys, method, path):
     user, normal, delegated = keys

@@ -148,6 +148,9 @@ class TestLongLivedTokenRotateView(TestCase):
             expires_at__isnull=True,
         )
 
+    def _rotate(self, key=None):
+        return self.client.post(self.URL, **self._bearer(key or self.default_key.key))
+
     def test_unauthenticated_returns_401(self):
         self.assertEqual(self.client.post(self.URL).status_code, 401)
 
@@ -156,7 +159,7 @@ class TestLongLivedTokenRotateView(TestCase):
         self.assertEqual(resp.status_code, 405)
 
     def test_rotate_replaces_default_token(self):
-        resp = self.client.post(self.URL, **self._bearer(self.default_key.key))
+        resp = self._rotate()
         self.assertEqual(resp.status_code, 200)
         new = resp.json()["token"]
         self.assertTrue(new)
@@ -174,7 +177,7 @@ class TestLongLivedTokenRotateView(TestCase):
         self.assertEqual(new_resp.json()["token"], new)
 
     def test_rotate_leaves_other_tokens_alone(self):
-        self.client.post(self.URL, **self._bearer(self.login_key.key))
+        self.assertEqual(self._rotate().status_code, 200)
         self.assertTrue(APIKey.objects.filter(pk=self.login_key.pk).exists())
         self.assertTrue(APIKey.objects.filter(pk=self.custom_key.pk).exists())
         self.assertFalse(APIKey.objects.filter(pk=self.default_key.pk).exists())
@@ -186,15 +189,20 @@ class TestLongLivedTokenRotateView(TestCase):
             expires_at=None,
             key="tok-default-dup",
         )
-        resp = self.client.post(self.URL, **self._bearer(self.login_key.key))
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(self._rotate().status_code, 200)
         self.assertEqual(self._default_tokens().count(), 1)
+        self.assertFalse(APIKey.objects.filter(key="tok-default-dup").exists())
 
-    def test_rotate_creates_token_when_none_exists(self):
-        self.default_key.delete()
-        resp = self.client.post(self.URL, **self._bearer(self.login_key.key))
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(self._default_tokens().get().key, resp.json()["token"])
+    def test_non_default_bearer_is_refused(self):
+        # The bearer must be the token being rotated, so a proxy that evicts
+        # the presented token evicts exactly the revoked one.
+        for key in (self.login_key.key, self.custom_key.key):
+            resp = self._rotate(key)
+            self.assertEqual(resp.status_code, 403, key)
+        self.assertEqual(
+            list(self._default_tokens().values_list("key", flat=True)),
+            [self.default_key.key],
+        )
 
     def test_cookie_only_authentication_is_refused(self):
         self.client.cookies["dsg_token"] = self.login_key.key
@@ -202,21 +210,48 @@ class TestLongLivedTokenRotateView(TestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertTrue(APIKey.objects.filter(pk=self.default_key.pk).exists())
 
-    def test_cookie_plus_other_bearer_is_refused(self):
+    def test_cookie_plus_default_bearer_is_refused(self):
         # The cookie wins authentication, so the header did not authenticate.
         self.client.cookies["dsg_token"] = self.login_key.key
-        resp = self.client.post(self.URL, **self._bearer(self.default_key.key))
+        resp = self._rotate()
         self.assertEqual(resp.status_code, 403)
+        self.assertTrue(APIKey.objects.filter(pk=self.default_key.pk).exists())
+
+    def test_second_rotation_of_same_token_is_stale(self):
+        # Two requests authenticated with the same token before either
+        # rotated: only the first may succeed, and its replacement survives.
+        from cave_api.oauth_views import StaleTokenRotation, rotate_default_long_lived_token
+
+        first, _ = rotate_default_long_lived_token(self.user, self.default_key.key)
+        with self.assertRaises(StaleTokenRotation):
+            rotate_default_long_lived_token(self.user, self.default_key.key)
+        self.assertEqual(
+            list(self._default_tokens().values_list("key", flat=True)), [first.key],
+        )
+
+    def test_stale_rotation_returns_409(self):
+        from unittest import mock
+
+        from cave_api.oauth_views import StaleTokenRotation
+
+        with mock.patch(
+            "cave_api.oauth_views.rotate_default_long_lived_token",
+            side_effect=StaleTokenRotation,
+        ):
+            resp = self._rotate()
+        self.assertEqual(resp.status_code, 409)
         self.assertTrue(APIKey.objects.filter(pk=self.default_key.pk).exists())
 
     def test_rotation_is_audited(self):
         from core.models import AuditLog
 
-        resp = self.client.post(self.URL, **self._bearer(self.default_key.key))
+        resp = self._rotate()
         new_key = APIKey.objects.get(key=resp.json()["token"])
         entry = AuditLog.objects.get(action="api_token_rotated")
         self.assertEqual(str(entry.target_id), str(new_key.pk))
         self.assertEqual(entry.before_state, {"revoked_token_ids": [self.default_key.pk]})
+        self.assertNotIn(self.default_key.key, str(entry.before_state) + str(entry.after_state))
+        self.assertNotIn(new_key.key, str(entry.before_state) + str(entry.after_state))
 
     def test_delegated_key_is_refused(self):
         from core.models import RegisteredClient
@@ -225,8 +260,10 @@ class TestLongLivedTokenRotateView(TestCase):
             origin="https://navis-org.github.io", name="CODA", owner="Philipp",
         )
         delegated = APIKey.objects.create(user=self.user, delegated_client=site)
-        resp = self.client.post(self.URL, **self._bearer(delegated.key))
+        before = APIKey.objects.count()
+        resp = self._rotate(delegated.key)
         self.assertEqual(resp.status_code, 403)
+        self.assertEqual(APIKey.objects.count(), before)
         self.assertTrue(APIKey.objects.filter(pk=self.default_key.pk).exists())
 
     def test_service_account_is_refused(self):
@@ -234,5 +271,5 @@ class TestLongLivedTokenRotateView(TestCase):
 
         sa = ServiceAccount.objects.create(name="ci-bot")
         ServiceAccountToken.objects.create(service_account=sa, description="ci", key="tok-sa")
-        resp = self.client.post(self.URL, **self._bearer("tok-sa"))
+        resp = self._rotate("tok-sa")
         self.assertEqual(resp.status_code, 403)

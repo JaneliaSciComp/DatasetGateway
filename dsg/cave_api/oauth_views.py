@@ -446,18 +446,33 @@ class LongLivedTokenView(APIView):
         return Response({"token": api_key.key})
 
 
-def _rotate_default_long_lived_token_atomic(user):
+class StaleTokenRotation(Exception):
+    """The presented token was rotated by a concurrent request."""
+
+
+def _default_long_lived_tokens(user):
+    return APIKey.objects.filter(
+        user=user,
+        description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
+        expires_at__isnull=True,
+    )
+
+
+def _rotate_default_long_lived_token_atomic(user, presented_key):
     with transaction.atomic():
-        revoked = list(
-            APIKey.objects.select_for_update()
-            .filter(
-                user=user,
-                description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
-                expires_at__isnull=True,
-            )
+        # Compare-and-swap on the presented token. A concurrent rotation of
+        # the same token waits on this row lock (PostgreSQL) or on the
+        # serialized-write lock (SQLite), then finds the row gone.
+        presented = list(
+            _default_long_lived_tokens(user)
+            .select_for_update()
+            .filter(key=presented_key)
             .values_list("pk", flat=True)
         )
-        APIKey.objects.filter(pk__in=revoked).delete()
+        if not presented:
+            raise StaleTokenRotation
+        revoked = list(_default_long_lived_tokens(user).values_list("pk", flat=True))
+        _default_long_lived_tokens(user).delete()
         api_key = APIKey.objects.create(
             user=user,
             description=DEFAULT_LONG_LIVED_TOKEN_DESCRIPTION,
@@ -466,24 +481,30 @@ def _rotate_default_long_lived_token_atomic(user):
     return api_key, revoked
 
 
-def rotate_default_long_lived_token(user):
-    """Revoke the user's default long-lived token(s) and issue a replacement.
+def rotate_default_long_lived_token(user, presented_key):
+    """Replace the user's default long-lived token, if it is ``presented_key``.
 
-    Returns ``(new_api_key, revoked_pks)``. Other tokens (login sessions,
-    explicitly created tokens, delegated site tokens) are untouched.
+    Deletes every default long-lived row (legacy duplicates included) and
+    creates a new one. Returns ``(new_api_key, revoked_pks)``. Raises
+    ``StaleTokenRotation`` when ``presented_key`` is no longer a default token,
+    so two concurrent rotations of one token cannot both succeed. Other tokens
+    (login sessions, explicitly created tokens, delegated site tokens) are
+    untouched.
     """
-    return run_serialized_write(_rotate_default_long_lived_token_atomic, user)
+    return run_serialized_write(_rotate_default_long_lived_token_atomic, user, presented_key)
 
 
 class LongLivedTokenRotateView(APIView):
     """POST /api/v1/long_lived_token/rotate
 
     Revoke the authenticated user's default long-lived token and return a
-    new one as ``{"token": ...}``. The request must authenticate with an
-    ``Authorization: Bearer`` header, not the ``dsg_token`` cookie: browsers
-    never attach that header on their own, so a cross-site form POST cannot
-    rotate a user's token. Services that cache token validation keep honoring
-    the old token until their caches expire.
+    new one as ``{"token": ...}``. The request must authenticate with that
+    default token in an ``Authorization: Bearer`` header, not with the
+    ``dsg_token`` cookie: browsers never attach that header on their own, so
+    a cross-site form POST cannot rotate a user's token, and the caller (for
+    example a neuPrintHTTP proxy) knows exactly which token was revoked.
+    A concurrent rotation of the same token gets 409. Services that cache
+    token validation keep honoring the old token until their caches expire.
     """
 
     permission_classes = [IsAuthenticated, IsHumanUser, DeniesDelegatedKeys]
@@ -496,8 +517,19 @@ class LongLivedTokenRotateView(APIView):
                 {"detail": "Token rotation requires an Authorization: Bearer header."},
                 status=403,
             )
+        if not _default_long_lived_tokens(request.user).filter(key=header_token).exists():
+            return Response(
+                {"detail": "Send the long-lived token being rotated as the Bearer token."},
+                status=403,
+            )
 
-        api_key, revoked = rotate_default_long_lived_token(request.user)
+        try:
+            api_key, revoked = rotate_default_long_lived_token(request.user, header_token)
+        except StaleTokenRotation:
+            return Response(
+                {"detail": "This token was already rotated. Fetch the current token and try again."},
+                status=409,
+            )
         log_audit(
             request.user, "api_token_rotated", "APIKey", api_key.pk,
             before_state={"revoked_token_ids": revoked},

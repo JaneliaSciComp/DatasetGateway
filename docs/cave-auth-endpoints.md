@@ -271,16 +271,24 @@ this to offer a "revoke" action next to the displayed token (neuPrintHTTP:
 Services that cache token validation (neuPrintHTTP, clio-store, DVID) keep
 honoring the old token until their caches expire, typically 5-10 minutes.
 
-**Request:** Header: `Authorization: Bearer {token}`. The request must
-authenticate with this header; authentication by the `dsg_token` cookie alone
-is refused with 403, so a cross-site form post cannot rotate a user's token.
-Human, non-delegated callers only.
+**Request:** Header: `Authorization: Bearer {token}`, where `{token}` is the
+default long-lived token being rotated. The request must authenticate with
+this header; authentication by the `dsg_token` cookie alone is refused with
+403, so a cross-site form post cannot rotate a user's token. Any other bearer
+(a login token, an explicitly created token) is refused with 403, so a proxy
+that evicts the presented token from its caches evicts exactly the revoked
+one. Human, non-delegated callers only.
 
 **Response (200):**
 
 ```json
 { "token": "<new-token>" }
 ```
+
+**Response (409):** the token was rotated by a concurrent request (two tabs,
+a double click). Nothing changed; fetch the current token with
+`GET /api/v1/long_lived_token` (for example via the browser session) instead
+of retrying with the old one.
 
 #### `GET /api/v1/user/token`
 
