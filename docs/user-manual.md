@@ -295,6 +295,8 @@ Key endpoints:
 - `GET /api/v1/whoami` — your identity and roles
 - `GET /api/v1/long_lived_token` — fetch your stable long-lived API
   token (creates it on first call; idempotent thereafter)
+- `POST /api/v1/long_lived_token/rotate` — revoke that token and get a
+  replacement (send the request with `Authorization: Bearer`)
 - `POST /api/v1/create_token` — generate a *new* no-expiry API token
   on every call (CAVEclient / middle_auth compatibility)
 

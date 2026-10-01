@@ -90,8 +90,8 @@ service account. Treat it like a password.
 - **Belong to groups.** The single description field replaces both
   group membership and organizational affiliation.
 - **Mint user `APIKey`s** (`POST /api/v1/create_token`,
-  `GET /api/v1/long_lived_token`, `GET /api/v1/user/token`, and
-  `GET /api/v1/refresh_token`). The `IsHumanUser` permission class on
+  `GET /api/v1/long_lived_token`, `POST /api/v1/long_lived_token/rotate`,
+  `GET /api/v1/user/token`, and `GET /api/v1/refresh_token`). The `IsHumanUser` permission class on
   those endpoints rejects service-account principals so an SA cannot
   create or list tokens belonging to a User row. `/api/v1/logout` only
   clears a browser cookie token when present; it is not a service-account

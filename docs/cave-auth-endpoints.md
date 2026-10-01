@@ -258,6 +258,30 @@ token, or supported query token.
 { "token": "<stable-token>" }
 ```
 
+#### `POST /api/v1/long_lived_token/rotate`
+
+Revoke the authenticated user's stable long-lived token and return a
+replacement. Every default long-lived row (`Default long-lived API token`,
+`expires_at = NULL`) for the user is deleted and a new one is created in the
+same transaction; the browser-session login token, explicitly created
+tokens, and delegated site tokens are untouched. Integrated frontends proxy
+this to offer a "revoke" action next to the displayed token (neuPrintHTTP:
+`POST /token/rotate`). Audited as `api_token_rotated`.
+
+Services that cache token validation (neuPrintHTTP, clio-store, DVID) keep
+honoring the old token until their caches expire, typically 5-10 minutes.
+
+**Request:** Header: `Authorization: Bearer {token}`. The request must
+authenticate with this header; authentication by the `dsg_token` cookie alone
+is refused with 403, so a cross-site form post cannot rotate a user's token.
+Human, non-delegated callers only.
+
+**Response (200):**
+
+```json
+{ "token": "<new-token>" }
+```
+
 #### `GET /api/v1/user/token`
 
 List all tokens for the current user.
