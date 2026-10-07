@@ -4,10 +4,15 @@ Each test drives the ModelAdmin methods the way the admin views do
 (get_form → is_valid → save(commit=False) → save_model, etc.).
 """
 
+from html.parser import HTMLParser
+
 import pytest
+from django.conf import settings
 from django.contrib import admin as django_admin
+from django.db import connection
 from django.forms.models import inlineformset_factory
-from django.test import RequestFactory, TestCase
+from django.test import RequestFactory, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 
 from core.admin import (
     DatasetTranslationAdmin,
@@ -247,3 +252,135 @@ class TestMembershipAdmin(_AdminTestBase):
         removed = AuditLog.objects.get(action="member_removed")
         self.assertEqual(added.after_state, {"user": user.email, "group": "lab-b"})
         self.assertEqual(removed.before_state, {"user": user.email, "group": "lab-a"})
+
+
+class _BrowserForm(HTMLParser):
+    """Collect the fields a browser would submit from a rendered admin form."""
+
+    def __init__(self):
+        super().__init__()
+        self.data = {}
+        self._select = None
+
+    def _add(self, name, value):
+        self.data.setdefault(name, []).append(value)
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        name = a.get("name")
+        if tag == "input" and name and a.get("type") not in ("submit", "button"):
+            if a.get("type") == "checkbox":
+                if "checked" in a:
+                    self._add(name, a.get("value", "on"))
+            else:
+                self._add(name, a.get("value", ""))
+        elif tag == "select" and name:
+            self._select = name
+        elif tag == "option" and self._select and "selected" in a:
+            self._add(self._select, a.get("value", ""))
+        elif tag == "textarea" and name:
+            self._add(name, "")
+
+    def handle_endtag(self, tag):
+        if tag == "select":
+            self._select = None
+
+
+# Rendering admin pages needs static URLs; the manifest storage would need a
+# collectstatic run (as in web/tests/test_admin_login.py).
+@override_settings(STORAGES={
+    **settings.STORAGES,
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+})
+@pytest.mark.django_db
+class TestGroupAdminMembers(TestCase):
+    """The Group change page lists members cheaply and still edits them."""
+
+    def setUp(self):
+        self.admin_user = User.objects.create(email="siteadmin@example.org", admin=True)
+        self.client.force_login(self.admin_user)
+        self.group = Group.objects.create(name="Dickson Lab Connectomics")
+        self.url = f"/admin/core/group/{self.group.pk}/change/"
+        # Users who are not members: the old inline rendered every one of
+        # them as an <option> on every member row.
+        for i in range(25):
+            User.objects.create(email=f"outsider{i:02d}@example.org")
+
+    def _add_members(self, count, start=0):
+        members = []
+        for i in range(start, start + count):
+            user = User.objects.create(email=f"member{i:02d}@example.org")
+            UserGroup.objects.create(user=user, group=self.group)
+            members.append(user)
+        return members
+
+    def _form_data(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        parser = _BrowserForm()
+        parser.feed(response.content.decode("utf-8"))
+        return parser.data
+
+    def test_members_are_listed_without_a_user_dropdown(self):
+        self._add_members(3)
+        page = self.client.get(self.url).content.decode("utf-8")
+        for i in range(3):
+            self.assertIn(f"member{i:02d}@example.org", page)
+        self.assertNotIn("outsider", page)
+
+    def test_query_count_does_not_grow_with_membership(self):
+        self._add_members(3)
+        self.client.get(self.url)
+        with CaptureQueriesContext(connection) as small:
+            self.client.get(self.url)
+        self._add_members(27, start=3)
+        with CaptureQueriesContext(connection) as large:
+            self.client.get(self.url)
+        self.assertEqual(len(small), len(large))
+
+    def test_save_toggles_team_lead_and_removes_a_member(self):
+        keep, drop = self._add_members(2)
+        data = self._form_data()
+        rows = {
+            int(data[f"user_groups-{i}-id"][0]): i
+            for i in range(int(data["user_groups-TOTAL_FORMS"][0]))
+        }
+        keep_row = rows[UserGroup.objects.get(user=keep).pk]
+        drop_row = rows[UserGroup.objects.get(user=drop).pk]
+        data[f"user_groups-{keep_row}-is_admin"] = ["on"]
+        data[f"user_groups-{drop_row}-DELETE"] = ["on"]
+        data["_save"] = ["Save"]
+
+        response = self.client.post(self.url, data)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(UserGroup.objects.get(user=keep, group=self.group).is_admin)
+        self.assertFalse(UserGroup.objects.filter(user=drop, group=self.group).exists())
+        removed = AuditLog.objects.get(action="member_removed")
+        self.assertEqual(removed.before_state, {"user": drop.email, "group": self.group.name})
+
+    def test_add_member_through_the_add_inline(self):
+        self._add_members(1)
+        newcomer = User.objects.get(email="outsider07@example.org")
+        data = self._form_data()
+        data["user_groups-2-TOTAL_FORMS"] = ["1"]
+        data["user_groups-2-0-user"] = [str(newcomer.pk)]
+        data["user_groups-2-0-group"] = [str(self.group.pk)]
+        data["_save"] = ["Save"]
+
+        response = self.client.post(self.url, data)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(UserGroup.objects.filter(user=newcomer, group=self.group).exists())
+        added = AuditLog.objects.get(action="member_added")
+        self.assertEqual(added.after_state, {"user": newcomer.email, "group": self.group.name})
+
+    def test_add_inline_searches_users(self):
+        response = self.client.get("/admin/autocomplete/", {
+            "app_label": "core", "model_name": "usergroup",
+            "field_name": "user", "term": "outsider07",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [r["text"] for r in response.json()["results"]], ["outsider07@example.org"],
+        )

@@ -271,9 +271,19 @@ Authorization groups (e.g., `sc`, `team_lead`, `user`). Not to be
 confused with Django's built-in `auth.Group`, which is not used and has
 been hidden from the admin.
 
-The **User groups** inline on the Group detail page shows all members.
-Add rows here to add users to the group. The `is_admin` flag on a
-`UserGroup` record designates the user as a team lead for that group.
+The Group detail page has two membership sections:
+
+- **Members** lists everyone in the group by email, sorted. Tick
+  **Is admin** to make a member a team lead for the group, or **Delete**
+  to remove them. The user itself can't be changed here: remove the row
+  and add the right person instead.
+- **Add members**: click "Add another Member", then search for the user
+  by email or name.
+
+The `is_admin` flag on a `UserGroup` record designates the user as a team
+lead for that group. Saving a very large group can hit Django's
+1,000-field POST limit (`DATA_UPLOAD_MAX_NUMBER_FIELDS`): each member row
+sends two fields, so the limit falls at about 495 members.
 
 ### Permissions
 

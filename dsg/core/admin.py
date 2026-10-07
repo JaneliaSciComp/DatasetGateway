@@ -42,6 +42,48 @@ class UserGroupInline(admin.TabularInline):
     extra = 0
 
 
+class GroupMemberInline(admin.TabularInline):
+    """A group's existing members: user shown as text, team-lead flag editable.
+
+    An editable ``user`` column renders a <select> of every DSG user on every
+    member row (and queries the user table once per row), which made large
+    groups' change pages time out. New members go through
+    ``GroupMemberAddInline`` instead.
+    """
+
+    model = UserGroup
+    extra = 0
+    fields = ("user", "is_admin")
+    readonly_fields = ("user",)
+    verbose_name = "member"
+    verbose_name_plural = "members"
+
+    def get_queryset(self, request):
+        # "group" too: each row prints UserGroup.__str__, which reads both.
+        return (
+            super().get_queryset(request)
+            .select_related("user", "group")
+            .order_by("user__email")
+        )
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
+class GroupMemberAddInline(admin.TabularInline):
+    """Blank rows for adding members to a group, choosing the user by search."""
+
+    model = UserGroup
+    extra = 0
+    fields = ("user", "is_admin")
+    autocomplete_fields = ("user",)
+    verbose_name = "member"
+    verbose_name_plural = "add members"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).none()
+
+
 class APIKeyInline(admin.TabularInline):
     model = APIKey
     extra = 0
@@ -100,7 +142,7 @@ class UserAdmin(admin.ModelAdmin):
 class GroupAdmin(admin.ModelAdmin):
     list_display = ("id", "name")
     search_fields = ("name",)
-    inlines = [UserGroupInline]
+    inlines = [GroupMemberInline, GroupMemberAddInline]
 
     def save_related(self, request, form, formsets, change):
         old_members = set()
