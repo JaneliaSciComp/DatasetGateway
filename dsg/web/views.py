@@ -854,16 +854,24 @@ def _dataset_access_rows(ds):
     what is recorded, not effective per-service access: permissions are not
     expanded, version scopes are not expanded to the versions they contain,
     and TOS, ``read_only`` and bucket-level ngauth rules are not applied.
-    Rows are sorted by email; the query count does not grow with the roster.
+    Rows are sorted by email; neither the query count nor the SQL parameter
+    count grows with the roster.
     """
     users = {}
     entries = defaultdict(set)
     team_groups = defaultdict(set)
 
+    # Bucket restrictions via a dataset-filtered join: prefetch_related would
+    # put every grant id into an IN list, growing the SQL parameter count.
+    grant_buckets = defaultdict(list)
+    for grant_id, bucket_name in Grant.buckets.through.objects.filter(
+        grant__dataset=ds
+    ).values_list("grant_id", "datasetbucket__name"):
+        grant_buckets[grant_id].append(bucket_name)
+
     grants = (
         Grant.objects.filter(dataset=ds, user__is_active=True)
         .select_related("user", "permission", "dataset_version", "group", "service")
-        .prefetch_related("buckets")
     )
     for grant in grants:
         users[grant.user_id] = grant.user
@@ -872,7 +880,7 @@ def _dataset_access_rows(ds):
             permission=grant.permission.name,
             version=grant.dataset_version,
             service=grant.service.name if grant.service_id else None,
-            buckets=tuple(sorted(bucket.name for bucket in grant.buckets.all())),
+            buckets=tuple(sorted(grant_buckets[grant.pk])),
         ))
         if grant.group_id:
             team_groups[grant.user_id].add(grant.group.name)
@@ -898,7 +906,7 @@ def _dataset_access_rows(ds):
                 ))
 
     # Subqueries rather than a list of user ids keep the SQL parameter count
-    # fixed however many members the catch-all ``user`` group has.
+    # bounded however many members the catch-all ``user`` group has.
     affiliations = defaultdict(set)
     if users:
         roster = Q(user__in=Grant.objects.filter(dataset=ds).values("user_id"))

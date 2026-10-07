@@ -418,8 +418,9 @@ what each person can do right now:
 Cells that a spreadsheet could read as a formula (starting with `=`, `+`,
 `-`, `@`, a tab or a line break, including full-width forms) are written
 with a leading tab, so they display as text. Scripts that read the CSV
-should strip that leading tab. Each export is recorded in the audit log
-(`grants_exported`).
+should strip that leading tab. Each export writes a `grants_exported`
+audit-log entry on a best-effort basis: as with every DSG audit entry, a
+failed audit write is logged but does not block the download.
 
 ### Assigning team leads
 

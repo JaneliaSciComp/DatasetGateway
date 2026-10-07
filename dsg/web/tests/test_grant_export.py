@@ -2,6 +2,7 @@
 
 import csv
 import io
+import sqlite3
 
 import pytest
 from django.conf import settings
@@ -31,9 +32,14 @@ from core.models import (
     User,
     UserGroup,
 )
-from web.views import EXPORT_COLUMNS, _dataset_access_rows
+from web.views import _dataset_access_rows
 
-HEADER = list(EXPORT_COLUMNS)
+# The contractual column order, spelled out rather than imported, so a change
+# to the view's columns fails here.
+HEADER = [
+    "email", "full_name", "permissions", "versions", "groups",
+    "affiliations", "access_via", "grant_details",
+]
 
 
 @pytest.mark.django_db
@@ -66,7 +72,9 @@ class _ExportTestBase(TestCase):
         response = self.client.get(self.url)
         assert response.status_code == 200
         assert response["Content-Type"] == "text/csv; charset=utf-8"
-        return list(csv.reader(io.StringIO(response.content.decode("utf-8"))))
+        rows = list(csv.reader(io.StringIO(response.content.decode("utf-8"))))
+        assert all(len(row) == len(HEADER) for row in rows), rows
+        return rows
 
     def _rows_by_email(self):
         rows = self._export()
@@ -357,6 +365,31 @@ class TestExportRows(_ExportTestBase):
             assert len(_dataset_access_rows(self.dataset)) == 31
         assert len(large) == len(small)
 
+    def test_parameter_count_stays_bounded(self):
+        """Large rosters must not turn into IN lists of ids (SQLite variable limit)."""
+        if connection.vendor != "sqlite":
+            pytest.skip("variable limit check uses the sqlite3 connection API")
+        everyone = Group.objects.create(name="user")
+        GroupDatasetPermission.objects.create(group=everyone, dataset=self.dataset, permission=self.view_perm)
+        bucket = DatasetBucket.objects.create(dataset=self.dataset, name="bucket-a")
+        for i in range(30):
+            direct = self._user(f"direct{i:02d}@example.org")
+            grant = Grant.objects.create(user=direct, dataset=self.dataset, permission=self.view_perm)
+            grant.buckets.add(bucket)
+            Affiliation.objects.create(user=direct, name=f"Org {i}")
+            member = self._user(f"member{i:02d}@example.org")
+            UserGroup.objects.create(user=member, group=everyone)
+
+        connection.ensure_connection()
+        raw = connection.connection
+        previous = raw.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 10)
+        try:
+            rows = _dataset_access_rows(self.dataset)
+        finally:
+            raw.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous)
+        assert len(rows) == 61
+        assert "view@all {bucket-a}" in {row[-1] for row in rows}
+
 
 class TestExportSanitizing(_ExportTestBase):
     TRIGGERS = ["=", "+", "-", "@", "\t", "\r", "\n", "\uff1d", "\uff0b", "\uff0d", "\uff20"]
@@ -375,9 +408,18 @@ class TestExportSanitizing(_ExportTestBase):
         assert self._rows_by_email()["quote@example.org"]["full_name"] == 'Ann "Nan" O\'Neil,\nPhD'
 
     def test_every_field_is_quoted(self):
+        user = self._user("plain@example.org", name="Plain Name")
+        Grant.objects.create(user=user, dataset=self.dataset, permission=self.view_perm)
+        hostile = self._user("hostile@example.org", name="=1+1")
+        Grant.objects.create(user=hostile, dataset=self.dataset, permission=self.view_perm)
         self._login(self.manager, self.manager_key)
-        body = self.client.get(self.url).content.decode("utf-8")
-        assert body.splitlines()[0] == ",".join(f'"{name}"' for name in HEADER)
+        lines = self.client.get(self.url).content.decode("utf-8").split("\r\n")
+        assert lines[0] == ",".join(f'"{name}"' for name in HEADER)
+        assert lines[-1] == ""
+        # Ordinary and sanitized data cells are quoted too: the tab prefix
+        # must sit inside the quoted field.
+        assert '"hostile@example.org","\t=1+1","view","all","","","direct","view@all"' in lines
+        assert '"plain@example.org","Plain Name","view","all","","","direct","view@all"' in lines
 
     def test_formula_leading_email_and_affiliation_are_prefixed(self):
         user = self._user("+tag@example.org")
