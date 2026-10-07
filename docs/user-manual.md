@@ -372,6 +372,55 @@ admin if you have an `admin` grant on a specific dataset.
 5. To **revoke access**: click "Revoke" next to the grant
 6. Use the group filter to view grants by group
 
+### Exporting who can get in (CSV)
+
+Anyone who can open the members page — a `manage` or `admin` grant on the
+dataset, or a global admin — can click **Export CSV** next to "Current
+Grants" (`/web/grants/<dataset>/export.csv`). The file has one row per
+person who can get into the dataset through a direct grant *or* a
+group-wide permission (a group dataset permission set in the admin
+console, e.g. the `user` group's `view` on a public dataset), sorted by
+email. Columns:
+
+| Column | Contents |
+|--------|----------|
+| `email` | The user's email |
+| `full_name` | The user's name |
+| `permissions` | Distinct permissions held, lowest level first (`view; edit`) |
+| `versions` | Distinct scopes: `all` for a dataset-wide grant or group permission, then each version (`all; v1.0`) |
+| `groups` | The team(s) a team lead granted through (the members page's "Group" column) |
+| `affiliations` | The user's organizational affiliations |
+| `access_via` | `direct`, `group:<name>` for each group-wide permission that reaches them, or both |
+| `grant_details` | Each entitlement as `<permission>@<scope>`, with ` [<service>]` for a service-scoped grant, ` {<buckets>}` for a bucket-restricted grant and ` via group:<name>` for a group-wide permission — e.g. `view@all; edit@v1.0; view@all via group:user` |
+
+Cells with several values are separated by `; `.
+
+The export reports access **as recorded**, not a per-service check of
+what each person can do right now:
+
+- Permissions and scopes are not expanded (`admin` is listed as `admin`,
+  not also `manage`/`edit`/`view`; `v1.0` is not expanded to the
+  versions it contains). A `read_only` user's recorded `edit` is listed
+  even though it is not effective.
+- People whose terms of service are still pending are listed; they get in
+  once they accept.
+- A service-scoped entry (`[clio]`) applies only through that service.
+  Neuroglancer bucket access ignores service-scoped entries and honours
+  bucket restrictions (`{bucket}`). A bucket shared with another dataset
+  can also be reached through that dataset's grants, by people not in
+  this file.
+- Not listed: global admins with no grant or group permission on the
+  dataset (they can get into every dataset), disabled accounts, service
+  accounts (see the page's Service Account Grants table), and anyone
+  reaching a public dataset, public version or public root ID. The
+  members page names those public audiences under the button.
+
+Cells that a spreadsheet could read as a formula (starting with `=`, `+`,
+`-`, `@`, a tab or a line break, including full-width forms) are written
+with a leading tab, so they display as text. Scripts that read the CSV
+should strip that leading tab. Each export is recorded in the audit log
+(`grants_exported`).
+
 ### Assigning team leads
 
 1. Go to `/web/datasets`

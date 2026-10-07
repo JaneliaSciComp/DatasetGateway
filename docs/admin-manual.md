@@ -222,6 +222,7 @@ system. It is organized into sections.
 | View audit logs | Admin console |
 | Manage API keys | Admin console |
 | Grant/revoke user access to a dataset | Web UI (`/web/grants/<dataset>`) — preferred for day-to-day use |
+| Export who can get into a dataset (CSV) | Web UI (`/web/grants/<dataset>`, **Export CSV**) — dataset manage/admin. See the [User Manual](user-manual.md#exporting-who-can-get-in-csv). |
 | Promote dataset admins | Web UI (`/web/dataset-admins/<dataset>`) — SC/admin only |
 | Manage team members and group grants | Web UI (`/web/group/<group>/`) — group admins/team leads |
 | Manage public roots | Web UI (`/web/public-roots/<dataset>`) |
