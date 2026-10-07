@@ -370,7 +370,9 @@ admin if you have an `admin` grant on a specific dataset.
 4. To **grant access**: enter the user's email, select a permission
    (view, edit, manage, or admin), optionally select a specific version
 5. To **revoke access**: click "Revoke" next to the grant
-6. Use the group filter to view grants by group
+6. Use the group filter to show only the grants a team lead made through
+   one group; revoking or granting keeps the filter. **Export CSV** always
+   covers everyone, whatever the filter.
 
 ### Exporting who can get in (CSV)
 

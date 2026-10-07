@@ -12,6 +12,7 @@ from django.contrib.auth import logout as auth_logout
 from django.db.models import Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
@@ -591,6 +592,14 @@ class GrantManageView(View):
             return None
         return render(None, "web/access_denied.html", {"user": user})
 
+    def _redirect_to_members(self, request, dataset):
+        """Return to the members page, keeping the group filter the form posted from."""
+        url = reverse("web-grant-manage", kwargs={"dataset": dataset})
+        group_filter = request.GET.get("group", "")
+        if group_filter:
+            url += "?" + urlencode({"group": group_filter})
+        return redirect(url)
+
     def get(self, request, dataset):
         user = _get_web_user(request)
         if not user:
@@ -602,14 +611,18 @@ class GrantManageView(View):
         if err:
             return render(request, "web/access_denied.html", {"user": user})
 
-        grants = Grant.objects.filter(dataset=ds).select_related(
+        all_grants = list(Grant.objects.filter(dataset=ds).select_related(
             "user", "permission", "dataset_version", "group"
-        ).order_by("user__email")
+        ).order_by("user__email"))
 
-        # Get unique groups for filtering
-        group_names = sorted(set(
-            g.group.name for g in grants if g.group_id
-        ))
+        # Groups that team leads granted through, for the filter links; the
+        # links stay complete while a filter is applied.
+        group_names = sorted({g.group.name for g in all_grants if g.group_id})
+        group_filter = request.GET.get("group", "")
+        if group_filter:
+            grants = [g for g in all_grants if g.group_id and g.group.name == group_filter]
+        else:
+            grants = all_grants
 
         is_admin_user = _has_dataset_admin(user, ds)
         permissions = Permission.objects.all()
@@ -638,6 +651,7 @@ class GrantManageView(View):
             "permissions": permissions,
             "versions": versions,
             "group_names": group_names,
+            "group_filter": group_filter,
             "is_admin_user": is_admin_user,
             "sa_grants": sa_grants,
             "available_sas": available_sas,
@@ -668,7 +682,7 @@ class GrantManageView(View):
 
             if perm.name == "admin" and not is_admin_user:
                 messages.error(request, "You cannot grant admin permission")
-                return redirect("web-grant-manage", dataset=dataset)
+                return self._redirect_to_members(request, dataset)
 
             target_user, user_created = User.objects.get_or_create(
                 email=email,
@@ -728,7 +742,7 @@ class GrantManageView(View):
             perm = get_object_or_404(Permission, pk=perm_id)
             if perm.name == "admin" and not is_admin_user:
                 messages.error(request, "You cannot grant admin permission")
-                return redirect("web-grant-manage", dataset=dataset)
+                return self._redirect_to_members(request, dataset)
             dv = DatasetVersion.objects.get(pk=version_id) if version_id else None
             sa_grant, created = ServiceAccountGrant.objects.get_or_create(
                 service_account=sa, dataset=ds,
@@ -756,10 +770,10 @@ class GrantManageView(View):
                 ).get(pk=sa_grant_id, dataset=ds)
             except (ServiceAccountGrant.DoesNotExist, ValueError, TypeError):
                 messages.error(request, "Service account grant not found")
-                return redirect("web-grant-manage", dataset=dataset)
+                return self._redirect_to_members(request, dataset)
             if not is_admin_user and sa_grant.permission.name == "admin":
                 messages.error(request, "You cannot revoke admin permission")
-                return redirect("web-grant-manage", dataset=dataset)
+                return self._redirect_to_members(request, dataset)
             before = {
                 "service_account": sa_grant.service_account.name,
                 "dataset": ds.name, "permission": sa_grant.permission.name,
@@ -772,7 +786,7 @@ class GrantManageView(View):
             )
             messages.success(request, "Service account grant revoked")
 
-        return redirect("web-grant-manage", dataset=dataset)
+        return self._redirect_to_members(request, dataset)
 
 
 EXPORT_COLUMNS = (

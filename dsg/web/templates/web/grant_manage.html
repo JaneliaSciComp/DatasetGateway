@@ -26,21 +26,22 @@
     <button type="submit" class="btn btn-sm">Grant</button>
 </form>
 
-{% if group_names %}
+{% if group_names or group_filter %}
 <h2>Filter by Group</h2>
-<p>
-    <a href="?">All</a>
+<p id="group-filter">
+    {% if group_filter %}<a href="?">All</a>{% else %}<strong>All</strong>{% endif %}
     {% for gn in group_names %}
-    | <a href="?group={{ gn }}">{{ gn }}</a>
+    | {% if gn == group_filter %}<strong>{{ gn }}</strong>{% else %}<a href="?group={{ gn|urlencode:'' }}">{{ gn }}</a>{% endif %}
     {% endfor %}
 </p>
 {% endif %}
 
-<h2>Current Grants <a href="{% url 'web-grant-export' dataset=dataset.name %}" class="btn btn-sm">Export CSV</a></h2>
+<h2>Current Grants{% if group_filter %} — group {{ group_filter }}{% endif %} <a href="{% url 'web-grant-export' dataset=dataset.name %}" class="btn btn-sm">Export CSV</a></h2>
 <p style="color: #666;">
     The CSV export lists everyone with a direct grant or a group-wide permission
-    on this dataset, one row per person, with access as recorded. See the user
-    manual for what it does not cover.
+    on this dataset, one row per person, with access as recorded{% if group_filter %};
+    it ignores the group filter{% endif %}. See the user manual for what it does
+    not cover.
 </p>
 {% if is_public_dataset or public_version_names or public_root_count %}
 <div id="public-audiences" style="color: #666;">
@@ -82,6 +83,8 @@
     </tr>
     {% endfor %}
 </table>
+{% elif group_filter %}
+<p>No grants through group {{ group_filter }}.</p>
 {% else %}
 <p>No grants yet.</p>
 {% endif %}
