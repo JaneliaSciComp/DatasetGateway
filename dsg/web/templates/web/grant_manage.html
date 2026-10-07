@@ -36,7 +36,28 @@
 </p>
 {% endif %}
 
-<h2>Current Grants</h2>
+<h2>Current Grants <a href="{% url 'web-grant-export' dataset=dataset.name %}" class="btn btn-sm">Export CSV</a></h2>
+<p style="color: #666;">
+    The CSV export lists everyone with a direct grant or a group-wide permission
+    on this dataset, one row per person, with access as recorded. See the user
+    manual for what it does not cover.
+</p>
+{% if is_public_dataset or public_version_names or public_root_count %}
+<div id="public-audiences" style="color: #666;">
+    <p>Not listed in the export, because they are open to everyone:</p>
+    <ul>
+        {% if is_public_dataset %}
+        <li>This dataset is public: anyone may read it, possibly without signing in, once any required terms of service are accepted.</li>
+        {% endif %}
+        {% if public_version_names %}
+        <li>Public version{{ public_version_names|length|pluralize }} {{ public_version_names|join:", " }}: anyone may read {{ public_version_names|length|pluralize:"it,them" }}, possibly without signing in, once any required terms of service are accepted.</li>
+        {% endif %}
+        {% if public_root_count %}
+        <li>{{ public_root_count }} public root ID{{ public_root_count|pluralize }} on this dataset's CAVE service tables.</li>
+        {% endif %}
+    </ul>
+</div>
+{% endif %}
 {% if grants %}
 <table>
     <tr><th>User</th><th>Permission</th><th>Version</th><th>Group</th><th>Granted By</th><th>Source</th><th></th></tr>

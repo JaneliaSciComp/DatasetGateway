@@ -1,14 +1,16 @@
 """Web UI views — dataset browsing, TOS acceptance, grant management."""
 
+import csv
 import logging
 import re
+from collections import defaultdict, namedtuple
 from urllib.parse import urlencode, urlsplit
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import logout as auth_logout
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -23,6 +25,7 @@ from core.authz import (
     user_is_authorized_for_dataset,
 )
 from core.models import (
+    Affiliation,
     APIKey,
     ClientConsent,
     Dataset,
@@ -622,6 +625,12 @@ class GrantManageView(View):
         # of permission level — admins can still add multiple permissions).
         available_sas = ServiceAccount.objects.filter(is_active=True).order_by("name")
 
+        # Open-to-everyone audiences the CSV export cannot list person by person.
+        public_version_names = sorted(
+            v.version for v in versions if v.is_public
+        )
+        public_root_count = PublicRoot.objects.filter(service_table__dataset=ds).count()
+
         return render(request, "web/grant_manage.html", {
             "user": user,
             "dataset": ds,
@@ -632,6 +641,9 @@ class GrantManageView(View):
             "is_admin_user": is_admin_user,
             "sa_grants": sa_grants,
             "available_sas": available_sas,
+            "is_public_dataset": ds.access_mode == Dataset.ACCESS_PUBLIC,
+            "public_version_names": public_version_names,
+            "public_root_count": public_root_count,
         })
 
     def post(self, request, dataset):
@@ -761,6 +773,200 @@ class GrantManageView(View):
             messages.success(request, "Service account grant revoked")
 
         return redirect("web-grant-manage", dataset=dataset)
+
+
+EXPORT_COLUMNS = (
+    "email", "full_name", "permissions", "versions", "groups",
+    "affiliations", "access_via", "grant_details",
+)
+
+_PERMISSION_LEVELS = {"view": 1, "edit": 2, "manage": 3, "admin": 4}
+
+# Leading characters a spreadsheet may read as the start of a formula, per
+# OWASP's CSV-injection guidance (including the full-width forms some locales
+# accept).
+_CSV_FORMULA_TRIGGERS = (
+    "=", "+", "-", "@", "\t", "\r", "\n",
+    "\uff1d", "\uff0b", "\uff0d", "\uff20",
+)
+
+# One recorded entitlement. ``group`` is None for a direct Grant (team-tagged
+# or not) and the group name for a group-wide GroupDatasetPermission;
+# ``version`` is None for a dataset-wide scope.
+_AccessEntry = namedtuple("_AccessEntry", "group permission version service buckets")
+
+
+def _csv_safe(value):
+    """Neutralize a formula-leading cell with OWASP's Excel-resistant tab prefix.
+
+    The writer quotes every field, so the tab sits inside the quoted value;
+    unlike a leading apostrophe, Excel keeps it across a save and reopen.
+    """
+    text = str(value)
+    if text.startswith(_CSV_FORMULA_TRIGGERS):
+        return "\t" + text
+    return text
+
+
+def _permission_sort_key(name):
+    return (_PERMISSION_LEVELS.get(name, len(_PERMISSION_LEVELS) + 1), name)
+
+
+def _scope_sort_key(version):
+    """``all`` first, then versions by branch with NULL ordinals last."""
+    if version is None:
+        return (0,)
+    return (1, version.branch, version.ordinal is None, version.ordinal or 0, version.version)
+
+
+def _entry_sort_key(entry):
+    return (
+        entry.group is not None,
+        _permission_sort_key(entry.permission),
+        _scope_sort_key(entry.version),
+        entry.service is not None,
+        entry.service or "",
+        entry.buckets,
+        entry.group or "",
+    )
+
+
+def _scope_label(version):
+    return "all" if version is None else version.version
+
+
+def _entry_label(entry):
+    label = f"{entry.permission}@{_scope_label(entry.version)}"
+    if entry.service:
+        label += f" [{entry.service}]"
+    if entry.buckets:
+        label += " {" + ",".join(entry.buckets) + "}"
+    if entry.group is not None:
+        label += f" via group:{entry.group}"
+    return label
+
+
+def _dataset_access_rows(ds):
+    """Return one CSV row per enabled user with a recorded entitlement on ``ds``.
+
+    An entitlement is a direct ``Grant`` or a group-wide
+    ``GroupDatasetPermission`` reached through group membership. Rows report
+    what is recorded, not effective per-service access: permissions are not
+    expanded, version scopes are not expanded to the versions they contain,
+    and TOS, ``read_only`` and bucket-level ngauth rules are not applied.
+    Rows are sorted by email; the query count does not grow with the roster.
+    """
+    users = {}
+    entries = defaultdict(set)
+    team_groups = defaultdict(set)
+
+    grants = (
+        Grant.objects.filter(dataset=ds, user__is_active=True)
+        .select_related("user", "permission", "dataset_version", "group", "service")
+        .prefetch_related("buckets")
+    )
+    for grant in grants:
+        users[grant.user_id] = grant.user
+        entries[grant.user_id].add(_AccessEntry(
+            group=None,
+            permission=grant.permission.name,
+            version=grant.dataset_version,
+            service=grant.service.name if grant.service_id else None,
+            buckets=tuple(sorted(bucket.name for bucket in grant.buckets.all())),
+        ))
+        if grant.group_id:
+            team_groups[grant.user_id].add(grant.group.name)
+
+    group_permissions = defaultdict(list)
+    for gdp in GroupDatasetPermission.objects.filter(dataset=ds).select_related(
+        "group", "permission", "service"
+    ):
+        group_permissions[gdp.group_id].append(gdp)
+    if group_permissions:
+        memberships = UserGroup.objects.filter(
+            group_id__in=list(group_permissions), user__is_active=True,
+        ).select_related("user")
+        for membership in memberships:
+            users[membership.user_id] = membership.user
+            for gdp in group_permissions[membership.group_id]:
+                entries[membership.user_id].add(_AccessEntry(
+                    group=gdp.group.name,
+                    permission=gdp.permission.name,
+                    version=None,
+                    service=gdp.service.name if gdp.service_id else None,
+                    buckets=(),
+                ))
+
+    # Subqueries rather than a list of user ids keep the SQL parameter count
+    # fixed however many members the catch-all ``user`` group has.
+    affiliations = defaultdict(set)
+    if users:
+        roster = Q(user__in=Grant.objects.filter(dataset=ds).values("user_id"))
+        if group_permissions:
+            roster |= Q(user__in=UserGroup.objects.filter(
+                group_id__in=list(group_permissions)
+            ).values("user_id"))
+        for user_id, name in Affiliation.objects.filter(roster).values_list("user_id", "name"):
+            affiliations[user_id].add(name)
+
+    rows = []
+    for user_id, user in sorted(users.items(), key=lambda item: item[1].email):
+        user_entries = sorted(entries[user_id], key=_entry_sort_key)
+        permissions = sorted({e.permission for e in user_entries}, key=_permission_sort_key)
+        versions = sorted({e.version for e in user_entries}, key=_scope_sort_key)
+        access_via = []
+        if any(e.group is None for e in user_entries):
+            access_via.append("direct")
+        access_via += [
+            f"group:{name}"
+            for name in sorted({e.group for e in user_entries if e.group is not None})
+        ]
+        rows.append([
+            user.email,
+            user.name,
+            "; ".join(permissions),
+            "; ".join(_scope_label(v) for v in versions),
+            "; ".join(sorted(team_groups[user_id])),
+            "; ".join(sorted(affiliations[user_id])),
+            "; ".join(access_via),
+            "; ".join(_entry_label(e) for e in user_entries),
+        ])
+    return rows
+
+
+class GrantExportView(View):
+    """GET /web/grants/<slug:dataset>/export.csv — "Who can get in" CSV export.
+
+    Same access rule as the members page (admin or manage grant on the
+    dataset, or global admin). See ``_dataset_access_rows`` for what a row
+    reports.
+    """
+
+    def get(self, request, dataset):
+        user = _get_web_user(request)
+        if not user:
+            return redirect(f"/auth/login?next=/web/grants/{dataset}")
+
+        ds = get_object_or_404(Dataset, name=dataset)
+
+        if not _can_manage_dataset(user, ds):
+            return render(request, "web/access_denied.html", {"user": user})
+
+        rows = _dataset_access_rows(ds)
+
+        filename = f"{ds.name}-members-{timezone.localdate():%Y%m%d}.csv"
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        response["Cache-Control"] = "no-store"
+        writer = csv.writer(response, quoting=csv.QUOTE_ALL)
+        writer.writerow(EXPORT_COLUMNS)
+        for row in rows:
+            writer.writerow([_csv_safe(value) for value in row])
+
+        log_audit(user, "grants_exported", "Dataset", ds.pk, after_state={
+            "dataset": ds.name, "rows": len(rows),
+        })
+        return response
 
 
 class PublicRootManageView(View):

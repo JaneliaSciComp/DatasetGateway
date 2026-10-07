@@ -330,6 +330,11 @@
     "view": "web.views.GrantManageView"
   },
   {
+    "route": "/web/grants/<slug:dataset>/export.csv",
+    "method": "GET",
+    "view": "web.views.GrantExportView"
+  },
+  {
     "route": "/web/group/<slug:group_name>/",
     "method": "GET",
     "view": "web.views.GroupDashboardView"

@@ -10,6 +10,7 @@ urlpatterns = [
     path("tos/<str:invite_token>/", views.TOSLandingView.as_view(), name="web-tos-landing"),
     path("my-account", views.MyAccountView.as_view(), name="web-my-account"),
     path("grants/<slug:dataset>", views.GrantManageView.as_view(), name="web-grant-manage"),
+    path("grants/<slug:dataset>/export.csv", views.GrantExportView.as_view(), name="web-grant-export"),
     path("dataset-admins/<slug:dataset>", views.DatasetAdminManageView.as_view(), name="web-dataset-admin-manage"),
     path("public-roots/<slug:dataset>", views.PublicRootManageView.as_view(), name="web-public-roots"),
     path("group/<slug:group_name>/", views.GroupDashboardView.as_view(), name="web-group-dashboard"),
